@@ -7,7 +7,7 @@ declare global {
 }
 
 
-export function aaa(ctx: Ctx) {
+export function aaa(ctx: Ctx<{}>) {
 	ctx.step(() => {
 		// do something
 		return {

@@ -37,9 +37,9 @@ declare global {
 	}
 }
 
-const programs = new Map<string, (ctx: Ctx) => void>()
+const programs = new Map<string, (ctx: Ctx<any>) => void>()
 
-export function registerProgram(name: keyof Program, program: (ctx: Ctx<any>) => void) {
+export function registerProgram<P extends keyof Program>(name: P, program: (ctx: Ctx<Program[P]>) => void) {
 	programs.set(name, program)
 }
 

@@ -1,4 +1,11 @@
-import type { Ctx } from "../main"
+import type { Ctx } from "../queue/queue.js"
+
+declare global {
+	interface Program {
+		aaa: {}
+	}
+}
+
 
 export function aaa(ctx: Ctx) {
 	ctx.step(() => {

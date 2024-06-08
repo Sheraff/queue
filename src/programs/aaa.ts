@@ -1,13 +1,24 @@
 import type { Ctx } from "../queue/queue.js"
 
+type InitialData = {
+	foo?: string
+}
+
 declare global {
 	interface Program {
-		aaa: {}
+		aaa: {
+			initial: InitialData
+			result: {
+				a: number
+				yolo: string
+				c: number
+			}
+		}
 	}
 }
 
 
-export function aaa(ctx: Ctx<{}>) {
+export function aaa(ctx: Ctx<InitialData>) {
 	ctx.step(() => {
 		// do something
 		return {

@@ -10,8 +10,11 @@ const close = () => {
 	db.close()
 }
 process.on('exit', close)
+process.on('SIGINT', () => {
+	close()
+	process.exit(0)
+})
 // process.on('uncaughtException', close)
-// process.on('SIGINT', close)
 // process.on('SIGTERM', close)
 // process.on('unhandledRejection', close)
 

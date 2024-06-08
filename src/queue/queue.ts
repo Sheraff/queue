@@ -31,6 +31,7 @@ type Task = {
 	/** uuid */
 	id: string
 	program: string
+	status: 'pending' | 'running' | 'success' | 'failure'
 	/** json */
 	data: string
 	step: number
@@ -98,15 +99,10 @@ const storeTask = db.prepare<{
 	id: string
 	data: string
 	step: number
-}>(/* sql */`
-	UPDATE tasks
-	SET data = @data, step = @step, updated_at = CURRENT_TIMESTAMP
-	WHERE id = @id
-`)
-const deleteTask = db.prepare<{
-	id: string
+	status: Task['status']
 }, Task>(/* sql */`
-	DELETE FROM tasks
+	UPDATE tasks
+	SET data = @data, step = @step, status = @status, updated_at = CURRENT_TIMESTAMP
 	WHERE id = @id
 	RETURNING *
 `)
@@ -145,8 +141,14 @@ async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<
 	}
 
 	if (next[0] === 'callback') {
-		const augment = await asyncLocalStorage.run(task, () => next[1](data))
-		Object.assign(data, augment)
+		try {
+			const augment = await asyncLocalStorage.run(task, () => next[1](data))
+			Object.assign(data, augment)
+		} catch (e) {
+			console.error(e)
+			storeTask.run({ id: task.id, data: JSON.stringify(data), step: task.step, status: 'failure' })
+			return
+		}
 	} else if (next[0] === 'sleep') {
 		// not implemented
 	} else if (next[0] === 'register') {
@@ -163,18 +165,18 @@ async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<
 	if (task.step === steps.length) {
 		console.log('task done', task.id, data)
 		const tx = db.transaction((params: { id: string, data: Data }) => {
-			const result = deleteTask.get({ id: params.id })
+			const result = storeTask.get({ id: params.id, data: JSON.stringify(params.data), step: task.step, status: 'success' })
 			if (result?.parent_id && result?.parent_key) {
 				const parent = getTask.get({ id: result.parent_id })
 				if (!parent) throw new Error('Parent not found')
 				const parentData = JSON.parse(parent.data) as Data
 				parentData[result.parent_key] = params.data
-				storeTask.run({ id: parent.id, data: JSON.stringify(parentData), step: parent.step })
+				storeTask.run({ id: parent.id, data: JSON.stringify(parentData), step: parent.step, status: parent.status })
 			}
 		})
 		tx({ id: task.id, data })
 	} else {
-		storeTask.run({ id: task.id, data: JSON.stringify(data), step: task.step })
+		storeTask.run({ id: task.id, data: JSON.stringify(data), step: task.step, status: 'pending' })
 	}
 }
 
@@ -184,14 +186,37 @@ async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<
  */
 const getFirstTask = db.prepare<[], Task>(/* sql */`
 	SELECT * FROM tasks
-	WHERE id NOT IN (SELECT parent_id FROM tasks WHERE parent_id IS NOT NULL)
-	ORDER BY id
+	WHERE
+		id NOT IN (
+			SELECT parent_id FROM tasks
+			WHERE parent_id IS NOT NULL
+				AND status NOT IN ('success', 'failure')
+		)
+		AND status = 'pending'
+	ORDER BY created_at ASC
 	LIMIT 1
 `)
-export async function handleNext(): Promise<boolean> {
+const getTaskCount = db.prepare<[], { count: number }>(/* sql */`
+	SELECT COUNT(*) as count FROM tasks
+	WHERE status NOT IN ('success', 'failure')
+`)
+const getNext = db.transaction(() => {
 	const task = getFirstTask.get()
-	if (!task) return false
-	console.log('handle', task.id, task.program, task.step)
-	await handleProgram(task, programs.get(task.program)!)
-	return true
+	if (task) {
+		storeTask.run({ id: task.id, data: task.data, step: task.step, status: 'running' })
+	}
+	return task
+})
+export async function handleNext() {
+	const task = getNext()
+	if (task) {
+		console.log('handle', task.id, task.program, task.step)
+		handleProgram(task, programs.get(task.program)!)
+		return "next"
+	}
+	const count = getTaskCount.get()
+	if (count?.count) {
+		return "wait"
+	}
+	return "done"
 }

@@ -33,11 +33,12 @@ export function pokemon(ctx: Ctx<InitialData>) {
 	ctx.step(async (data) => {
 		const res = await fetch(data.species_url)
 		const species = await res.json() as any
+		if (data.id === 152) throw new Error('this is a test error')
 		return {
 			evolution_chain_url: species.evolution_chain.url,
 		}
 	})
-	ctx.registerTask('pokemon', { id: ctx.data.id + 1 }, 'next', (data) => data.id === 151)
+	ctx.registerTask('pokemon', { id: ctx.data.id + 1 }, 'next', (data) => data.id === 151 || data.id === 2)
 	ctx.step(async (data) => {
 		const res = await fetch(data.evolution_chain_url)
 		const evolutionChain = await res.json() as any

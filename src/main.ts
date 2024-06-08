@@ -15,7 +15,10 @@ registerTask(crypto.randomUUID(), 'pokemon', { id: 151 })
 
 do {
 	const hasMore = await handleNext()
-	if (!hasMore) break
+	if (hasMore === 'done') break
+	else if (hasMore === 'next') continue
+	else if (hasMore === 'wait') await new Promise(resolve => setTimeout(resolve))
+	else throw new Error('Unknown handleNext result')
 } while (true)
 
 

@@ -17,7 +17,7 @@ do {
 	const hasMore = await handleNext()
 	if (hasMore === 'done') break
 	else if (hasMore === 'next') continue
-	else if (hasMore === 'wait') await new Promise(resolve => setTimeout(resolve))
+	else if (hasMore === 'wait') await new Promise(resolve => setTimeout(resolve, 10))
 	else throw new Error('Unknown handleNext result')
 } while (true)
 

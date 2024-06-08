@@ -12,7 +12,7 @@ export interface Ctx<InitialData extends Data = {}> {
 			data: this["data"],
 		) => (Promise<T> | Promise<void> | T | void)
 	): asserts this is { data: T }
-	sleep(ms: number): void
+	sleep(seconds: number): void
 	registerTask<
 		P extends keyof Program,
 		K extends string,
@@ -31,7 +31,7 @@ type Task = {
 	/** uuid */
 	id: string
 	program: string
-	status: 'pending' | 'running' | 'success' | 'failure'
+	status: 'pending' | 'running' | 'success' | 'failure' | 'sleeping'
 	/** json */
 	data: string
 	step: number
@@ -39,6 +39,8 @@ type Task = {
 	created_at: string
 	/** datetime */
 	updated_at: string
+	/** datetime */
+	wakeup_at: string | null
 	/** uuid */
 	parent_id: string | null
 	parent_key: string | null
@@ -102,9 +104,24 @@ const storeTask = db.prepare<{
 	status: Task['status']
 }, Task>(/* sql */`
 	UPDATE tasks
-	SET data = @data, step = @step, status = @status, updated_at = CURRENT_TIMESTAMP
+	SET
+		data = @data,
+		step = @step,
+		status = @status,
+		updated_at = CURRENT_TIMESTAMP
 	WHERE id = @id
 	RETURNING *
+`)
+const sleepTask = db.prepare<{
+	id: string
+	seconds: number
+}, Task>(/* sql */`
+	UPDATE tasks
+	SET
+		step = step + 1,
+		status = 'sleeping',
+		wakeup_at = unixepoch(CURRENT_TIMESTAMP) + @seconds
+	WHERE id = @id
 `)
 const getTask = db.prepare<{
 	id: string
@@ -117,7 +134,7 @@ async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<
 
 	const steps: Array<
 		| ['callback', (data: Data) => Promise<Data | void>]
-		| ['sleep', duration: number]
+		| ['sleep', seconds: number]
 		| ['register', program: keyof Program, initial: Data, key: string, condition?: (data: Data) => boolean]
 	> = []
 	const ctx: Ctx = {
@@ -125,8 +142,8 @@ async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<
 		step(cb) {
 			steps.push(['callback', cb as any])
 		},
-		sleep(ms) {
-			steps.push(['sleep', ms])
+		sleep(seconds) {
+			steps.push(['sleep', seconds])
 		},
 		registerTask(program, initialData, key, condition) {
 			steps.push(['register', program, initialData, key, condition])
@@ -150,7 +167,8 @@ async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<
 			return
 		}
 	} else if (next[0] === 'sleep') {
-		// not implemented
+		sleepTask.run({ id: task.id, seconds: next[1] })
+		return
 	} else if (next[0] === 'register') {
 		const [_, program, initial, key, condition] = next
 		if (!condition || condition(data)) {
@@ -192,8 +210,14 @@ const getFirstTask = db.prepare<[], Task>(/* sql */`
 			WHERE parent_id IS NOT NULL
 				AND status NOT IN ('success', 'failure')
 		)
-		AND status = 'pending'
-	ORDER BY created_at ASC
+		AND (
+			status = 'pending'
+			OR (status = 'sleeping' AND wakeup_at < unixepoch(CURRENT_TIMESTAMP))
+		)
+	ORDER BY
+		id ASC,
+		created_at ASC,
+		updated_at DESC
 	LIMIT 1
 `)
 const getTaskCount = db.prepare<[], { count: number }>(/* sql */`

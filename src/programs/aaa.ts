@@ -10,6 +10,8 @@ declare global {
 			initial: InitialData
 			result: {
 				a: number
+				start: number
+				duration: number
 				yolo: string
 				c: number
 			}
@@ -22,6 +24,7 @@ export function aaa(ctx: Ctx<InitialData>) {
 	ctx.step(() => {
 		// do something
 		return {
+			start: Date.now(),
 			a: 2,
 		}
 	})
@@ -29,6 +32,7 @@ export function aaa(ctx: Ctx<InitialData>) {
 		data.a
 		//   ^?
 	})
+	ctx.sleep(1)
 	ctx.step(() => {
 		return {
 			yolo: "hello",
@@ -40,8 +44,11 @@ export function aaa(ctx: Ctx<InitialData>) {
 		//   ^?
 		data.a
 		//   ^?
+		const end = Date.now()
+		const duration = end - data.start
 		return {
-			c: 3
+			c: 3,
+			duration,
 		}
 	})
 }

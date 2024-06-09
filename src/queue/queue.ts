@@ -399,7 +399,7 @@ WHERE
 	-- not a parent of an unfinished child
 	id NOT IN (
 		SELECT parent_id FROM tasks
-		WHERE parent_id IS NOT NULL
+		WHERE parent_key IS NOT NULL
 			AND status NOT IN ('success', 'failure')
 	)
 	-- not of the same program if concurrency is reached for this program
@@ -450,8 +450,7 @@ WHERE
 	)
 ORDER BY
 	id ASC,
-	created_at ASC,
-	updated_at DESC
+	created_at ASC
 LIMIT 1
 `)
 const getTaskCount = db.prepare<[], { count: number }>(/* sql */`

@@ -1,4 +1,4 @@
-import { registerTask, type Ctx, type Data } from "../queue/queue.js"
+import { registerTask, type Ctx } from "../queue/queue.js"
 
 type InitialData = {
 	id: number

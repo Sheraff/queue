@@ -14,6 +14,7 @@ declare global {
 				duration: number
 				yolo: string
 				c: number
+				foo?: string
 			}
 		}
 	}

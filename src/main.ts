@@ -3,6 +3,7 @@ import { pokemon } from "./programs/pokemon.js"
 
 import { handleNext, registerProgram, registerTask } from "./queue/queue.js"
 
+// TODO: enforce that all programs are registered 
 registerProgram('aaa', aaa)
 registerProgram('pokemon', pokemon)
 

@@ -14,6 +14,7 @@ declare global {
 				evolution_chain_url: string
 				chain: string[]
 				next?: Program['pokemon']['result']
+				awaited: Program['aaa']['result']
 			}
 		}
 	}
@@ -26,10 +27,14 @@ export function pokemon(ctx: Ctx<InitialData>) {
 	ctx.step(async (data) => {
 		const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${data.id}`)
 		const pokemon = await res.json() as any
+		setTimeout(() => {
+			registerTask(crypto.randomUUID(), 'aaa', { foo: `wait for target ${data.id}` })
+		}, 500)
 		return {
 			species_url: pokemon.species.url,
 		}
 	})
+	ctx.waitForTask('aaa', 'awaited', ['foo', `wait for target ${ctx.data.id}`])
 	ctx.step(async (data) => {
 		const res = await fetch(data.species_url)
 		const species = await res.json() as any
@@ -48,12 +53,10 @@ export function pokemon(ctx: Ctx<InitialData>) {
 			chain.push(pokemon.species.name)
 			pokemon = pokemon.evolves_to[0]
 		}
-		if (chain.length > 2) {
-			registerTask(crypto.randomUUID(), 'aaa', { foo: `from pokemon ${data.id}` })
-		}
 		return {
 			chain,
-			next_id: data.next?.id
+			next_id: data.next?.id,
+			awaited_result: data.awaited?.foo,
 		}
 	})
 }

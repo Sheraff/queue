@@ -113,6 +113,17 @@ export function defineProgram<Name extends keyof Registry>(
 	return { [name]: { program, options } } as unknown as ProgramDefinition<Name>
 }
 
+const updateOptions = db.prepare<{
+	program: keyof Registry
+	concurrency: number
+	delay_between_seconds: number
+}>(/* sql */`
+	UPDATE tasks
+	SET
+		concurrency = @concurrency,
+		delay_between_seconds = @delay_between_seconds
+	WHERE program = @program
+`)
 export function registerPrograms(programs: {
 	[P in keyof Registry]: {
 		program: Program<Registry[P]['initial']>
@@ -120,17 +131,23 @@ export function registerPrograms(programs: {
 	}
 }) {
 	for (const [name, { program, options = {} }] of Object.entries(programs) as any) {
+		const opts = {
+			retry: 3,
+			retryDelayMs: 5_000,
+			delayBetweenMs: 0,
+			...options,
+			concurrency: options.delayBetweenMs ? 1 : (options.concurrency ?? Infinity),
+		}
 		registry.set(name, {
 			program,
-			options: {
-				retry: 3,
-				retryDelayMs: 5_000,
-				delayBetweenMs: 0,
-				...options,
-				concurrency: options.delayBetweenMs ? 1 : (options.concurrency ?? Infinity),
-			},
+			options: opts,
 		})
-		// TODO: go over existing tasks of this program, and update their options (in case they have changed since the last registration)
+		// update existing tasks with new options to avoid possible deadlocks
+		updateOptions.run({
+			program: name,
+			concurrency: opts.concurrency,
+			delay_between_seconds: opts.delayBetweenMs / 1000,
+		})
 	}
 }
 

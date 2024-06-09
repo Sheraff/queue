@@ -130,7 +130,7 @@ const storeTask = db.prepare<{
 const sleepTask = db.prepare<{
 	id: string
 	seconds: number
-}>(/* sql */`
+}, Task>(/* sql */`
 	UPDATE tasks
 	SET
 		step = step + 1,
@@ -138,6 +138,7 @@ const sleepTask = db.prepare<{
 		wakeup_at = unixepoch(CURRENT_TIMESTAMP) + @seconds,
 		updated_at = CURRENT_TIMESTAMP
 	WHERE id = @id
+	RETURNING *
 `)
 const waitTask = db.prepare<{
 	id: string
@@ -145,7 +146,7 @@ const waitTask = db.prepare<{
 	key: string
 	path: string
 	value: string
-}>(/* sql */`
+}, Task>(/* sql */`
 	UPDATE tasks
 	SET
 		step = step + 1,
@@ -156,6 +157,7 @@ const waitTask = db.prepare<{
 		wait_for_value = @value,
 		updated_at = CURRENT_TIMESTAMP
 	WHERE id = @id
+	RETURNING *
 `)
 const resolveWaitTask = db.prepare<{
 	id: string
@@ -210,41 +212,6 @@ async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<
 	// run next step
 	const next = steps[task.step]
 	if (!next) {
-		throw new Error('No next step found')
-	}
-
-	if (next[0] === 'sleep') {
-		sleepTask.run({ id: task.id, seconds: next[1] })
-		return
-	}
-
-	if (next[0] === 'wait') {
-		const [_, program, key, path, value] = next
-		waitTask.run({ id: task.id, program, key, path: `$.${path}`, value: JSON.stringify({ value }) })
-		return
-	}
-
-	if (next[0] === 'callback') {
-		try {
-			const augment = await asyncLocalStorage.run(task, () => next[1](data))
-			Object.assign(data, augment)
-		} catch (e) {
-			console.error(e)
-			storeTask.run({ id: task.id, data: JSON.stringify(data), step: task.step, status: 'failure' })
-			return
-		}
-	} else if (next[0] === 'register') {
-		const [_, program, initial, key, condition] = next
-		if (!condition || condition(data)) {
-			asyncLocalStorage.run(task, () => registerTask(crypto.randomUUID(), program, initial, key))
-		}
-	} else {
-		throw new Error('Unknown step type')
-	}
-	task.step++
-
-	// delete task from DB
-	if (task.step === steps.length) {
 		console.log('task done', task.id, data)
 		const tx = db.transaction((params: { id: string, data: Data }) => {
 			const result = storeTask.get({ id: params.id, data: JSON.stringify(params.data), step: task.step, status: 'success' })
@@ -257,8 +224,50 @@ async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<
 			}
 		})
 		tx({ id: task.id, data })
-	} else {
-		storeTask.run({ id: task.id, data: JSON.stringify(data), step: task.step, status: 'pending' })
+		return
+	}
+
+	run: {
+		if (next[0] === 'sleep') {
+			task = sleepTask.get({ id: task.id, seconds: next[1] })!
+			break run
+		}
+
+		if (next[0] === 'wait') {
+			const [_, program, key, path, value] = next
+			task = waitTask.get({ id: task.id, program, key, path: `$.${path}`, value: JSON.stringify({ value }) })!
+			break run
+		}
+
+		if (next[0] === 'callback') {
+			try {
+				const augment = await asyncLocalStorage.run(task, () => next[1](data))
+				Object.assign(data, augment)
+				task.step++
+				task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step, status: 'running' })!
+			} catch (e) {
+				console.error(e)
+				task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step, status: 'failure' })!
+			} finally {
+				break run
+			}
+		}
+
+		if (next[0] === 'register') {
+			const [_, program, initial, key, condition] = next
+			if (!condition || condition(data)) {
+				asyncLocalStorage.run(task, () => registerTask(crypto.randomUUID(), program, initial, key))
+			}
+			task.step++
+			task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step, status: 'running' })!
+			break run
+		}
+
+		throw new Error('Unknown step type')
+	}
+
+	if (task.status === 'running') {
+		await handleProgram(task, program)
 	}
 }
 

@@ -5,12 +5,12 @@ CREATE TABLE
 		step INTEGER NOT NULL DEFAULT 0,
 		status TEXT NOT NULL DEFAULT 'pending', -- pending, running, success, failure, sleeping, waiting
 		data TEXT NOT NULL DEFAULT '{}',
-		-- parent task
+		-- parent task (child task was registered during the execution of parent task)
 		parent_id TEXT DEFAULT NULL,
 		parent_key TEXT DEFAULT NULL,
 		-- sleep
 		wakeup_at INTEGER DEFAULT NULL,
-		-- wait for
+		-- wait for (parent task registered a listener, not knowing if/when child task will exist)
 		wait_for_program TEXT DEFAULT NULL,
 		wait_for_key TEXT DEFAULT NULL,
 		wait_for_path TEXT DEFAULT NULL,

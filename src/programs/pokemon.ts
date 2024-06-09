@@ -1,18 +1,17 @@
-import { registerTask, type Ctx, type ProgramEntry } from "../queue/queue.js"
+import { defineProgram, registerTask, type ProgramEntry } from "../queue/queue.js"
 
-type InitialData = {
-	id: number
-}
 
 declare global {
 	interface Registry {
-		pokemon: ProgramEntry<InitialData, {
-			next_id?: number
+		pokemon: ProgramEntry<{
+			id: number
+		}, {
 			species_url: string
+			awaited?: Registry['aaa']['result']
 			evolution_chain_url?: string
 			chain?: string[]
 			next?: Registry['pokemon']['result']
-			awaited?: Registry['aaa']['result']
+			next_id?: number
 		}>
 	}
 }
@@ -20,8 +19,11 @@ declare global {
 /**
  * a queued job that fetches a pokemon by id, and then fetches all the evolutions of that pokemon
  */
-export function pokemon(ctx: Ctx<InitialData>) {
-	ctx.step(async (data) => {
+export const pokemon = defineProgram('pokemon', {
+	retry: 1,
+	retryDelayMs: (attempt) => 2 ** attempt * 1000,
+}, (ctx) => ctx
+	.step(async (data) => {
 		const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${data.id}`)
 		const pokemon = await res.json() as any
 		setTimeout(() => {
@@ -31,9 +33,9 @@ export function pokemon(ctx: Ctx<InitialData>) {
 			species_url: pokemon.species.url as string,
 		}
 	})
-	ctx.waitForTask('aaa', 'awaited', ['foo', `wait for target ${ctx.data.id}`])
-	ctx.done((data) => data.id === 3)
-	ctx.step(async (data) => {
+	.waitForTask('aaa', 'awaited', ['foo', `wait for target ${ctx.data.id}`])
+	.done((data) => data.id === 3)
+	.step(async (data) => {
 		const res = await fetch(data.species_url)
 		const species = await res.json() as any
 		if (data.id === 152) throw new Error('this is a test error')
@@ -41,8 +43,8 @@ export function pokemon(ctx: Ctx<InitialData>) {
 			evolution_chain_url: species.evolution_chain.url as string,
 		}
 	})
-	ctx.registerTask('pokemon', { id: ctx.data.id + 1 }, 'next', (data) => data.id === 151 || data.id === 2)
-	ctx.step(async (data) => {
+	.registerTask('pokemon', { id: ctx.data.id + 1 }, 'next', (data) => data.id === 151 || data.id === 2)
+	.step(async (data) => {
 		const res = await fetch(data.evolution_chain_url)
 		const evolutionChain = await res.json() as any
 		let pokemon = evolutionChain.chain
@@ -57,4 +59,5 @@ export function pokemon(ctx: Ctx<InitialData>) {
 			awaited_result: data.awaited?.foo,
 		}
 	})
-}
+)
+

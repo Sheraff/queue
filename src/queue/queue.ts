@@ -3,17 +3,21 @@ import { db } from "../db/instance.js"
 
 type GenericSerializable = string | number | boolean | null | undefined | GenericSerializable[] | { [key: string]: GenericSerializable }
 
-export type Data = Record<string, GenericSerializable>
+type Data = Record<string, GenericSerializable>
 
 export interface Ctx<InitialData extends Data = {}> {
 	data: Data & InitialData
-	step<T extends Partial<this["data"]>>(
+	step<T extends Data>(
 		cb: (
 			data: this["data"],
 		) => (Promise<T> | Promise<void> | T | void)
-	): asserts this is { data: T }
-	done(condition?: (data: this["data"]) => boolean): void
-	sleep(ms: number): void
+	): Ctx<InitialData & T>
+	/**
+	 * Warning: using `done` in the middle of a program prevents us from ensuring typesafety for the final data shape.
+	 * All keys added after `done` should be made optional (`?:`) in the `result` type of the `ProgramEntry` definition.
+	 */
+	done(condition?: (data: this["data"]) => boolean): Ctx<InitialData>
+	sleep(ms: number): Ctx<InitialData>
 	registerTask<
 		P extends keyof Registry,
 		K extends string,
@@ -22,9 +26,7 @@ export interface Ctx<InitialData extends Data = {}> {
 		initialData: Registry[P]['initial'],
 		key: K,
 		condition?: (data: this["data"]) => boolean
-	): asserts this is {
-		data: { [key in K]?: Registry[P]['result'] }
-	}
+	): Ctx<InitialData & { [key in K]?: Registry[P]['result'] }>
 	waitForTask<
 		P extends keyof Registry,
 		K extends string,
@@ -32,9 +34,7 @@ export interface Ctx<InitialData extends Data = {}> {
 		program: P,
 		key: K,
 		condition: [path: string, value: GenericSerializable]
-	): asserts this is {
-		data: { [key in K]?: Registry[P]['result'] }
-	}
+	): Ctx<InitialData & { [key in K]?: Registry[P]['result'] }>
 }
 
 type Task = {
@@ -68,11 +68,11 @@ type Task = {
 /*************************************************/
 
 export type ProgramEntry<
-	I extends Data = Record<string, never>,
-	R extends Data = Record<string, never>
+	initial extends Data = Record<string, never>,
+	result extends Data = initial
 > = {
-	initial: I
-	result: I & R
+	initial: initial
+	result: initial & result
 }
 
 declare global {
@@ -94,14 +94,24 @@ type ProgramOptions = {
 	delayBetweenMs: number
 }
 
-type Program<D extends Data> = (ctx: Ctx<D>) => (void | Promise<void>)
+type Program<D extends Data> = (ctx: Ctx<D>) => Ctx<D>
 
-type ProgramDefinition = {
+type ProgramRegistryItem = {
 	program: Program<Data>
 	options: ProgramOptions
 }
 
-const registry = new Map<keyof Registry, ProgramDefinition>()
+const registry = new Map<keyof Registry, ProgramRegistryItem>()
+
+type ProgramDefinition<P extends keyof Registry> = { [name in P]: { program: Program<Registry[P]['initial']>, options: Partial<ProgramOptions> } }
+
+export function defineProgram<Name extends keyof Registry>(
+	name: Name,
+	options: Partial<ProgramOptions>,
+	program: (ctx: Ctx<Registry[Name]['initial']>) => Ctx<Registry[Name]['result']>
+): ProgramDefinition<Name> {
+	return { [name]: { program, options } } as unknown as ProgramDefinition<Name>
+}
 
 export function registerPrograms(programs: {
 	[P in keyof Registry]: {
@@ -254,7 +264,7 @@ const getTask = db.prepare<{
 	SELECT * FROM tasks
 	WHERE id = @id
 `)
-async function handleProgram(task: Task, entry: ProgramDefinition) {
+async function handleProgram(task: Task, entry: ProgramRegistryItem) {
 	const data = JSON.parse(task.data) as Data
 
 	let step:
@@ -268,39 +278,45 @@ async function handleProgram(task: Task, entry: ProgramDefinition) {
 		let index = 0
 		const foundToken = Symbol('found')
 		try {
-			await entry.program({
+			const ctx: Ctx<Data> = {
 				data,
 				step(cb) {
 					if (task.step === index++) {
 						step = ['callback', cb as any]
 						throw foundToken
 					}
+					return ctx as any
 				},
 				done(condition) {
 					if (task.step === index++) {
 						step = ['done', condition]
 						throw foundToken
 					}
+					return ctx
 				},
 				sleep(ms) {
 					if (task.step === index++) {
 						step = ['sleep', ms]
 						throw foundToken
 					}
+					return ctx
 				},
 				registerTask(program, initialData, key, condition) {
 					if (task.step === index++) {
 						step = ['register', program, initialData, key, condition]
 						throw foundToken
 					}
+					return ctx as any
 				},
 				waitForTask(program, key, condition) {
 					if (task.step === index++) {
 						step = ['wait', program, key, condition[0], condition[1]]
 						throw foundToken
 					}
+					return ctx as any
 				},
-			})
+			}
+			entry.program(ctx)
 		} catch (e) {
 			if (e !== foundToken) throw e
 		}
@@ -367,7 +383,7 @@ async function handleProgram(task: Task, entry: ProgramDefinition) {
 		if (next[0] === 'register') {
 			const [_, program, initial, key, condition] = next
 			if (!condition || condition(data)) {
-				asyncLocalStorage.run(task, () => registerTask(crypto.randomUUID(), program, initial, key))
+				asyncLocalStorage.run(task, () => registerTask(crypto.randomUUID(), program, initial as any, key))
 			}
 			task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step + 1, status: 'pending' })!
 			break run

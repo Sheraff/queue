@@ -6,23 +6,9 @@ import { handleNext, registerPrograms, registerTask } from "./queue/queue.js"
 
 
 registerPrograms({
-	aaa: {
-		program: aaa,
-		options: {
-			concurrency: 1,
-			delayBetweenMs: 1000,
-		}
-	},
-	pokemon: {
-		program: pokemon,
-		options: {
-			retry: 1,
-			retryDelayMs: (attempt) => 2 ** attempt * 1000,
-		}
-	},
-	notask: {
-		program: notask,
-	}
+	...aaa,
+	...pokemon,
+	...notask,
 })
 
 // ids should be static for idempotency, but for now we'll just generate random ids

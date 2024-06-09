@@ -1,16 +1,10 @@
-import type { Ctx, ProgramEntry } from "../queue/queue.js"
-
-type InitialData = {
-	mimi: string
-}
+import { defineProgram, type ProgramEntry } from "../queue/queue.js"
 
 declare global {
 	interface Registry {
-		notask: ProgramEntry<InitialData>
+		notask: ProgramEntry<{ mimi: string }>
 	}
 }
 
+export const notask = defineProgram('notask', {}, (ctx) => ctx)
 
-export function notask(ctx: Ctx<InitialData>) {
-
-}

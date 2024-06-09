@@ -1,44 +1,44 @@
-import type { Ctx, ProgramEntry } from "../queue/queue.js"
-
-type InitialData = {
-	foo?: string
-	registered_on?: number
-}
+import { defineProgram, type ProgramEntry } from "../queue/queue.js"
 
 declare global {
 	interface Registry {
-		aaa: ProgramEntry<InitialData, {
+		aaa: ProgramEntry<{
+			foo?: string
+			registered_on: number
+		}, {
 			start: number
 			a: number
 			yolo: string
 			c: number
 			duration: number
-			since_registered?: number
+			since_registered: number | undefined
 		}>
 	}
 }
 
-
-export function aaa(ctx: Ctx<InitialData>) {
-	ctx.step(() => {
+export const aaa = defineProgram('aaa', {
+	concurrency: 1,
+	delayBetweenMs: 500,
+}, (ctx) => ctx
+	.step(() => {
 		// do something
 		return {
 			start: Date.now(),
 			a: 2,
 		}
 	})
-	ctx.step((data) => {
+	.step((data) => {
 		data.a
 		//   ^?
 	})
-	// ctx.sleep(1000)
-	ctx.step(() => {
+	.sleep(500)
+	.step(() => {
 		return {
 			yolo: "hello",
 			a: 2
 		} as const
 	})
-	ctx.step((data) => {
+	.step((data) => {
 		data.yolo
 		//   ^?
 		data.a
@@ -52,4 +52,5 @@ export function aaa(ctx: Ctx<InitialData>) {
 			since_registered,
 		}
 	})
-}
+)
+

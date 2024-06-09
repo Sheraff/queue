@@ -22,6 +22,7 @@ declare global {
 export const pokemon = defineProgram('pokemon', {
 	retry: 1,
 	retryDelayMs: (attempt) => 2 ** attempt * 1000,
+	priority: (data) => data.id === 151 ? 2 : 1,
 }, (ctx) => ctx
 	.step(async (data) => {
 		const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${data.id}`)

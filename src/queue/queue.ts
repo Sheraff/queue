@@ -48,6 +48,7 @@ type Task = {
 	retry: number
 	concurrency: number
 	delay_between_seconds: number
+	priority: number
 	/** unix timestamp in seconds (float) */
 	created_at: number
 	/** unix timestamp in seconds (float) */
@@ -83,7 +84,7 @@ declare global {
 	}
 }
 
-type ProgramOptions = {
+type ProgramOptions<Name extends keyof Registry = keyof Registry> = {
 	/** default 3 */
 	retry: number
 	/** default 5000ms */
@@ -92,6 +93,8 @@ type ProgramOptions = {
 	concurrency: number
 	/** default 0, any value above 0 will force `concurrency: 1` */
 	delayBetweenMs: number
+	/** default 0 */
+	priority: number | ((data: Registry[Name]['initial']) => number)
 }
 
 type Program<D extends Data> = (ctx: Ctx<D>) => Ctx<D>
@@ -107,8 +110,8 @@ type ProgramDefinition<P extends keyof Registry> = { [name in P]: { program: Pro
 
 export function defineProgram<Name extends keyof Registry>(
 	name: Name,
-	options: Partial<ProgramOptions>,
-	program: (ctx: Ctx<Registry[Name]['initial']>) => Ctx<Registry[Name]['result']>
+	options: NoInfer<Partial<ProgramOptions<Name>>>,
+	program: NoInfer<(ctx: Ctx<Registry[Name]['initial']>) => Ctx<Registry[Name]['result']>>
 ): ProgramDefinition<Name> {
 	return { [name]: { program, options } } as unknown as ProgramDefinition<Name>
 }
@@ -135,6 +138,7 @@ export function registerPrograms(programs: {
 			retry: 3,
 			retryDelayMs: 5_000,
 			delayBetweenMs: 0,
+			priority: 0,
 			...options,
 			concurrency: options.delayBetweenMs ? 1 : (options.concurrency ?? Infinity),
 		}
@@ -147,6 +151,7 @@ export function registerPrograms(programs: {
 			program: name,
 			concurrency: opts.concurrency,
 			delay_between_seconds: opts.delayBetweenMs / 1000,
+			// TODO: for priority, we would have to iterate in JS, not doable in SQL
 		})
 	}
 }
@@ -165,6 +170,7 @@ const register = db.prepare<{
 	parent_key: string | null
 	concurrency: number
 	delay_between_seconds: number
+	priority: number
 }>(/* sql */`
 	INSERT INTO tasks (
 		id,
@@ -174,6 +180,7 @@ const register = db.prepare<{
 		parent_key,
 		concurrency,
 		delay_between_seconds,
+		priority,
 		created_at,
 		updated_at
 	)
@@ -185,6 +192,7 @@ const register = db.prepare<{
 		@parent_key,
 		@concurrency,
 		@delay_between_seconds,
+		@priority,
 		unixepoch ('subsec'),
 		unixepoch ('subsec')
 	)
@@ -202,6 +210,7 @@ export function registerTask<P extends keyof Registry>(id: string, program: P, i
 		parent_key: parentKey ?? null,
 		concurrency: p.options.concurrency,
 		delay_between_seconds: p.options.delayBetweenMs / 1000,
+		priority: typeof p.options.priority === 'function' ? p.options.priority(initialData) : p.options.priority,
 	})
 }
 
@@ -485,8 +494,9 @@ WHERE
 		))
 	)
 ORDER BY
-	id ASC,
-	created_at ASC
+	priority DESC,
+	created_at ASC,
+	id ASC
 LIMIT 1
 `)
 const getTaskCount = db.prepare<[], { count: number }>(/* sql */`
@@ -512,7 +522,7 @@ const getNext = db.transaction(() => {
 export async function handleNext() {
 	const task = getNext()
 	if (task) {
-		console.log('handle', task.id, task.program, task.step)
+		console.log('handle', task.program, task.step, task.data.slice(0, 30) + (task.data.length > 30 ? '…' : ''))
 		handleProgram(task, registry.get(task.program)!)
 		return "next"
 	}

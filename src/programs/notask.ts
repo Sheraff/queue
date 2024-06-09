@@ -6,5 +6,7 @@ declare global {
 	}
 }
 
-export const notask = defineProgram('notask', {}, (ctx) => ctx)
+export const notask = defineProgram('notask', {
+	priority: 999,
+}, (ctx) => ctx)
 

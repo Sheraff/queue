@@ -7,6 +7,7 @@ CREATE TABLE
 		retry INTEGER NOT NULL DEFAULT 0,
 		concurrency INTEGER NOT NULL DEFAULT 1e999, -- 1e999 = infinity
 		delay_between_seconds REAL NOT NULL DEFAULT 0,
+		priority INTEGER NOT NULL DEFAULT 0,
 		data TEXT NOT NULL DEFAULT '{}',
 		-- parent task (child task was registered during the execution of parent task)
 		parent_id TEXT DEFAULT NULL,

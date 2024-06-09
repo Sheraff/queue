@@ -3,7 +3,15 @@ CREATE TABLE
 		id TEXT PRIMARY KEY,
 		program TEXT NOT NULL,
 		step INTEGER NOT NULL DEFAULT 0,
-		status TEXT NOT NULL DEFAULT 'pending', -- pending, running, success, failure, sleeping, waiting
+		-- status
+		-- pending: task is waiting to be executed, nothing is blocking it
+		-- running: task is being handled by a worker
+		-- success: task has been executed successfully
+		-- failure: task has been executed but failed
+		-- sleeping: task is waiting for a specific time to be executed
+		-- waiting: task is waiting for an event to be triggered
+		-- stalled: task is waiting on another task to finish
+		status TEXT NOT NULL DEFAULT 'pending',
 		retry INTEGER NOT NULL DEFAULT 0,
 		concurrency INTEGER NOT NULL DEFAULT 1e999, -- 1e999 = infinity
 		delay_between_seconds REAL NOT NULL DEFAULT 0,

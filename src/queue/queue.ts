@@ -57,7 +57,7 @@ type Task = {
 	/** uuid */
 	id: string
 	program: keyof Registry
-	status: 'pending' | 'running' | 'success' | 'failure' | 'sleeping' | 'waiting'
+	status: 'pending' | 'running' | 'success' | 'failure' | 'sleeping' | 'waiting' | 'stalled'
 	/** json */
 	data: string
 	step: number
@@ -234,7 +234,7 @@ export function registerTask<P extends keyof Registry>(id: string, program: P, i
 		program,
 		data: JSON.stringify(initialData),
 		parent: parent?.id ?? null,
-		parent_key: parentKey ?? null,
+		parent_key: parentKey ? `$.${parentKey}` : null,
 		concurrency: p.options.concurrency,
 		delay_between_seconds: p.options.delayBetweenMs / 1000,
 		priority: typeof p.options.priority === 'function' ? p.options.priority(initialData) : p.options.priority,
@@ -393,7 +393,15 @@ async function handleProgram(task: Task, entry: ProgramRegistryItem) {
 						: entry.options.retryDelayMs
 					task = sleepTask.get({ id: task.id, seconds: delayMs / 1000, retry: task.retry + 1, step: task.step })!
 				} else {
-					task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step, status: 'failure' })!
+					const tx = db.transaction((params: { id: string, data: Data }) => {
+						const result = markTaskDone.get({ id: params.id, data: JSON.stringify(params.data), status: 'failure' })!
+						if (result.parent_id && result.parent_key) {
+							updateParentAfterDone.get({ data: result.data, status: 'failure', parent_id: result.parent_id, parent_key: result.parent_key })!
+						}
+						return result
+					})
+					task = tx({ id: task.id, data })!
+
 				}
 			} finally {
 				break run
@@ -408,13 +416,9 @@ async function handleProgram(task: Task, entry: ProgramRegistryItem) {
 			}
 			console.log('task done', task.id, data)
 			const tx = db.transaction((params: { id: string, data: Data }) => {
-				const result = storeTask.get({ id: params.id, data: JSON.stringify(params.data), step: task.step, status: 'success' })
-				if (result?.parent_id && result?.parent_key) {
-					const parent = getTask.get({ id: result.parent_id })
-					if (!parent) throw new Error('Parent not found')
-					const parentData = JSON.parse(parent.data) as Data
-					parentData[result.parent_key] = params.data
-					storeTask.run({ id: parent.id, data: JSON.stringify(parentData), step: parent.step, status: parent.status })
+				const result = markTaskDone.get({ id: params.id, data: JSON.stringify(data), status: 'success' })!
+				if (result.parent_id && result.parent_key) {
+					updateParentAfterDone.get({ data: result.data, status: 'success', parent_id: result.parent_id, parent_key: result.parent_key })!
 				}
 				return result
 			})
@@ -427,7 +431,7 @@ async function handleProgram(task: Task, entry: ProgramRegistryItem) {
 			if (!condition || condition(data)) {
 				asyncLocalStorage.run(task, () => registerTask(crypto.randomUUID(), program, initial as any, key))
 			}
-			task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step + 1, status: 'pending' })!
+			task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step + 1, status: 'stalled' })!
 			break run
 		}
 
@@ -440,6 +444,36 @@ async function handleProgram(task: Task, entry: ProgramRegistryItem) {
 		await handleProgram(task, entry)
 	}
 }
+
+const markTaskDone = db.prepare<{
+	id: string
+	data: string
+	status: "success" | "failure"
+}, Task>(/* sql */`
+	UPDATE tasks
+	SET
+		status = @status,
+		data = @data,
+		updated_at = unixepoch ('subsec')
+	WHERE id = @id
+	RETURNING *
+`)
+const updateParentAfterDone = db.prepare<{
+	data: string
+	status: "success" | "failure"
+	parent_id: string
+	parent_key: string
+}, Task>(/* sql */`
+	UPDATE tasks
+	SET
+		-- TODO: is this correct to cascade the failure status? should it be an option?
+		status = CASE WHEN @status = 'success' THEN tasks.status ELSE @status END,
+		data = JSON_SET(data, @parent_key, json(@data)),
+		updated_at = unixepoch ('subsec')
+	WHERE id = @parent_id
+	RETURNING *
+`)
+
 
 const getFirstTask = db.prepare<[], Task>(/* sql */`
 SELECT * FROM tasks
@@ -486,6 +520,14 @@ WHERE
 	AND (
 		status = 'pending'
 		OR (status = 'sleeping' AND wakeup_at < unixepoch('subsec'))
+		OR (status = 'stalled' AND 0 = (
+			SELECT COUNT(*)
+			FROM tasks AS child
+			WHERE
+				child.parent_id = tasks.id
+				AND child.status NOT IN ('success', 'failure')
+			LIMIT 1
+		))
 		OR (status = 'waiting' AND 0 < (
 			SELECT COUNT(*)
 			FROM tasks AS child
@@ -505,6 +547,17 @@ LIMIT 1
 const getTaskCount = db.prepare<[], { count: number }>(/* sql */`
 	SELECT COUNT(*) as count FROM tasks
 	WHERE status NOT IN ('success', 'failure')
+`)
+const markRunning = db.prepare<{
+	id: string
+}, Task>(/* sql */`
+	UPDATE tasks
+	SET
+		status = 'running',
+		wakeup_at = NULL,
+		updated_at = unixepoch ('subsec')
+	WHERE id = @id
+	RETURNING *
 `)
 const resolveWait = db.prepare<{
 	id: string
@@ -547,7 +600,7 @@ const getNext = db.transaction(() => {
 	if (!task) return undefined
 	if (!task.wait_for_program) {
 		// we'll be running this task, mark it as such
-		return storeTask.get({ id: task.id, data: task.data, step: task.step, status: 'running' })
+		return markRunning.get({ id: task.id })
 	} else {
 		// this task was picked up because it was waiting for another task that has now completed
 		const toto = resolveWait.get({ id: task.id })
@@ -563,6 +616,7 @@ export async function handleNext() {
 	}
 	const count = getTaskCount.get()
 	if (count?.count) {
+		// console.log('wait', count.count)
 		// TODO: we should be able to know "how long before the next task is ready to run"
 		// (as long as no new tasks are added in the meantime)
 		// This would greatly reduce the need for polling, and the actual polling would be made much more frequent

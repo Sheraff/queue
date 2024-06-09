@@ -1,9 +1,9 @@
 import { AsyncLocalStorage } from "async_hooks"
 import { db } from "../db/instance.js"
 
-type GenericSerializable = string | number | boolean | null | GenericSerializable[] | { [key: string]: GenericSerializable }
+type GenericSerializable = string | number | boolean | null | undefined | GenericSerializable[] | { [key: string]: GenericSerializable }
 
-export type Data = { [key: string]: GenericSerializable }
+export type Data = Record<string, GenericSerializable>
 
 export interface Ctx<InitialData extends Data = {}> {
 	data: Data & InitialData
@@ -76,7 +76,7 @@ export type ProgramEntry<
 }
 
 declare global {
-	interface Registry extends Record<string, ProgramEntry<Data, Data>> {
+	interface Registry {
 		/**
 		 * this is to be augmented by each program
 		 */
@@ -94,33 +94,34 @@ type ProgramOptions = {
 	delayBetweenMs: number
 }
 
+type Program<D extends Data> = (ctx: Ctx<D>) => (void | Promise<void>)
+
 type ProgramDefinition = {
-	program: (ctx: Ctx<Data>) => (void | Promise<void>)
+	program: Program<Data>
 	options: ProgramOptions
 }
 
-const programs = new Map<keyof Registry, ProgramDefinition>()
+const registry = new Map<keyof Registry, ProgramDefinition>()
 
-export function registerProgram<P extends keyof Registry>({
-	name,
-	program,
-	options = {},
-}: {
-	name: P,
-	program: NoInfer<(ctx: Ctx<Registry[P]['initial']>) => (void | Promise<void>)>,
-	options?: Partial<ProgramOptions>
+export function registerPrograms(programs: {
+	[P in keyof Registry]: {
+		program: Program<Registry[P]['initial']>
+		options?: Partial<ProgramOptions>
+	}
 }) {
-	programs.set(name, {
-		program,
-		options: {
-			retry: 3,
-			retryDelayMs: 5_000,
-			delayBetweenMs: 0,
-			...options,
-			concurrency: options.delayBetweenMs ? 1 : (options.concurrency ?? Infinity),
-		},
-	})
-	// TODO: go over existing tasks of this program, and update their options (in case they have changed since the last registration)
+	for (const [name, { program, options = {} }] of Object.entries(programs) as any) {
+		registry.set(name, {
+			program,
+			options: {
+				retry: 3,
+				retryDelayMs: 5_000,
+				delayBetweenMs: 0,
+				...options,
+				concurrency: options.delayBetweenMs ? 1 : (options.concurrency ?? Infinity),
+			},
+		})
+		// TODO: go over existing tasks of this program, and update their options (in case they have changed since the last registration)
+	}
 }
 
 /********************************************/
@@ -162,8 +163,8 @@ const register = db.prepare<{
 	)
 `)
 export function registerTask<P extends keyof Registry>(id: string, program: P, initialData: Registry[P]['initial'], parentKey?: string) {
-	const p = programs.get(program)
-	if (!p) throw new Error(`Unknown program: ${program}. Available programs: ${[...programs.keys()].join(', ')}`)
+	const p = registry.get(program)
+	if (!p) throw new Error(`Unknown program: ${program}. Available programs: ${[...registry.keys()].join(', ')}`)
 	const parent = asyncLocalStorage.getStore()
 	console.log('register', program, parent?.id, parentKey, id)
 	register.run({
@@ -479,7 +480,7 @@ export async function handleNext() {
 	const task = getNext()
 	if (task) {
 		console.log('handle', task.id, task.program, task.step)
-		handleProgram(task, programs.get(task.program)!)
+		handleProgram(task, registry.get(task.program)!)
 		return "next"
 	}
 	const count = getTaskCount.get()

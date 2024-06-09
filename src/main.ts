@@ -2,28 +2,27 @@ import { aaa } from "./programs/aaa.js"
 import { pokemon } from "./programs/pokemon.js"
 import { notask } from "./programs/notask.js"
 
-import { handleNext, registerProgram, registerTask } from "./queue/queue.js"
+import { handleNext, registerPrograms, registerTask } from "./queue/queue.js"
 
-// TODO: enforce that all programs are registered 
-registerProgram({
-	name: 'aaa',
-	program: aaa,
-	options: {
-		concurrency: 1,
-		delayBetweenMs: 1000,
+
+registerPrograms({
+	aaa: {
+		program: aaa,
+		options: {
+			concurrency: 1,
+			delayBetweenMs: 1000,
+		}
+	},
+	pokemon: {
+		program: pokemon,
+		options: {
+			retry: 1,
+			retryDelayMs: (attempt) => 2 ** attempt * 1000,
+		}
+	},
+	notask: {
+		program: notask,
 	}
-})
-registerProgram({
-	name: 'pokemon',
-	program: pokemon,
-	options: {
-		retry: 1,
-		retryDelayMs: (attempt) => 2 ** attempt * 1000,
-	}
-})
-registerProgram({
-	name: 'notask',
-	program: notask,
 })
 
 // ids should be static for idempotency, but for now we'll just generate random ids

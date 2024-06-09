@@ -7,6 +7,12 @@ type GenericSerializable = Scalar | undefined | GenericSerializable[] | { [key: 
 
 type Data = Record<string, GenericSerializable>
 
+// TODO: there should be a way to inject a logger
+
+// TODO: some logic to "delete old tasks" (those that are done, and we did everything we wanted with the data)
+
+// TODO: would be fun to have some observability (graph of tasks, and some metrics)
+
 export interface Ctx<InitialData extends Data = {}> {
 	data: Data & InitialData
 	task: Task
@@ -20,6 +26,7 @@ export interface Ctx<InitialData extends Data = {}> {
 	 * Warning: using `done` in the middle of a program prevents us from ensuring typesafety for the final data shape.
 	 * All keys added after `done` should be made optional (`?:`) in the `result` type of the `ProgramEntry` definition.
 	 */
+	// TODO: should provide `task` in addition to `data`
 	done(condition?: (data: this["data"]) => boolean): Ctx<InitialData>
 	sleep(ms: number): Ctx<InitialData>
 	registerTask<
@@ -29,7 +36,9 @@ export interface Ctx<InitialData extends Data = {}> {
 		program: P,
 		initialData: Registry[P]['initial'],
 		key: K,
+		// TODO: should provide `task` in addition to `data`
 		condition?: (data: this["data"]) => boolean
+		// TODO: there should be a way to specify whether we want to wait for the task to finish or not
 	): Ctx<InitialData & { [key in K]?: Registry[P]['result'] }>
 	waitForTask<
 		P extends keyof Registry,
@@ -39,7 +48,8 @@ export interface Ctx<InitialData extends Data = {}> {
 		/** an SQL path to be used in `JSON_EXTRACT`, for example `c[2].f` (without the `$.` prefix) */
 		key: K,
 		/** the first term is an SQL path to be used in `JSON_EXTRACT`, for example `c[2].f` (without the `$.` prefix) */
-		condition: [path: string, value: Scalar]
+		match: [path: string, value: Scalar]
+		// TODO: add `condition` to only wait for the task if a condition is met
 	): Ctx<InitialData & { [key in K]?: Registry[P]['result'] }>
 }
 
@@ -103,6 +113,15 @@ type ProgramOptions<Name extends keyof Registry = keyof Registry> = {
 	delayBetweenMs: number
 	/** default 0 */
 	priority: number | ((data: Registry[Name]['initial']) => number)
+	// TODO: onError
+	// TODO: onRetry
+	// TODO: onDone
+	// TODO: some cancel mechanism (programmatic cancel)
+	// TODO: some pause / resume mechanism (or is cancel/reschedule enough?)
+	// TODO: debounce (incoming matches cause previous tasks to be cancelled, new task is scheduled with a delay)
+	// TODO: throttle / rate-limit (incoming matches are ignored until the throttle period is over)
+	// TODO: timeout (auto cancel after a certain time)
+	// TODO: add some schema validation?? (seems like this could be user-land)
 }
 
 type Program<D extends Data> = (ctx: Ctx<D>) => Ctx<D>
@@ -297,6 +316,7 @@ async function handleProgram(task: Task, entry: ProgramRegistryItem) {
 		let index = 0
 		const foundToken = Symbol('found')
 		try {
+			// TODO: use asyncLocalStorage to forbid calling `ctx` methods from inside a `ctx` method
 			const ctx: Ctx<Data> = {
 				data,
 				task,
@@ -365,6 +385,8 @@ async function handleProgram(task: Task, entry: ProgramRegistryItem) {
 				task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step + 1, status: 'running' })!
 			} catch (e) {
 				console.error(e)
+				// TODO: create some `FatalError` class to be thrown by user-land code to indicate a task should not be retried
+				// TODO: create some `RetryError` class to be thrown by user-land code to set a custom retry delay (e.g. when a 3rd party rate limit is hit)
 				if (entry.options.retry > task.retry) {
 					const delayMs = typeof entry.options.retryDelayMs === 'function'
 						? entry.options.retryDelayMs(task.retry)
@@ -541,6 +563,10 @@ export async function handleNext() {
 	}
 	const count = getTaskCount.get()
 	if (count?.count) {
+		// TODO: we should be able to know "how long before the next task is ready to run"
+		// (as long as no new tasks are added in the meantime)
+		// This would greatly reduce the need for polling, and the actual polling would be made much more frequent
+		// (basically just an iteration with microtask breaks for the event loop)
 		return "wait"
 	}
 	return "done"

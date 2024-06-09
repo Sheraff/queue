@@ -214,33 +214,50 @@ const getTask = db.prepare<{
 async function handleProgram(task: Task, entry: ProgramEntry) {
 	const data = JSON.parse(task.data) as Data
 
-	const steps: Array<
+	let step:
 		| ['callback', (data: Data) => Promise<Data | void>]
 		| ['sleep', seconds: number]
 		| ['register', program: keyof Program, initial: Data, key: string, condition?: (data: Data) => boolean]
 		| ['wait', program: keyof Program, key: string, path: string, value: GenericSerializable]
-	> = []
 
-	const ctx: Ctx = {
-		data,
-		step(cb) {
-			steps.push(['callback', cb as any])
-		},
-		sleep(seconds) {
-			steps.push(['sleep', seconds])
-		},
-		registerTask(program, initialData, key, condition) {
-			steps.push(['register', program, initialData, key, condition])
-		},
-		waitForTask(program, key, condition) {
-			steps.push(['wait', program, key, condition[0], condition[1]])
-		},
+	find_step: {
+		let index = 0
+		const foundToken = Symbol('found')
+		try {
+			await entry.program({
+				data,
+				step(cb) {
+					if (task.step === index++) {
+						step = ['callback', cb as any]
+						throw foundToken
+					}
+				},
+				sleep(seconds) {
+					if (task.step === index++) {
+						step = ['sleep', seconds]
+						throw foundToken
+					}
+				},
+				registerTask(program, initialData, key, condition) {
+					if (task.step === index++) {
+						step = ['register', program, initialData, key, condition]
+						throw foundToken
+					}
+				},
+				waitForTask(program, key, condition) {
+					if (task.step === index++) {
+						step = ['wait', program, key, condition[0], condition[1]]
+						throw foundToken
+					}
+				},
+			})
+		} catch (e) {
+			if (e !== foundToken) throw e
+		}
 	}
 
-	await entry.program(ctx)
-
 	// run next step
-	const next = steps[task.step]
+	const next = step!
 	if (!next) {
 		console.log('task done', task.id, data)
 		const tx = db.transaction((params: { id: string, data: Data }) => {

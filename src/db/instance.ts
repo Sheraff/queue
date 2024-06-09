@@ -1,10 +1,9 @@
 import Database from 'better-sqlite3'
 import { readFileSync } from "fs"
 
-const db = new Database('foobar.db', {})
+const db: Database.Database = new Database('foobar.db', {})
 db.pragma('journal_mode = WAL')
 db.exec(readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'))
-
 
 const close = () => {
 	db.close()

@@ -12,6 +12,7 @@ export interface Ctx<InitialData extends Data = {}> {
 			data: this["data"],
 		) => (Promise<T> | Promise<void> | T | void)
 	): asserts this is { data: T }
+	done(condition?: (data: this["data"]) => boolean): void
 	sleep(seconds: number): void
 	registerTask<
 		P extends keyof Program,
@@ -216,6 +217,7 @@ async function handleProgram(task: Task, entry: ProgramEntry) {
 
 	let step:
 		| ['callback', (data: Data) => Promise<Data | void>]
+		| ['done', condition?: (data: Data) => boolean]
 		| ['sleep', seconds: number]
 		| ['register', program: keyof Program, initial: Data, key: string, condition?: (data: Data) => boolean]
 		| ['wait', program: keyof Program, key: string, path: string, value: GenericSerializable]
@@ -229,6 +231,12 @@ async function handleProgram(task: Task, entry: ProgramEntry) {
 				step(cb) {
 					if (task.step === index++) {
 						step = ['callback', cb as any]
+						throw foundToken
+					}
+				},
+				done(condition) {
+					if (task.step === index++) {
+						step = ['done', condition]
 						throw foundToken
 					}
 				},
@@ -257,22 +265,8 @@ async function handleProgram(task: Task, entry: ProgramEntry) {
 	}
 
 	// run next step
-	const next = step!
-	if (!next) {
-		console.log('task done', task.id, data)
-		const tx = db.transaction((params: { id: string, data: Data }) => {
-			const result = storeTask.get({ id: params.id, data: JSON.stringify(params.data), step: task.step, status: 'success' })
-			if (result?.parent_id && result?.parent_key) {
-				const parent = getTask.get({ id: result.parent_id })
-				if (!parent) throw new Error('Parent not found')
-				const parentData = JSON.parse(parent.data) as Data
-				parentData[result.parent_key] = params.data
-				storeTask.run({ id: parent.id, data: JSON.stringify(parentData), step: parent.step, status: parent.status })
-			}
-		})
-		tx({ id: task.id, data })
-		return
-	}
+	if (!step!) step = ['done']
+	const next = step
 
 	run: {
 		if (next[0] === 'sleep') {
@@ -306,6 +300,28 @@ async function handleProgram(task: Task, entry: ProgramEntry) {
 			}
 		}
 
+		if (next[0] === 'done') {
+			const isDone = next[1] ? next[1](data) : true
+			if (!isDone) {
+				task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step + 1, status: 'running' })!
+				break run
+			}
+			console.log('task done', task.id, data)
+			const tx = db.transaction((params: { id: string, data: Data }) => {
+				const result = storeTask.get({ id: params.id, data: JSON.stringify(params.data), step: task.step, status: 'success' })
+				if (result?.parent_id && result?.parent_key) {
+					const parent = getTask.get({ id: result.parent_id })
+					if (!parent) throw new Error('Parent not found')
+					const parentData = JSON.parse(parent.data) as Data
+					parentData[result.parent_key] = params.data
+					storeTask.run({ id: parent.id, data: JSON.stringify(parentData), step: parent.step, status: parent.status })
+				}
+				return result
+			})
+			task = tx({ id: task.id, data })!
+			break run
+		}
+
 		if (next[0] === 'register') {
 			const [_, program, initial, key, condition] = next
 			if (!condition || condition(data)) {
@@ -317,6 +333,8 @@ async function handleProgram(task: Task, entry: ProgramEntry) {
 
 		throw new Error('Unknown step type')
 	}
+
+	if (!task) throw new Error('Task went missing during step execution')
 
 	if (task.status === 'running') {
 		await handleProgram(task, entry)

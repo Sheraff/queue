@@ -35,6 +35,7 @@ export function pokemon(ctx: Ctx<InitialData>) {
 		}
 	})
 	ctx.waitForTask('aaa', 'awaited', ['foo', `wait for target ${ctx.data.id}`])
+	ctx.done((data) => data.id === 152 || data.id === 3)
 	ctx.step(async (data) => {
 		const res = await fetch(data.species_url)
 		const species = await res.json() as any

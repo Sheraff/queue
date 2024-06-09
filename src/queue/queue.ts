@@ -13,7 +13,7 @@ export interface Ctx<InitialData extends Data = {}> {
 		) => (Promise<T> | Promise<void> | T | void)
 	): asserts this is { data: T }
 	done(condition?: (data: this["data"]) => boolean): void
-	sleep(seconds: number): void
+	sleep(ms: number): void
 	registerTask<
 		P extends keyof Program,
 		K extends string,
@@ -47,12 +47,13 @@ type Task = {
 	step: number
 	retry: number
 	concurrency: number
-	/** datetime */
-	created_at: string
-	/** datetime */
-	updated_at: string
-	/** datetime */
-	wakeup_at: string | null
+	delay_between_seconds: number
+	/** unix timestamp in seconds (float) */
+	created_at: number
+	/** unix timestamp in seconds (float) */
+	updated_at: number
+	/** unix timestamp in seconds (float) */
+	wakeup_at: number | null
 	/** uuid */
 	parent_id: string | null
 	parent_key: string | null
@@ -85,8 +86,10 @@ type ProgramOptions = {
 	retry: number
 	/** default 5000ms */
 	retryDelayMs: number | ((attempt: number) => number)
-	/** default Infinity */
+	/** default Infinity, be mindful that setting a concurrency limit can create deadlocks if a task depends on the execution of other tasks of the same program */
 	concurrency: number
+	/** default 0, any value above 0 will force `concurrency: 1` */
+	delayBetweenMs: number
 }
 
 type ProgramEntry = {
@@ -96,7 +99,6 @@ type ProgramEntry = {
 
 const programs = new Map<keyof Program, ProgramEntry>()
 
-// TODO: add options param with concurrency settings
 export function registerProgram<P extends keyof Program>({
 	name,
 	program,
@@ -111,10 +113,12 @@ export function registerProgram<P extends keyof Program>({
 		options: {
 			retry: 3,
 			retryDelayMs: 5_000,
-			concurrency: Infinity,
+			delayBetweenMs: 0,
 			...options,
+			concurrency: options.delayBetweenMs ? 1 : (options.concurrency ?? Infinity),
 		},
 	})
+	// TODO: go over existing tasks of this program, and update their options (in case they have changed since the last registration)
 }
 
 /********************************************/
@@ -130,16 +134,45 @@ const register = db.prepare<{
 	parent: string | null
 	parent_key: string | null
 	concurrency: number
+	delay_between_seconds: number
 }>(/* sql */`
-	INSERT INTO tasks (id, program, data, parent_id, parent_key, concurrency)
-	VALUES (@id, @program, @data, @parent, @parent_key, @concurrency)
+	INSERT INTO tasks (
+		id,
+		program,
+		data,
+		parent_id,
+		parent_key,
+		concurrency,
+		delay_between_seconds,
+		created_at,
+		updated_at
+	)
+	VALUES (
+		@id,
+		@program,
+		@data,
+		@parent,
+		@parent_key,
+		@concurrency,
+		@delay_between_seconds,
+		unixepoch ('subsec'),
+		unixepoch ('subsec')
+	)
 `)
 export function registerTask<P extends keyof Program>(id: string, program: P, initialData: Program[P]['initial'], parentKey?: string) {
 	const p = programs.get(program)
 	if (!p) throw new Error(`Unknown program: ${program}. Available programs: ${[...programs.keys()].join(', ')}`)
 	const parent = asyncLocalStorage.getStore()
 	console.log('register', program, parent?.id, parentKey, id)
-	register.run({ id, program, data: JSON.stringify(initialData), parent: parent?.id ?? null, parent_key: parentKey ?? null, concurrency: p.options.concurrency })
+	register.run({
+		id,
+		program,
+		data: JSON.stringify(initialData),
+		parent: parent?.id ?? null,
+		parent_key: parentKey ?? null,
+		concurrency: p.options.concurrency,
+		delay_between_seconds: p.options.delayBetweenMs / 1000,
+	})
 }
 
 /***************************************/
@@ -157,7 +190,7 @@ const storeTask = db.prepare<{
 		data = @data,
 		step = @step,
 		status = @status,
-		updated_at = CURRENT_TIMESTAMP
+		updated_at = unixepoch ('subsec')
 	WHERE id = @id
 	RETURNING *
 `)
@@ -171,9 +204,9 @@ const sleepTask = db.prepare<{
 	SET
 		step = @step,
 		status = 'sleeping',
-		wakeup_at = unixepoch(CURRENT_TIMESTAMP) + @seconds,
+		wakeup_at = unixepoch ('subsec') + @seconds,
 		retry = @retry,
-		updated_at = CURRENT_TIMESTAMP
+		updated_at = unixepoch ('subsec')
 	WHERE id = @id
 	RETURNING *
 `)
@@ -192,7 +225,7 @@ const waitTask = db.prepare<{
 		wait_for_key = @key,
 		wait_for_path = @path,
 		wait_for_value = @value,
-		updated_at = CURRENT_TIMESTAMP
+		updated_at = unixepoch ('subsec')
 	WHERE id = @id
 	RETURNING *
 `)
@@ -208,7 +241,7 @@ const resolveWaitTask = db.prepare<{
 		wait_for_key = NULL,
 		wait_for_path = NULL,
 		wait_for_value = NULL,
-		updated_at = CURRENT_TIMESTAMP
+		updated_at = unixepoch ('subsec')
 	WHERE id = @id
 	RETURNING *
 `)
@@ -224,7 +257,7 @@ async function handleProgram(task: Task, entry: ProgramEntry) {
 	let step:
 		| ['callback', (data: Data) => Promise<Data | void>]
 		| ['done', condition?: (data: Data) => boolean]
-		| ['sleep', seconds: number]
+		| ['sleep', ms: number]
 		| ['register', program: keyof Program, initial: Data, key: string, condition?: (data: Data) => boolean]
 		| ['wait', program: keyof Program, key: string, path: string, value: GenericSerializable]
 
@@ -246,9 +279,9 @@ async function handleProgram(task: Task, entry: ProgramEntry) {
 						throw foundToken
 					}
 				},
-				sleep(seconds) {
+				sleep(ms) {
 					if (task.step === index++) {
-						step = ['sleep', seconds]
+						step = ['sleep', ms]
 						throw foundToken
 					}
 				},
@@ -276,7 +309,7 @@ async function handleProgram(task: Task, entry: ProgramEntry) {
 
 	run: {
 		if (next[0] === 'sleep') {
-			task = sleepTask.get({ id: task.id, seconds: next[1], retry: task.retry, step: task.step + 1 })!
+			task = sleepTask.get({ id: task.id, seconds: next[1] / 1000, retry: task.retry, step: task.step + 1 })!
 			break run
 		}
 
@@ -297,7 +330,7 @@ async function handleProgram(task: Task, entry: ProgramEntry) {
 					const delayMs = typeof entry.options.retryDelayMs === 'function'
 						? entry.options.retryDelayMs(task.retry)
 						: entry.options.retryDelayMs
-					task = sleepTask.get({ id: task.id, seconds: Math.round(delayMs / 1000), retry: task.retry + 1, step: task.step })!
+					task = sleepTask.get({ id: task.id, seconds: delayMs / 1000, retry: task.retry + 1, step: task.step })!
 				} else {
 					task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step, status: 'failure' })!
 				}
@@ -360,31 +393,51 @@ const resolveWaitForTask = db.prepare<{
 	LIMIT 1
 `)
 
-/**
- * select any task
- * - that is not a parent of an unfinished child (referenced by any other unfinished task under the `parent_id` column)
- * - that is not 'sleeping' ; or its `wakeup_at` is in the past
- * - that is not 'waiting' ; or its `wait_for_program` has a task in `'success'` whose `data[wait_for_path] = wait_for_value`
- */
 const getFirstTask = db.prepare<[], Task>(/* sql */`
 SELECT * FROM tasks
 WHERE
+	-- not a parent of an unfinished child
 	id NOT IN (
 		SELECT parent_id FROM tasks
 		WHERE parent_id IS NOT NULL
 			AND status NOT IN ('success', 'failure')
 	)
+	-- not of the same program if concurrency is reached for this program
 	AND (
-		concurrency > (
+		step > 0
+		OR concurrency = 1e999
+		OR concurrency > (
 			SELECT COUNT(*)
 			FROM tasks AS sibling
 			WHERE sibling.program = tasks.program
-			AND sibling.status = 'running'
+			AND sibling.step > 0 -- started
+			AND sibling.status NOT IN ('success', 'failure') -- not finished
 		)
 	)
+	-- not before delay_between_ms has passed since the last task of the same program finished
+	AND (
+		step > 0
+		OR delay_between_seconds = 0
+		OR 0 = (
+			SELECT COUNT(*)
+			FROM tasks AS sibling
+			WHERE sibling.program = tasks.program
+			AND sibling.id != tasks.id
+			AND sibling.step > 0 -- started
+			LIMIT 1
+		)
+		OR unixepoch('subsec') > delay_between_seconds + (
+			SELECT MAX(updated_at)
+			FROM tasks AS sibling
+			WHERE sibling.program = tasks.program
+			AND sibling.id != tasks.id
+			AND sibling.status IN ('success', 'failure') -- finished
+		)
+	)
+	-- either pending, or sleeping and it's time to wake up, or waiting and the condition is met
 	AND (
 		status = 'pending'
-		OR (status = 'sleeping' AND wakeup_at < unixepoch(CURRENT_TIMESTAMP))
+		OR (status = 'sleeping' AND wakeup_at < unixepoch('subsec'))
 		OR (status = 'waiting' AND 0 < (
 			SELECT COUNT(*)
 			FROM tasks AS child

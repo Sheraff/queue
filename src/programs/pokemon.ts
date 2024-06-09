@@ -28,7 +28,7 @@ export function pokemon(ctx: Ctx<InitialData>) {
 		const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${data.id}`)
 		const pokemon = await res.json() as any
 		setTimeout(() => {
-			registerTask(crypto.randomUUID(), 'aaa', { foo: `wait for target ${data.id}` })
+			registerTask(crypto.randomUUID(), 'aaa', { foo: `wait for target ${data.id}`, registered_on: Date.now() })
 		}, 500)
 		return {
 			species_url: pokemon.species.url,

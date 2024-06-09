@@ -2,19 +2,20 @@ import type { Ctx } from "../queue/queue.js"
 
 type InitialData = {
 	foo?: string
+	registered_on?: number
 }
 
 declare global {
 	interface Program {
 		aaa: {
 			initial: InitialData
-			result: {
+			result: InitialData & {
 				a: number
 				start: number
 				duration: number
 				yolo: string
 				c: number
-				foo?: string
+				since_registered?: number
 			}
 		}
 	}
@@ -33,7 +34,7 @@ export function aaa(ctx: Ctx<InitialData>) {
 		data.a
 		//   ^?
 	})
-	ctx.sleep(1)
+	// ctx.sleep(1000)
 	ctx.step(() => {
 		return {
 			yolo: "hello",
@@ -47,9 +48,11 @@ export function aaa(ctx: Ctx<InitialData>) {
 		//   ^?
 		const end = Date.now()
 		const duration = end - data.start
+		const since_registered = ctx.data.registered_on && end - ctx.data.registered_on
 		return {
 			c: 3,
 			duration,
+			since_registered,
 		}
 	})
 }

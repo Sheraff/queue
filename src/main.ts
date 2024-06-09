@@ -8,6 +8,10 @@ import { handleNext, registerProgram, registerTask } from "./queue/queue.js"
 registerProgram({
 	name: 'aaa',
 	program: aaa,
+	options: {
+		concurrency: 1,
+		delayBetweenMs: 1000,
+	}
 })
 registerProgram({
 	name: 'pokemon',
@@ -15,7 +19,6 @@ registerProgram({
 	options: {
 		retry: 1,
 		retryDelayMs: (attempt) => 2 ** attempt * 1000,
-		concurrency: 1,
 	}
 })
 registerProgram({
@@ -24,6 +27,9 @@ registerProgram({
 })
 
 // ids should be static for idempotency, but for now we'll just generate random ids
+registerTask(crypto.randomUUID(), 'aaa', { registered_on: Date.now() })
+registerTask(crypto.randomUUID(), 'aaa', { registered_on: Date.now() })
+registerTask(crypto.randomUUID(), 'aaa', { registered_on: Date.now() })
 registerTask(crypto.randomUUID(), 'pokemon', { id: 2 })
 registerTask(crypto.randomUUID(), 'pokemon', { id: 151 })
 registerTask(crypto.randomUUID(), 'notask', { mimi: 'momo' })

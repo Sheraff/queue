@@ -1,15 +1,12 @@
-import type { Ctx } from "../queue/queue.js"
+import type { Ctx, ProgramEntry } from "../queue/queue.js"
 
 type InitialData = {
 	mimi: string
 }
 
 declare global {
-	interface Program {
-		notask: {
-			initial: InitialData
-			result: InitialData
-		}
+	interface Registry {
+		notask: ProgramEntry<InitialData>
 	}
 }
 

@@ -15,32 +15,32 @@ export interface Ctx<InitialData extends Data = {}> {
 	done(condition?: (data: this["data"]) => boolean): void
 	sleep(ms: number): void
 	registerTask<
-		P extends keyof Program,
+		P extends keyof Registry,
 		K extends string,
 	>(
 		program: P,
-		initialData: Program[P]['initial'],
+		initialData: Registry[P]['initial'],
 		key: K,
 		condition?: (data: this["data"]) => boolean
 	): asserts this is {
-		data: { [key in K]?: Program[P]['result'] }
+		data: { [key in K]?: Registry[P]['result'] }
 	}
 	waitForTask<
-		P extends keyof Program,
+		P extends keyof Registry,
 		K extends string,
 	>(
 		program: P,
 		key: K,
 		condition: [path: string, value: GenericSerializable]
 	): asserts this is {
-		data: { [key in K]?: Program[P]['result'] }
+		data: { [key in K]?: Registry[P]['result'] }
 	}
 }
 
 type Task = {
 	/** uuid */
 	id: string
-	program: keyof Program
+	program: keyof Registry
 	status: 'pending' | 'running' | 'success' | 'failure' | 'sleeping' | 'waiting'
 	/** json */
 	data: string
@@ -57,7 +57,7 @@ type Task = {
 	/** uuid */
 	parent_id: string | null
 	parent_key: string | null
-	wait_for_program: keyof Program | null
+	wait_for_program: keyof Registry | null
 	wait_for_key: string | null
 	wait_for_path: string | null
 	wait_for_value: string | null
@@ -67,14 +67,16 @@ type Task = {
 /* REGISTER ALL PROGRAMS AT THE START OF THE APP */
 /*************************************************/
 
-type BaseProgram = Record<string, {
-	initial: Data
-	result: Data
-	children?: { [key: string]: Data }
-}>
+export type ProgramEntry<
+	I extends Data = Record<string, never>,
+	R extends Data = Record<string, never>
+> = {
+	initial: I
+	result: I & R
+}
 
 declare global {
-	interface Program extends BaseProgram {
+	interface Registry extends Record<string, ProgramEntry<Data, Data>> {
 		/**
 		 * this is to be augmented by each program
 		 */
@@ -92,20 +94,20 @@ type ProgramOptions = {
 	delayBetweenMs: number
 }
 
-type ProgramEntry = {
-	program: (ctx: Ctx<any>) => (void | Promise<void>)
+type ProgramDefinition = {
+	program: (ctx: Ctx<Data>) => (void | Promise<void>)
 	options: ProgramOptions
 }
 
-const programs = new Map<keyof Program, ProgramEntry>()
+const programs = new Map<keyof Registry, ProgramDefinition>()
 
-export function registerProgram<P extends keyof Program>({
+export function registerProgram<P extends keyof Registry>({
 	name,
 	program,
 	options = {},
 }: {
 	name: P,
-	program: NoInfer<(ctx: Ctx<Program[P]['initial']>) => (void | Promise<void>)>,
+	program: NoInfer<(ctx: Ctx<Registry[P]['initial']>) => (void | Promise<void>)>,
 	options?: Partial<ProgramOptions>
 }) {
 	programs.set(name, {
@@ -129,7 +131,7 @@ const asyncLocalStorage = new AsyncLocalStorage<Task>()
 
 const register = db.prepare<{
 	id: string
-	program: keyof Program
+	program: keyof Registry
 	data: string
 	parent: string | null
 	parent_key: string | null
@@ -159,7 +161,7 @@ const register = db.prepare<{
 		unixepoch ('subsec')
 	)
 `)
-export function registerTask<P extends keyof Program>(id: string, program: P, initialData: Program[P]['initial'], parentKey?: string) {
+export function registerTask<P extends keyof Registry>(id: string, program: P, initialData: Registry[P]['initial'], parentKey?: string) {
 	const p = programs.get(program)
 	if (!p) throw new Error(`Unknown program: ${program}. Available programs: ${[...programs.keys()].join(', ')}`)
 	const parent = asyncLocalStorage.getStore()
@@ -212,7 +214,7 @@ const sleepTask = db.prepare<{
 `)
 const waitTask = db.prepare<{
 	id: string
-	program: keyof Program
+	program: keyof Registry
 	key: string
 	path: string
 	value: string
@@ -251,15 +253,15 @@ const getTask = db.prepare<{
 	SELECT * FROM tasks
 	WHERE id = @id
 `)
-async function handleProgram(task: Task, entry: ProgramEntry) {
+async function handleProgram(task: Task, entry: ProgramDefinition) {
 	const data = JSON.parse(task.data) as Data
 
 	let step:
 		| ['callback', (data: Data) => Promise<Data | void>]
 		| ['done', condition?: (data: Data) => boolean]
 		| ['sleep', ms: number]
-		| ['register', program: keyof Program, initial: Data, key: string, condition?: (data: Data) => boolean]
-		| ['wait', program: keyof Program, key: string, path: string, value: GenericSerializable]
+		| ['register', program: keyof Registry, initial: Data, key: string, condition?: (data: Data) => boolean]
+		| ['wait', program: keyof Registry, key: string, path: string, value: GenericSerializable]
 
 	find_step: {
 		let index = 0
@@ -381,7 +383,7 @@ async function handleProgram(task: Task, entry: ProgramEntry) {
 }
 
 const resolveWaitForTask = db.prepare<{
-	program: keyof Program
+	program: keyof Registry
 	path: string
 	value: string
 }, Task>(/* sql */`

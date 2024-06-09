@@ -1,4 +1,4 @@
-import type { Ctx } from "../queue/queue.js"
+import type { Ctx, ProgramEntry } from "../queue/queue.js"
 
 type InitialData = {
 	foo?: string
@@ -6,18 +6,15 @@ type InitialData = {
 }
 
 declare global {
-	interface Program {
-		aaa: {
-			initial: InitialData
-			result: InitialData & {
-				a: number
-				start: number
-				duration: number
-				yolo: string
-				c: number
-				since_registered?: number
-			}
-		}
+	interface Registry {
+		aaa: ProgramEntry<InitialData, {
+			start: number
+			a: number
+			yolo: string
+			c: number
+			duration: number
+			since_registered?: number
+		}>
 	}
 }
 
@@ -48,7 +45,7 @@ export function aaa(ctx: Ctx<InitialData>) {
 		//   ^?
 		const end = Date.now()
 		const duration = end - data.start
-		const since_registered = ctx.data.registered_on && end - ctx.data.registered_on
+		const since_registered = data.registered_on && end - data.registered_on
 		return {
 			c: 3,
 			duration,

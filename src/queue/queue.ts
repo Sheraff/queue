@@ -327,7 +327,7 @@ async function handleProgram(task: Task, entry: ProgramEntry) {
 			if (!condition || condition(data)) {
 				asyncLocalStorage.run(task, () => registerTask(crypto.randomUUID(), program, initial, key))
 			}
-			task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step + 1, status: 'running' })!
+			task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step + 1, status: 'pending' })!
 			break run
 		}
 

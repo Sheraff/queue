@@ -12,7 +12,7 @@ registerProgram({
 	name: 'pokemon',
 	program: pokemon,
 	options: {
-		retry: 3,
+		retry: 1,
 		retryDelayMs: (attempt) => 2 ** attempt * 1000,
 	}
 })

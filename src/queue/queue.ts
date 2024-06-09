@@ -46,6 +46,7 @@ type Task = {
 	data: string
 	step: number
 	retry: number
+	concurrency: number
 	/** datetime */
 	created_at: string
 	/** datetime */
@@ -84,6 +85,8 @@ type ProgramOptions = {
 	retry: number
 	/** default 5000ms */
 	retryDelayMs: number | ((attempt: number) => number)
+	/** default Infinity */
+	concurrency: number
 }
 
 type ProgramEntry = {
@@ -108,6 +111,7 @@ export function registerProgram<P extends keyof Program>({
 		options: {
 			retry: 3,
 			retryDelayMs: 5_000,
+			concurrency: Infinity,
 			...options,
 		},
 	})
@@ -125,15 +129,17 @@ const register = db.prepare<{
 	data: string
 	parent: string | null
 	parent_key: string | null
+	concurrency: number
 }>(/* sql */`
-	INSERT INTO tasks (id, program, data, parent_id, parent_key)
-	VALUES (@id, @program, @data, @parent, @parent_key)
+	INSERT INTO tasks (id, program, data, parent_id, parent_key, concurrency)
+	VALUES (@id, @program, @data, @parent, @parent_key, @concurrency)
 `)
 export function registerTask<P extends keyof Program>(id: string, program: P, initialData: Program[P]['initial'], parentKey?: string) {
-	if (!programs.has(program)) throw new Error(`Unknown program: ${program}. Available programs: ${[...programs.keys()].join(', ')}`)
+	const p = programs.get(program)
+	if (!p) throw new Error(`Unknown program: ${program}. Available programs: ${[...programs.keys()].join(', ')}`)
 	const parent = asyncLocalStorage.getStore()
 	console.log('register', program, parent?.id, parentKey, id)
-	register.run({ id, program, data: JSON.stringify(initialData), parent: parent?.id ?? null, parent_key: parentKey ?? null })
+	register.run({ id, program, data: JSON.stringify(initialData), parent: parent?.id ?? null, parent_key: parentKey ?? null, concurrency: p.options.concurrency })
 }
 
 /***************************************/
@@ -367,6 +373,14 @@ WHERE
 		SELECT parent_id FROM tasks
 		WHERE parent_id IS NOT NULL
 			AND status NOT IN ('success', 'failure')
+	)
+	AND (
+		concurrency > (
+			SELECT COUNT(*)
+			FROM tasks AS sibling
+			WHERE sibling.program = tasks.program
+			AND sibling.status = 'running'
+		)
 	)
 	AND (
 		status = 'pending'

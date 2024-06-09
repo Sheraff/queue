@@ -5,6 +5,7 @@ CREATE TABLE
 		step INTEGER NOT NULL DEFAULT 0,
 		status TEXT NOT NULL DEFAULT 'pending', -- pending, running, success, failure, sleeping, waiting
 		retry INTEGER NOT NULL DEFAULT 0,
+		concurrency INTEGER NOT NULL DEFAULT 1e999, -- 1e999 = infinity
 		data TEXT NOT NULL DEFAULT '{}',
 		-- parent task (child task was registered during the execution of parent task)
 		parent_id TEXT DEFAULT NULL,

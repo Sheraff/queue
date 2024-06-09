@@ -15,6 +15,7 @@ registerProgram({
 	options: {
 		retry: 1,
 		retryDelayMs: (attempt) => 2 ** attempt * 1000,
+		concurrency: 1,
 	}
 })
 registerProgram({

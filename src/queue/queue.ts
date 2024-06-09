@@ -44,6 +44,7 @@ type Task = {
 	/** json */
 	data: string
 	step: number
+	retry: number
 	/** datetime */
 	created_at: string
 	/** datetime */
@@ -77,12 +78,38 @@ declare global {
 	}
 }
 
-const programs = new Map<keyof Program, (ctx: Ctx<any>) => (void | Promise<void>)>()
+type ProgramOptions = {
+	/** default 3 */
+	retry: number
+	/** default 5000ms */
+	retryDelayMs: number | ((attempt: number) => number)
+}
+
+type ProgramEntry = {
+	program: (ctx: Ctx<any>) => (void | Promise<void>)
+	options: ProgramOptions
+}
+
+const programs = new Map<keyof Program, ProgramEntry>()
 
 // TODO: add options param with concurrency settings
-// TODO: add options param with retry settings
-export function registerProgram<P extends keyof Program>(name: P, program: (ctx: Ctx<Program[P]['initial']>) => (void | Promise<void>)) {
-	programs.set(name, program)
+export function registerProgram<P extends keyof Program>({
+	name,
+	program,
+	options = {},
+}: {
+	name: P,
+	program: NoInfer<(ctx: Ctx<Program[P]['initial']>) => (void | Promise<void>)>,
+	options?: Partial<ProgramOptions>
+}) {
+	programs.set(name, {
+		program,
+		options: {
+			retry: 3,
+			retryDelayMs: 5_000,
+			...options,
+		},
+	})
 }
 
 /********************************************/
@@ -130,12 +157,15 @@ const storeTask = db.prepare<{
 const sleepTask = db.prepare<{
 	id: string
 	seconds: number
+	retry: number
+	step: number
 }, Task>(/* sql */`
 	UPDATE tasks
 	SET
-		step = step + 1,
+		step = @step,
 		status = 'sleeping',
 		wakeup_at = unixepoch(CURRENT_TIMESTAMP) + @seconds,
+		retry = @retry,
 		updated_at = CURRENT_TIMESTAMP
 	WHERE id = @id
 	RETURNING *
@@ -181,7 +211,7 @@ const getTask = db.prepare<{
 	SELECT * FROM tasks
 	WHERE id = @id
 `)
-async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<void>)) {
+async function handleProgram(task: Task, entry: ProgramEntry) {
 	const data = JSON.parse(task.data) as Data
 
 	const steps: Array<
@@ -207,7 +237,7 @@ async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<
 		},
 	}
 
-	await program(ctx)
+	await entry.program(ctx)
 
 	// run next step
 	const next = steps[task.step]
@@ -229,7 +259,7 @@ async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<
 
 	run: {
 		if (next[0] === 'sleep') {
-			task = sleepTask.get({ id: task.id, seconds: next[1] })!
+			task = sleepTask.get({ id: task.id, seconds: next[1], retry: task.retry, step: task.step + 1 })!
 			break run
 		}
 
@@ -243,11 +273,17 @@ async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<
 			try {
 				const augment = await asyncLocalStorage.run(task, () => next[1](data))
 				Object.assign(data, augment)
-				task.step++
-				task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step, status: 'running' })!
+				task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step + 1, status: 'running' })!
 			} catch (e) {
 				console.error(e)
-				task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step, status: 'failure' })!
+				if (entry.options.retry > task.retry) {
+					const delayMs = typeof entry.options.retryDelayMs === 'function'
+						? entry.options.retryDelayMs(task.retry)
+						: entry.options.retryDelayMs
+					task = sleepTask.get({ id: task.id, seconds: Math.round(delayMs / 1000), retry: task.retry + 1, step: task.step })!
+				} else {
+					task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step, status: 'failure' })!
+				}
 			} finally {
 				break run
 			}
@@ -258,8 +294,7 @@ async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<
 			if (!condition || condition(data)) {
 				asyncLocalStorage.run(task, () => registerTask(crypto.randomUUID(), program, initial, key))
 			}
-			task.step++
-			task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step, status: 'running' })!
+			task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step + 1, status: 'running' })!
 			break run
 		}
 
@@ -267,7 +302,7 @@ async function handleProgram(task: Task, program: (ctx: Ctx) => (void | Promise<
 	}
 
 	if (task.status === 'running') {
-		await handleProgram(task, program)
+		await handleProgram(task, entry)
 	}
 }
 

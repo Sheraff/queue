@@ -4,14 +4,21 @@ import { pokemon } from "./programs/pokemon.js"
 import { handleNext, registerProgram, registerTask } from "./queue/queue.js"
 
 // TODO: enforce that all programs are registered 
-registerProgram('aaa', aaa)
-registerProgram('pokemon', pokemon)
+registerProgram({
+	name: 'aaa',
+	program: aaa,
+})
+registerProgram({
+	name: 'pokemon',
+	program: pokemon,
+	options: {
+		retry: 3,
+		retryDelayMs: (attempt) => 2 ** attempt * 1000,
+	}
+})
 
 // ids should be static for idempotency, but for now we'll just generate random ids
-registerTask(crypto.randomUUID(), 'aaa', {})
 registerTask(crypto.randomUUID(), 'pokemon', { id: 2 })
-registerTask(crypto.randomUUID(), 'aaa', {})
-registerTask(crypto.randomUUID(), 'aaa', {})
 registerTask(crypto.randomUUID(), 'pokemon', { id: 151 })
 
 do {

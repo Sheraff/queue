@@ -4,14 +4,12 @@ declare global {
 	interface Registry {
 		aaa: ProgramEntry<{
 			foo?: string
-			registered_on: number
 		}, {
-			start: number
 			a: number
 			yolo: string
 			c: number
-			duration: number
-			since_registered: number | undefined
+			since_started: number
+			since_registered: number
 		}>
 	}
 }
@@ -38,18 +36,18 @@ export const aaa = defineProgram('aaa', {
 			a: 2
 		} as const
 	})
-	.step((data) => {
+	.step((data, task) => {
 		data.yolo
 		//   ^?
 		data.a
 		//   ^?
 		const end = Date.now()
-		const duration = end - data.start
-		const since_registered = data.registered_on && end - data.registered_on
+		const start = task.started_at! * 1000
+		const registered = task.created_at! * 1000
 		return {
 			c: 3,
-			duration,
-			since_registered,
+			since_registered: end - registered,
+			since_started: end - start,
 		}
 	})
 )

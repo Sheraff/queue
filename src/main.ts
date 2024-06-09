@@ -12,9 +12,9 @@ registerPrograms({
 })
 
 // ids should be static for idempotency, but for now we'll just generate random ids
-registerTask(crypto.randomUUID(), 'aaa', { registered_on: Date.now() })
-registerTask(crypto.randomUUID(), 'aaa', { registered_on: Date.now() })
-registerTask(crypto.randomUUID(), 'aaa', { registered_on: Date.now() })
+registerTask(crypto.randomUUID(), 'aaa', {})
+registerTask(crypto.randomUUID(), 'aaa', {})
+registerTask(crypto.randomUUID(), 'aaa', {})
 registerTask(crypto.randomUUID(), 'pokemon', { id: 2 })
 registerTask(crypto.randomUUID(), 'pokemon', { id: 151 })
 registerTask(crypto.randomUUID(), 'notask', { mimi: 'momo' })

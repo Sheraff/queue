@@ -1,15 +1,19 @@
 import { AsyncLocalStorage } from "async_hooks"
 import { db } from "../db/instance.js"
 
-type GenericSerializable = string | number | boolean | null | undefined | GenericSerializable[] | { [key: string]: GenericSerializable }
+type Scalar = string | number | boolean | null
+
+type GenericSerializable = Scalar | undefined | GenericSerializable[] | { [key: string]: GenericSerializable }
 
 type Data = Record<string, GenericSerializable>
 
 export interface Ctx<InitialData extends Data = {}> {
 	data: Data & InitialData
+	task: Task
 	step<T extends Data>(
 		cb: (
 			data: this["data"],
+			task: this["task"]
 		) => (Promise<T> | Promise<void> | T | void)
 	): Ctx<InitialData & T>
 	/**
@@ -32,8 +36,10 @@ export interface Ctx<InitialData extends Data = {}> {
 		K extends string,
 	>(
 		program: P,
+		/** an SQL path to be used in `JSON_EXTRACT`, for example `c[2].f` (without the `$.` prefix) */
 		key: K,
-		condition: [path: string, value: GenericSerializable]
+		/** the first term is an SQL path to be used in `JSON_EXTRACT`, for example `c[2].f` (without the `$.` prefix) */
+		condition: [path: string, value: Scalar]
 	): Ctx<InitialData & { [key in K]?: Registry[P]['result'] }>
 }
 
@@ -271,22 +277,6 @@ const waitTask = db.prepare<{
 	WHERE id = @id
 	RETURNING *
 `)
-const resolveWaitTask = db.prepare<{
-	id: string
-	data: string
-}, Task>(/* sql */`
-	UPDATE tasks
-	SET
-		status = 'running',
-		data = @data,
-		wait_for_program = NULL,
-		wait_for_key = NULL,
-		wait_for_path = NULL,
-		wait_for_value = NULL,
-		updated_at = unixepoch ('subsec')
-	WHERE id = @id
-	RETURNING *
-`)
 const getTask = db.prepare<{
 	id: string
 }, Task>(/* sql */`
@@ -297,7 +287,7 @@ async function handleProgram(task: Task, entry: ProgramRegistryItem) {
 	const data = JSON.parse(task.data) as Data
 
 	let step:
-		| ['callback', (data: Data) => Promise<Data | void>]
+		| ['callback', (data: Data, task: Task) => Promise<Data | void>]
 		| ['done', condition?: (data: Data) => boolean]
 		| ['sleep', ms: number]
 		| ['register', program: keyof Registry, initial: Data, key: string, condition?: (data: Data) => boolean]
@@ -309,6 +299,7 @@ async function handleProgram(task: Task, entry: ProgramRegistryItem) {
 		try {
 			const ctx: Ctx<Data> = {
 				data,
+				task,
 				step(cb) {
 					if (task.step === index++) {
 						step = ['callback', cb as any]
@@ -363,13 +354,13 @@ async function handleProgram(task: Task, entry: ProgramRegistryItem) {
 
 		if (next[0] === 'wait') {
 			const [_, program, key, path, value] = next
-			task = waitTask.get({ id: task.id, program, key, path: `$.${path}`, value: JSON.stringify({ value }) })!
+			task = waitTask.get({ id: task.id, program, key: `$.${key}`, path: `$.${path}`, value: JSON.stringify({ value }) })!
 			break run
 		}
 
 		if (next[0] === 'callback') {
 			try {
-				const augment = await asyncLocalStorage.run(task, () => next[1](data))
+				const augment = await asyncLocalStorage.run(task, () => next[1](data, task))
 				Object.assign(data, augment)
 				task = storeTask.get({ id: task.id, data: JSON.stringify(data), step: task.step + 1, status: 'running' })!
 			} catch (e) {
@@ -427,19 +418,6 @@ async function handleProgram(task: Task, entry: ProgramRegistryItem) {
 		await handleProgram(task, entry)
 	}
 }
-
-const resolveWaitForTask = db.prepare<{
-	program: keyof Registry
-	path: string
-	value: string
-}, Task>(/* sql */`
-	SELECT * FROM tasks
-	WHERE
-		program = @program
-		AND status = 'success'
-		AND JSON_EXTRACT(data, @path) = JSON_EXTRACT(@value, '$.value')
-	LIMIT 1
-`)
 
 const getFirstTask = db.prepare<[], Task>(/* sql */`
 SELECT * FROM tasks
@@ -506,21 +484,53 @@ const getTaskCount = db.prepare<[], { count: number }>(/* sql */`
 	SELECT COUNT(*) as count FROM tasks
 	WHERE status NOT IN ('success', 'failure')
 `)
+const resolveWait = db.prepare<{
+	id: string
+}, Task>(/* sql */`
+	UPDATE
+		tasks
+	SET
+		status = 'running',
+		data = (
+			CASE
+				WHEN tasks.wait_for_key IS NOT NULL
+				THEN JSON_SET(tasks.data, tasks.wait_for_key, json(child.data))
+				ELSE tasks.data
+			END
+		),
+		wait_for_program = NULL,
+		wait_for_key = NULL,
+		wait_for_path = NULL,
+		wait_for_value = NULL,
+		updated_at = unixepoch ('subsec')
+	FROM
+		(
+			-- TODO: do we really need to join here? we should already have everything in 'tasks' from the UPDATE query
+			SELECT * FROM tasks as child
+			LEFT JOIN tasks as parent 
+			ON (
+				parent.id = @id
+				AND child.program = parent.wait_for_program
+				AND child.status = 'success'
+				AND JSON_EXTRACT(child.data, parent.wait_for_path) = JSON_EXTRACT(parent.wait_for_value, '$.value')
+			)
+			LIMIT 1
+		) AS child
+	WHERE
+		tasks.id = @id
+	RETURNING *
+`)
 const getNext = db.transaction(() => {
 	const task = getFirstTask.get()
 	if (!task) return undefined
-	// we'll be running this task, mark it as such
-	storeTask.run({ id: task.id, data: task.data, step: task.step, status: 'running' })
-	if (!task.wait_for_program) return task
-	// this task was picked up because it was waiting for another task that has now completed
-	const child = resolveWaitForTask.get({ program: task.wait_for_program!, path: task.wait_for_path!, value: task.wait_for_value! })
-	if (!child) throw new Error('No child task found')
-	// resolve the wait, inject the data
-	const data = JSON.parse(task.data) as Data
-	data[task.wait_for_key!] = JSON.parse(child.data)
-	const resolved = resolveWaitTask.get({ id: task.id, data: JSON.stringify(data) })
-	if (!resolved) throw new Error('No task found')
-	return resolved
+	if (!task.wait_for_program) {
+		// we'll be running this task, mark it as such
+		return storeTask.get({ id: task.id, data: task.data, step: task.step, status: 'running' })
+	} else {
+		// this task was picked up because it was waiting for another task that has now completed
+		const toto = resolveWait.get({ id: task.id })
+		return toto
+	}
 })
 export async function handleNext() {
 	const task = getNext()

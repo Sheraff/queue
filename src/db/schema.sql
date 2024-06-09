@@ -21,5 +21,6 @@ CREATE TABLE
 		wait_for_value TEXT DEFAULT NULL,
 		--
 		created_at REAL NOT NULL,
-		updated_at REAL NOT NULL
+		updated_at REAL NOT NULL,
+		started_at REAL DEFAULT NULL
 	);

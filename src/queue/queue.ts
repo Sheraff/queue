@@ -54,6 +54,8 @@ type Task = {
 	/** unix timestamp in seconds (float) */
 	updated_at: number
 	/** unix timestamp in seconds (float) */
+	started_at: number | null
+	/** unix timestamp in seconds (float) */
 	wakeup_at: number | null
 	/** uuid */
 	parent_id: string | null
@@ -229,7 +231,8 @@ const storeTask = db.prepare<{
 		data = @data,
 		step = @step,
 		status = @status,
-		updated_at = unixepoch ('subsec')
+		updated_at = unixepoch ('subsec'),
+		started_at = IFNULL(started_at, unixepoch ('subsec'))
 	WHERE id = @id
 	RETURNING *
 `)
@@ -455,7 +458,7 @@ WHERE
 			SELECT COUNT(*)
 			FROM tasks AS sibling
 			WHERE sibling.program = tasks.program
-			AND sibling.step > 0 -- started
+			AND sibling.started_at IS NOT NULL
 			AND sibling.status NOT IN ('success', 'failure') -- not finished
 		)
 	)
@@ -468,7 +471,7 @@ WHERE
 			FROM tasks AS sibling
 			WHERE sibling.program = tasks.program
 			AND sibling.id != tasks.id
-			AND sibling.step > 0 -- started
+			AND sibling.started_at IS NOT NULL
 			LIMIT 1
 		)
 		OR unixepoch('subsec') > delay_between_seconds + (

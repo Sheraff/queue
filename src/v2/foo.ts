@@ -1,18 +1,43 @@
+import { z } from "zod"
 import { AsyncLocalStorage } from "node:async_hooks"
 import Database from 'better-sqlite3'
-import { z } from "zod"
 import EventEmitter from "node:events"
 
 const db: Database.Database = new Database('woop.db', {})
 db.pragma('journal_mode = WAL')
 db.exec(/* sql */ `
 	CREATE TABLE IF NOT EXISTS tasks (
-		id INTEGER PRIMARY KEY
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		program TEXT NOT NULL,
+		key TEXT NOT NULL, -- hashed input
+		input TEXT NOT NULL, -- json input
+		-- pending: triggered, nothing happened yet
+		-- started: picked up by a worker
+		-- stalled: in progress, waiting for a step promise to resolve (resolved by JS runtime)
+		-- waiting: in progress, waiting for an event to occur (resolved by SQL)
+		-- cancelled: not finished, data will be a reason (timeout, debounce, event, ...)
+		-- error: not finished, data will be a serialized error
+		-- success: finished, data will be the output
+		status TEXT NOT NULL,
+		data TEXT -- { data: } json of output / error / reason (based on status)
 	);
 
+	CREATE UNIQUE INDEX IF NOT EXISTS tasks_program_key ON tasks (program, key);
+
 	CREATE TABLE IF NOT EXISTS memo (
-		id INTEGER PRIMARY KEY
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		program TEXT NOT NULL,
+		key TEXT NOT NULL, -- hashed input
+		step TEXT NOT NULL, -- step name
+		-- started: execution started
+		-- success: execution finished
+		-- error: execution failed
+		status TEXT NOT NULL,
+		data TEXT -- { data: } json of output / error (based on status)
 	);
+
+	CREATE INDEX IF NOT EXISTS memo_program_key ON memo (program, key);
+	CREATE UNIQUE INDEX IF NOT EXISTS memo_program_key_step ON memo (program, key, step);
 
 `)
 
@@ -88,7 +113,7 @@ type ProgramFn<In extends Data = Data, Out extends Data = Data> = (
 	input: In
 ) => Promise<Out>
 
-interface Program<In extends Data = Data, Out extends Data = Data, Events extends string = never, Id extends string = never> {
+export interface Program<In extends Data = Data, Out extends Data = Data, Events extends string = never, Id extends string = never> {
 	readonly invoke: (input: In) => Promise<Out>
 	readonly dispatch: (input: In) => void
 	readonly cancel: (input: In) => void
@@ -99,19 +124,28 @@ interface Program<In extends Data = Data, Out extends Data = Data, Events extend
 	readonly __events: Events
 }
 
-const asyncLocalStorage = new AsyncLocalStorage()
+const asyncLocalStorage = new AsyncLocalStorage<Store | null>()
 const emitter = new EventEmitter()
+{
+	const emit = emitter.emit
+	// @ts-expect-error -- temp monkey patch
+	emitter.emit = (event, ...args) => {
+		console.log('emit', event, args)
+		emit.apply(emitter, [event, ...args])
+	}
+}
 const interrupt = Symbol('interrupt')
-const executables = new Map<string, (input: Data, stepData: Data) => Promise<any>>()
+const executables = new Map<string, (input: Data, stepData: Record<string, { error: string | null, data: Data }>) => Promise<any>>()
 let internalRegistry = new Proxy({}, {
 	get() {
 		throw new Error('call `registerPrograms` before starting to schedule programs')
 	}
 }) as Registry2['registry']
 
-
 declare global {
-	interface Registry2 { }
+	interface Registry2 {
+
+	}
 }
 
 type UnionToIntersection<U> =
@@ -152,7 +186,16 @@ interface Utils {
 	invokeProgram<P extends keyof RegistryPrograms>(program: RegistryPrograms[P]['p'], input: RegistryPrograms[P]['__in']): Promise<RegistryPrograms[P]['__out']>
 }
 
-const step = {
+type Store = {
+	run(name: string | object, fn: () => (Data | Promise<Data>), kind?: string): Promise<Data>
+	sleep(ms: number): Promise<void>
+	dispatchEvent(name: string, data: Data): void
+	waitForEvent(name: string | object): Promise<Data>
+	dispatchProgram(id: keyof Registry2['registry'] | Program, input: any): void
+	invokeProgram(id: any, input: any): Promise<any>
+}
+
+export const step = {
 	run(name, fn) {
 		const store = asyncLocalStorage.getStore()
 		if (!store) throw new Error('`run` must be called within a program')
@@ -176,7 +219,7 @@ const step = {
 	dispatchProgram(id, input) {
 		const store = asyncLocalStorage.getStore()
 		if (!store) throw new Error('`dispatchProgram` must be called within a program')
-		return store.dispatchProgram(id, input)
+		return store.dispatchProgram(id as any, input)
 	},
 	invokeProgram(id, input) {
 		const store = asyncLocalStorage.getStore()
@@ -192,6 +235,7 @@ const SYSTEM_EVENTS = {
 	success: 'system/success',
 	error: 'system/error',
 	settled: 'system/settled',
+	continue: 'system/continue',
 }
 
 function serialize(obj: Data): string {
@@ -215,8 +259,19 @@ function serializeError(error: Error): string {
 		stack: error.stack,
 	})
 }
+function hydrateError(serialized: string): Error {
+	const obj = JSON.parse(serialized)
+	const error = new Error(obj.message)
+	error.stack = obj.stack
+	if (obj.cause) error.cause = hydrateError(obj.cause)
+	return error
 
-function createProgram<In extends Data = Data, Out extends Data = Data, Events extends string = never, const Id extends string = never>(
+}
+function isPromise(obj: unknown): obj is Promise<any> {
+	return !!obj && typeof obj === 'object' && 'then' in obj && typeof obj.then === 'function'
+}
+
+export function createProgram<In extends Data = Data, Out extends Data = Data, Events extends string = never, const Id extends string = never>(
 	config: ProgramOptions<In, Out, Events, Id>,
 	fn: ProgramFn<In, Out>
 ): NoInfer<Program<In, Out, Events, Id>> {
@@ -283,57 +338,142 @@ function createProgram<In extends Data = Data, Out extends Data = Data, Events e
 	emitter.on(events.trigger, (data: In) => {
 		c.onTrigger?.(data)
 		const key = serialize(data)
-		// insert into the database
+		// TODO: should we reset the retries / error if trying to re-trigger?
+		db.prepare(/* sql */`
+			INSERT OR IGNORE
+			INTO tasks (program, key, input, status)
+			VALUES (@program, @key, @input, @status)
+		`).run({
+			program: c.id,
+			key,
+			input: JSON.stringify(data),
+			status: 'pending',
+		})
 		emitter.emit(SYSTEM_EVENTS.trigger, { id: c.id, in: data })
 	})
 	emitter.on(events.success, (input: In, out: Out) => {
 		c.onSuccess?.(input, out)
 		const key = serialize(input)
 		const value = serialize(out)
-		// match input to the database
-		// mark it as successful, with the output
+		db.prepare(/* sql */`
+			INSERT OR REPLACE
+			INTO tasks (program, key, input, status, data)
+			VALUES (@program, @key, @input, @status, @data)
+		`).run({
+			program: c.id,
+			key,
+			input: JSON.stringify(input),
+			status: 'success',
+			data: JSON.stringify(out),
+		})
 		emitter.emit(events.settled, input, null, out)
 		emitter.emit(SYSTEM_EVENTS.success, { id: c.id, in: input, out: out })
 	})
 	emitter.on(events.start, (data: In) => {
 		c.onStart?.(data)
 		const key = serialize(data)
-		// match it with the database
-		// mark it as started
+		db.prepare(/* sql */`
+			INSERT OR REPLACE
+			INTO tasks (program, key, input, status)
+			VALUES (@program, @key, @input, @status)
+		`).run({
+			program: c.id,
+			key,
+			input: JSON.stringify(data),
+			status: 'started',
+		})
 		emitter.emit(SYSTEM_EVENTS.start, { id: c.id, in: data })
 	})
 	emitter.on(events.settled, (input: In, error: Error | null, output: Out | null) => {
 		c.onSettled?.(input, error, output)
 		emitter.emit(SYSTEM_EVENTS.settled, { id: c.id, in: input, error, out: output })
 	})
+	emitter.on(events.continue, (data: In) => {
+		emitter.emit(SYSTEM_EVENTS.continue, { id: c.id, in: data })
+	})
 
-	executables.set(c.id, async (input: Data, stepData: Data) => {
-		const store = {
-			state: {
-				id: c.id,
-				key: serialize(input),
-				data: stepData,
-				index: 0,
-			},
-			run(name, fn) {
+	executables.set(c.id, async (input: Data, stepData: Record<string, { error: string | null, data: Data | null }>) => {
+		let index = 0
+		const key = serialize(input)
+		const store: Store = {
+			// state: {
+			// 	id: c.id,
+			// 	key: serialize(input),
+			// 	data: stepData,
+			// 	index: 0,
+			// },
+			async run(name, fn, kind = 'run') {
+				// @ts-expect-error -- we need to implement "first param is string or object"
+				const n = typeof name === 'string' ? name : name.name
 				// identify self using name and store
+				const stepKey = `${kind}:${n}:${index}`
+				index++
 				// get self data from store
-				// if data, return data
+				const entry = stepData[stepKey]
+				if (entry) {
+					if (entry.error) return Promise.reject(hydrateError(entry.error))
+					return Promise.resolve(entry.data)
+				}
+
+				// TODO: in v2, check if the result of `fn()` is a promise, if not we could just continue execution
+				const promise = Promise.resolve<Data>(asyncLocalStorage.run(null, fn))
+				promise.then((result) => {
+					// store result in store
+					stepData[stepKey] = { data: result, error: null }
+					db.prepare(/* sql */`
+						INSERT OR REPLACE
+						INTO memo (program, key, step, status, data)
+						VALUES (@program, @key, @step, @status, @data)
+					`).run({
+						program: c.id,
+						key,
+						step: stepKey,
+						status: 'success',
+						data: JSON.stringify(result),
+					})
+				})
+				promise.catch((error) => {
+					// store error in store
+					stepData[stepKey] = { error: serializeError(error), data: null }
+					db.prepare(/* sql */`
+						INSERT OR REPLACE
+						INTO memo (program, key, step, status, data)
+						VALUES (@program, @key, @step, @status, @data)
+					`).run({
+						program: c.id,
+						key,
+						step: stepKey,
+						status: 'error',
+						data: serializeError(error),
+					})
+				})
+				promise.finally(() => {
+					// notify the program that we're done
+					emitter.emit(events.continue, input)
+				})
+				await Promise.resolve()
+				throw interrupt
 			},
 			sleep(ms) {
 				// todo
+				throw new Error("Method not implemented")
+
 			},
 			dispatchEvent(name, data) {
 				// todo
+				throw new Error("Method not implemented")
 			},
 			waitForEvent(name) {
 				// todo
+				throw new Error("Method not implemented")
 			},
 			dispatchProgram(idOrProgram, input) {
-				// todo
+				const program = typeof idOrProgram === 'string' ? internalRegistry[idOrProgram as keyof Registry2['registry']] : idOrProgram
+				return store.run(program.id, () => program.dispatch(input), 'dispatchProgram')
 			},
 			invokeProgram(idOrProgram, input) {
-				// todo
+				const program = typeof idOrProgram === 'string' ? internalRegistry[idOrProgram as keyof Registry2['registry']] : idOrProgram
+				return store.run(program.id, () => program.invoke(input), 'invokeProgram')
 			},
 		}
 		asyncLocalStorage.run(store, async () => {
@@ -342,7 +482,7 @@ function createProgram<In extends Data = Data, Out extends Data = Data, Events e
 				const validIn = c.input ? c.input.parse(input) : input
 				const output = await fn(validIn as In)
 				const validOut = c.output ? c.output.parse(output) : output
-				step.run({ name: 'success', retry: { attempts: 0 } }, () => { emitter.emit(events.success, validIn, validOut) })
+				emitter.emit(events.success, validIn, validOut)
 			} catch (error) {
 				if (error === interrupt) return
 				// ignoring retries for now, should they be handled here or in the event listener?
@@ -356,7 +496,6 @@ function createProgram<In extends Data = Data, Out extends Data = Data, Events e
 	})
 
 	function invoke(input: In): Promise<Out> {
-		emitter.emit(events.trigger, input)
 		return new Promise((resolve, reject) => {
 			const key = serialize(input)
 			emitter.once(events.settled, (input: In, err: Error | null, output: Out | null) => {
@@ -365,6 +504,7 @@ function createProgram<In extends Data = Data, Out extends Data = Data, Events e
 				if (err) return reject(err)
 				resolve(output as Out)
 			})
+			emitter.emit(events.trigger, input)
 		})
 	}
 	function dispatch(input: In): void {
@@ -392,43 +532,52 @@ function createProgram<In extends Data = Data, Out extends Data = Data, Events e
 	}
 }
 
-const pokemon = createProgram({
-	id: 'pokemon',
-	output: z.object({ name: z.string() }),
-	input: z.object({ id: z.number() }),
-	triggers: { event: 'poke' }
-}, async (input) => {
+function execOne() {
+	const task = db.prepare<[], {
+		program: string
+		key: string
+		input: string
+		status: string
+		data: string | null
+	}>(/* sql */`
+		SELECT * FROM tasks
+		WHERE status NOT IN ('cancelled', 'error', 'success')
+		ORDER BY id
+		LIMIT 1
+	`).get()
+	if (!task) return
+	const { key, input, program } = task
+	const executable = executables.get(program)
+	if (!executable) return
+	const stepData = db.prepare<{
+		program: string
+		key: string
+	}, {
+		program: string
+		key: string
+		step: string
+		status: string
+		data: string | null
+	}>(/* sql */`
+		SELECT * FROM memo
+		WHERE program = @program
+		AND key = @key
+	`).all({ program, key })
+	executable(
+		JSON.parse(input),
+		stepData.reduce((acc, cur) => {
+			acc[cur.step] = {
+				error: cur.status === 'error' ? cur.data : null,
+				data: cur.status === 'success' ? JSON.parse(cur.data!) : null
+			}
+			return acc
+		}, {} as Record<string, { error: string | null, data: Data | null }>)
+	)
+}
+emitter.on(SYSTEM_EVENTS.trigger, execOne)
+emitter.on(SYSTEM_EVENTS.continue, execOne)
 
-	const data = await step.run({ name: 'fetch', concurrency: { id: 'pokeapi' } }, async () => {
-		const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${input.id}`)
-		return response.json() as Promise<{ name: string, order: number }>
-	})
-
-	step.dispatchProgram('foo', { fa: '1' })
-	step.dispatchProgram(pokemon, { id: 23 })
-	step.dispatchProgram(foo, { fa: '1' })
-	const eventData = await step.waitForEvent('foo-trigger')
-
-	step.dispatchEvent('poke', { fa: '1', id: 12 })
-
-	const dodo = await step.invokeProgram('foo', { fa: '1' })
-	const dudu = await step.invokeProgram(pokemon, { id: 23 })
-
-	return { name: data.name }
-})
-
-const foo = createProgram({
-	id: 'foo',
-	input: z.object({ fa: z.string() }),
-	output: z.object({ fi: z.string() }),
-	triggers: { event: ['foo-trigger', 'poke'] }
-}, async (input) => {
-	return { fi: input.fa }
-})
-
-pokemon.invoke({ id: 23 })
-
-function registerPrograms<
+export function registerPrograms<
 	const Dict extends {
 		[Key in string]: Program<any, any, any, Key>['id'] extends Key ? Program<any, any, any, Key> : never
 	}
@@ -446,13 +595,4 @@ function registerPrograms<
 // 	}, {} as any)
 // }
 
-const registry = registerPrograms({
-	pokemon,
-	foo,
-})
 
-declare global {
-	interface Registry2 {
-		registry: typeof registry
-	}
-}

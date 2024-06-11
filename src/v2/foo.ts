@@ -248,19 +248,19 @@ function createProgram<In extends Data = Data, Out extends Data = Data, Events e
 
 	const events = {
 		/** when the program was just added to the queue */
-		trigger: `system/${c.id}/trigger`,
+		trigger: `program/${c.id}/trigger`,
 		/** when the program was picked up by the runner */
-		start: `system/${c.id}/start`,
+		start: `program/${c.id}/start`,
 		/** when program was still running, but will be terminated (timeout, debounce, programmatic cancellation) */
-		cancel: `system/${c.id}/cancel`,
+		cancel: `program/${c.id}/cancel`,
 		/** when the program will not continue and reached the end */
-		success: `system/${c.id}/success`,
+		success: `program/${c.id}/success`,
 		/** when the program will not continue due to an error */
-		error: `system/${c.id}/error`,
+		error: `program/${c.id}/error`,
 		/** when program has nothing to execute anymore */
-		settled: `system/${c.id}/settled`,
+		settled: `program/${c.id}/settled`,
 		/** when something the program was waiting on has occurred, should result in a re-run of the program */
-		continue: `system/${c.id}/continue`,
+		continue: `program/${c.id}/continue`,
 	}
 
 	emitter.on(events.cancel, (data: In) => {
@@ -316,7 +316,9 @@ function createProgram<In extends Data = Data, Out extends Data = Data, Events e
 				index: 0,
 			},
 			run(name, fn) {
-				// todo
+				// identify self using name and store
+				// get self data from store
+				// if data, return data
 			},
 			sleep(ms) {
 				// todo

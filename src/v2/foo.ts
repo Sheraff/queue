@@ -1,5 +1,7 @@
+import { AsyncLocalStorage } from "node:async_hooks"
 import Database from 'better-sqlite3'
 import { z } from "zod"
+import EventEmitter from "node:events"
 
 const db: Database.Database = new Database('woop.db', {})
 db.pragma('journal_mode = WAL')
@@ -72,6 +74,7 @@ type ProgramOptions<In extends Data = Data, Out extends Data = Data, Events exte
 	output?: Validator<Out>
 	retry?: ProgramRetry
 	priority?: number | NoInfer<((input: In) => number)>
+	onStart?: NoInfer<(input: In) => void>
 	onSuccess?: NoInfer<(output: Out) => void>
 	onError?: (error: Error) => void
 	onSettled?: NoInfer<(error: Error | null, output: Out | null) => void>
@@ -86,6 +89,8 @@ type ProgramFn<In extends Data = Data, Out extends Data = Data> = (
 
 interface Program<In extends Data = Data, Out extends Data = Data, Events extends string = never, Id extends string = never> {
 	readonly invoke: (input: In) => Promise<Out>
+	readonly dispatch: (input: In) => void
+	readonly cancel: (input: In) => void
 	readonly id: Id
 	readonly opts: {}
 	readonly __in: In
@@ -93,23 +98,110 @@ interface Program<In extends Data = Data, Out extends Data = Data, Events extend
 	readonly __events: Events
 }
 
+const asyncLocalStorage = new AsyncLocalStorage()
+const emitter = new EventEmitter()
+const interrupt = Symbol('interrupt')
+
 function createProgram<In extends Data = Data, Out extends Data = Data, Events extends string = never, const Id extends string = never>(
 	config: ProgramOptions<In, Out, Events, Id>,
 	fn: ProgramFn<In, Out>
 ): NoInfer<Program<In, Out, Events, Id>> {
-	const opts = Object.assign({
-		triggers: {},
-		timings: {},
-		retry: {
-			attempts: 1,
-			delay: 1000,
-		},
-	}, typeof config === 'string' ? { id: config } : config)
+	const c: ProgramOptions<In, Out, string, Id> = typeof config === 'string' ? { id: config } : config
+
+	c.triggers ??= {}
+	c.triggers.event = typeof c.triggers.event === 'string' ? [c.triggers.event] : c.triggers.event ?? []
+
+	c.retry ??= { attempts: 2, delay: 1000 }
+	c.retry.attempts ||= 2
+
+	c.priority ??= 0
+
+	if (typeof c.timings?.concurrency === 'number') {
+		c.timings.concurrency = [{
+			limit: c.timings.concurrency,
+			id: c.id,
+			delay: 0,
+		}]
+	} if (c.timings?.concurrency) {
+		if (!Array.isArray(c.timings.concurrency)) c.timings.concurrency = [c.timings.concurrency]
+		c.timings.concurrency = c.timings.concurrency.map((concurrency) => ({
+			...concurrency,
+			id: concurrency.id ?? c.id,
+			limit: concurrency.limit ?? 1,
+			delay: concurrency.delay ?? 0,
+		}))
+	}
+
+	const systemTriggerEvent = `system/${c.id}/trigger`
+	const systemCancelEvent = `system/${c.id}/cancel`
+	const systemDoneEvent = `system/${c.id}/success`
+	const systemErrorEvent = `system/${c.id}/error`
+
+	emitter.on(systemCancelEvent, (data: In) => {
+		cancel(data)
+	})
+
+	async function exec(input: In): Promise<void> {
+		let valid = input
+		if (c.input) {
+			try {
+				valid = c.input.parse(input)
+			} catch (error) {
+				c.onError?.(error as Error)
+				throw error
+			}
+		}
+		c.onStart?.(input)
+
+		const res = await asyncLocalStorage.run({}, () => {
+			return fn(valid)
+		}).catch((error) => {
+			if (error === interrupt) return
+			c.onError?.(error as Error)
+		})
+
+		const output = c.output ? c.output.parse(res) : res
+		c.onSuccess?.(output)
+	}
+
+	function invoke(input: In): Promise<Out> {
+		emitter.emit(systemTriggerEvent, input)
+		return new Promise((resolve, reject) => {
+			const success = (output: Out) => {
+				resolve(output)
+				emitter.off(systemErrorEvent, error)
+			}
+			const error = (err: Error) => {
+				reject(err)
+				emitter.off(systemDoneEvent, success)
+			}
+			emitter.once(systemDoneEvent, success)
+			emitter.once(systemErrorEvent, error)
+		})
+	}
+	function dispatch(input: In): void {
+		emitter.emit(systemTriggerEvent, input)
+	}
+	function cancel(input: In): void {
+		emitter.emit(systemCancelEvent, input)
+	}
+	for (const event of c.triggers.event) {
+		emitter.on(event, (data: In) => {
+			emitter.emit(systemTriggerEvent, data)
+		})
+	}
+
+
 	return {
-		id: opts.id,
-		opts,
-		fn,
-	} as unknown as Program<In, Out, Events, Id>
+		invoke,
+		dispatch,
+		cancel,
+		id: c.id,
+		opts: c,
+		__in: {} as In,
+		__out: {} as Out,
+		__events: {} as Events,
+	}
 }
 
 

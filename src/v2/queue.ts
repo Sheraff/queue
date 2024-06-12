@@ -556,27 +556,28 @@ export class Queue<const Registry extends BaseRegistry> {
 		this.#executables.set(program.id, program.__register(this.#emitter, this.#asyncLocalStorage, this.registry, this.#interrupt, this.#db))
 	}
 
+	#execOne() {
+		const task = this.#db.getNextTask()
+		if (!task) return
+		const { key, input, program } = task
+		const executable = this.#executables.get(program)
+		if (!executable) return
+		const stepData = this.#db.getMemosForTask({ program, key })
+		executable(
+			JSON.parse(input),
+			stepData.reduce((acc, cur) => {
+				acc[cur.step] = {
+					error: cur.status === 'error' ? cur.data : null,
+					data: cur.status === 'success' ? JSON.parse(cur.data!) : null
+				}
+				return acc
+			}, {} as Record<string, { error: string | null, data: Data | null }>)
+		)
+	}
+
 	#start() {
-		const execOne = () => {
-			const task = this.#db.getNextTask()
-			if (!task) return
-			const { key, input, program } = task
-			const executable = this.#executables.get(program)
-			if (!executable) return
-			const stepData = this.#db.getMemosForTask({ program, key })
-			executable(
-				JSON.parse(input),
-				stepData.reduce((acc, cur) => {
-					acc[cur.step] = {
-						error: cur.status === 'error' ? cur.data : null,
-						data: cur.status === 'success' ? JSON.parse(cur.data!) : null
-					}
-					return acc
-				}, {} as Record<string, { error: string | null, data: Data | null }>)
-			)
-		}
-		this.#emitter.on(SYSTEM_EVENTS.trigger, execOne)
-		this.#emitter.on(SYSTEM_EVENTS.continue, execOne)
+		this.#emitter.on(SYSTEM_EVENTS.trigger, this.#execOne)
+		this.#emitter.on(SYSTEM_EVENTS.continue, this.#execOne)
 		{
 			const emit = this.#emitter.emit
 			// @ts-expect-error -- temp monkey patch
@@ -585,6 +586,11 @@ export class Queue<const Registry extends BaseRegistry> {
 				emit.apply(this.#emitter, [event, ...args])
 			}
 		}
+	}
+
+	close() {
+		this.#db.close()
+		this.#emitter.removeAllListeners()
 	}
 
 	// executables.set(c.id, 

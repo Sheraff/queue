@@ -1,45 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks"
-import Database from 'better-sqlite3'
 import EventEmitter from "node:events"
 import { createHash } from 'node:crypto'
+import { makeDb } from "./db.js"
 
-const db: Database.Database = new Database('woop.db', {})
-db.pragma('journal_mode = WAL')
-db.exec(/* sql */ `
-	CREATE TABLE IF NOT EXISTS tasks (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		program TEXT NOT NULL,
-		key TEXT NOT NULL, -- hashed input
-		input TEXT NOT NULL, -- json input
-		-- pending: triggered, nothing happened yet
-		-- started: picked up by a worker
-		-- stalled: in progress, waiting for a step promise to resolve (resolved by JS runtime)
-		-- waiting: in progress, waiting for an event to occur (resolved by SQL)
-		-- cancelled: not finished, data will be a reason (timeout, debounce, event, ...)
-		-- error: not finished, data will be a serialized error
-		-- success: finished, data will be the output
-		status TEXT NOT NULL,
-		data TEXT -- { data: } json of output / error / reason (based on status)
-	);
-
-	CREATE UNIQUE INDEX IF NOT EXISTS tasks_program_key ON tasks (program, key);
-
-	CREATE TABLE IF NOT EXISTS memo (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		program TEXT NOT NULL,
-		key TEXT NOT NULL, -- hashed input
-		step TEXT NOT NULL, -- step name
-		-- started: execution started
-		-- success: execution finished
-		-- error: execution failed
-		status TEXT NOT NULL,
-		data TEXT -- { data: } json of output / error (based on status)
-	);
-
-	CREATE INDEX IF NOT EXISTS memo_program_key ON memo (program, key);
-	CREATE UNIQUE INDEX IF NOT EXISTS memo_program_key_step ON memo (program, key, step);
-
-`)
+const db = makeDb('woop.db')
 
 type Scalar = string | number | boolean | null
 
@@ -335,11 +299,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		c.onError?.(data, error)
 		const key = hash(data)
 		const value = serializeError(error)
-		db.prepare(/* sql */`
-			INSERT OR REPLACE
-			INTO tasks (program, key, input, status, data)
-			VALUES (@program, @key, @input, @status, @data)
-		`).run({
+		db.insertOrReplaceTask({
 			program: c.id,
 			key,
 			input: JSON.stringify(data),
@@ -353,11 +313,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		c.onTrigger?.(data)
 		const key = hash(data)
 		// TODO: should we reset the retries / error if trying to re-trigger?
-		db.prepare(/* sql */`
-			INSERT OR IGNORE
-			INTO tasks (program, key, input, status)
-			VALUES (@program, @key, @input, @status)
-		`).run({
+		db.insertOrIgnoreTask({
 			program: c.id,
 			key,
 			input: JSON.stringify(data),
@@ -368,11 +324,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 	emitter.on(events.success, (input: In, out: Out) => {
 		c.onSuccess?.(input, out)
 		const key = hash(input)
-		db.prepare(/* sql */`
-			INSERT OR REPLACE
-			INTO tasks (program, key, input, status, data)
-			VALUES (@program, @key, @input, @status, @data)
-		`).run({
+		db.insertOrReplaceTask({
 			program: c.id,
 			key,
 			input: JSON.stringify(input),
@@ -385,11 +337,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 	emitter.on(events.start, (data: In) => {
 		c.onStart?.(data)
 		const key = hash(data)
-		db.prepare(/* sql */`
-			INSERT OR REPLACE
-			INTO tasks (program, key, input, status)
-			VALUES (@program, @key, @input, @status)
-		`).run({
+		db.insertOrReplaceTask({
 			program: c.id,
 			key,
 			input: JSON.stringify(data),
@@ -438,11 +386,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 				// TODO: in v2, check if the result of `fn()` is a promise, if not we could just continue execution
 				const promise = Promise.resolve(asyncLocalStorage.run(null, fn))
 					.then((data) => {
-						db.prepare(/* sql */`
-							INSERT OR REPLACE
-							INTO memo (program, key, step, status, data)
-							VALUES (@program, @key, @step, @status, @data)
-						`).run({
+						db.insertOrReplaceMemo({
 							program: c.id,
 							key,
 							step: stepKey,
@@ -453,11 +397,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					.catch((error) => {
 						errorStep = stepKey
 						// store result in store
-						db.prepare(/* sql */`
-							INSERT OR REPLACE
-							INTO memo (program, key, step, status, data)
-							VALUES (@program, @key, @step, @status, @data)
-						`).run({
+						db.insertOrReplaceMemo({
 							program: c.id,
 							key,
 							step: stepKey,
@@ -562,36 +502,12 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 }
 
 function execOne() {
-	const task = db.prepare<[], {
-		program: string
-		key: string
-		input: string
-		status: string
-		data: string | null
-	}>(/* sql */`
-		SELECT * FROM tasks
-		WHERE status NOT IN ('cancelled', 'error', 'success')
-		ORDER BY id
-		LIMIT 1
-	`).get()
+	const task = db.getNextTask()
 	if (!task) return
 	const { key, input, program } = task
 	const executable = executables.get(program)
 	if (!executable) return
-	const stepData = db.prepare<{
-		program: string
-		key: string
-	}, {
-		program: string
-		key: string
-		step: string
-		status: string
-		data: string | null
-	}>(/* sql */`
-		SELECT * FROM memo
-		WHERE program = @program
-		AND key = @key
-	`).all({ program, key })
+	const stepData = db.getMemosForTask({ program, key })
 	executable(
 		JSON.parse(input),
 		stepData.reduce((acc, cur) => {

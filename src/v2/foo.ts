@@ -174,16 +174,13 @@ interface Utils {
 	sleep(ms: number): Promise<void>
 	/** dispatch an event */
 	dispatchEvent<Event extends keyof RegistryEvents>(name: Event, data: RegistryEvents[Event]): void
-	waitForEvent<Event extends keyof RegistryEvents>(name: Event): Promise<RegistryEvents[Event]>
-	waitForEvent<Event extends keyof RegistryEvents>(opts: {
+	waitForEvent<Event extends keyof RegistryEvents>(name: Event | {
 		name: Event
 		timeout?: number
 	}): Promise<RegistryEvents[Event]>
 	/**  */
-	dispatchProgram<P extends keyof RegistryPrograms>(id: P, input: RegistryPrograms[P]['__in']): void
-	dispatchProgram<P extends keyof RegistryPrograms>(program: RegistryPrograms[P]['p'], input: RegistryPrograms[P]['__in']): void
-	invokeProgram<P extends keyof RegistryPrograms>(id: P, input: RegistryPrograms[P]['__in']): Promise<RegistryPrograms[P]['__out']>
-	invokeProgram<P extends keyof RegistryPrograms>(program: RegistryPrograms[P]['p'], input: RegistryPrograms[P]['__in']): Promise<RegistryPrograms[P]['__out']>
+	dispatchProgram<P extends keyof RegistryPrograms>(id: P | RegistryPrograms[P]['p'], input: RegistryPrograms[P]['__in']): void
+	invokeProgram<P extends keyof RegistryPrograms>(id: P | RegistryPrograms[P]['p'], input: RegistryPrograms[P]['__in']): Promise<RegistryPrograms[P]['__out']>
 }
 
 type Store = {

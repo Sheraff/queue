@@ -521,8 +521,11 @@ type RegistryStore<Registry extends BaseRegistry> = {
 	invokeProgram(id: any, input: any): Promise<any>
 }
 
-export class Queue<const Registry extends BaseRegistry> {
-	registry: Registry
+export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
+
+	public registry: Registry
+	public emitter = new EventEmitter()
+
 	constructor(registry: Registry) {
 		this.registry = {} as Registry
 		for (const key in registry) {
@@ -537,66 +540,64 @@ export class Queue<const Registry extends BaseRegistry> {
 			invoke: (input: In): Promise<Out> => {
 				return new Promise((resolve, reject) => {
 					const key = hash(input)
-					this.#emitter.once(program.__system_events.settled!, (input: In, err: Error | null, output: Out | null) => {
+					this.emitter.once(program.__system_events.settled!, (input: In, err: Error | null, output: Out | null) => {
 						const match = key === hash(input)
 						if (!match) return
 						if (err) return reject(err)
 						resolve(output as Out)
 					})
-					this.#emitter.emit(program.__system_events.trigger!, input)
+					this.emitter.emit(program.__system_events.trigger!, input)
 				})
 			},
 			dispatch: (input: In): void => {
-				this.#emitter.emit(program.__system_events.trigger!, input)
+				this.emitter.emit(program.__system_events.trigger!, input)
 			},
 			cancel: (input: In): void => {
-				this.#emitter.emit(program.__system_events.cancel!, input)
+				this.emitter.emit(program.__system_events.cancel!, input)
 			},
 		} as any
-		this.#executables.set(program.id, program.__register(this.#emitter, this.#asyncLocalStorage, this.registry, this.#interrupt, this.#db))
+		this.#executables.set(program.id, program.__register(this.emitter, this.#asyncLocalStorage, this.registry, this.#interrupt, this.#db))
 	}
 
-	#execOne() {
-		const task = this.#db.getNextTask()
-		if (!task) return
-		const { key, input, program } = task
-		const executable = this.#executables.get(program)
-		if (!executable) return
-		const stepData = this.#db.getMemosForTask({ program, key })
-		executable(
-			JSON.parse(input),
-			stepData.reduce((acc, cur) => {
-				acc[cur.step] = {
-					error: cur.status === 'error' ? cur.data : null,
-					data: cur.status === 'success' ? JSON.parse(cur.data!) : null
-				}
-				return acc
-			}, {} as Record<string, { error: string | null, data: Data | null }>)
-		)
-	}
+
 
 	#start() {
-		this.#emitter.on(SYSTEM_EVENTS.trigger, this.#execOne)
-		this.#emitter.on(SYSTEM_EVENTS.continue, this.#execOne)
-		{
-			const emit = this.#emitter.emit
-			// @ts-expect-error -- temp monkey patch
-			this.#emitter.emit = (event, ...args) => {
-				console.log('emit', event, args)
-				emit.apply(this.#emitter, [event, ...args])
-			}
+		const execOne = () => {
+			const task = this.#db.getNextTask()
+			if (!task) return
+			const { key, input, program } = task
+			const executable = this.#executables.get(program)
+			if (!executable) return
+			const stepData = this.#db.getMemosForTask({ program, key })
+			executable(
+				JSON.parse(input),
+				stepData.reduce((acc, cur) => {
+					acc[cur.step] = {
+						error: cur.status === 'error' ? cur.data : null,
+						data: cur.status === 'success' ? JSON.parse(cur.data!) : null
+					}
+					return acc
+				}, {} as Record<string, { error: string | null, data: Data | null }>)
+			)
 		}
+		this.emitter.on(SYSTEM_EVENTS.trigger, execOne)
+		this.emitter.on(SYSTEM_EVENTS.continue, execOne)
+		// {
+		// 	const emit = this.emitter.emit
+		// 	// @ts-expect-error -- temp monkey patch
+		// 	this.emitter.emit = (event, ...args) => {
+		// 		console.log('emit', event, args)
+		// 		emit.apply(this.emitter, [event, ...args])
+		// 	}
+		// }
 	}
 
 	close() {
 		this.#db.close()
-		this.#emitter.removeAllListeners()
+		this.emitter.removeAllListeners()
 	}
 
-	// executables.set(c.id, 
-
 	#asyncLocalStorage = new AsyncLocalStorage<RegistryStore<Registry> | null>()
-	#emitter = new EventEmitter()
 	#interrupt = Symbol('interrupt')
 	#executables = new Map<string, (input: Data, stepData: Record<string, { error: string | null, data: Data }>) => Promise<any>>()
 	#db = makeDb()

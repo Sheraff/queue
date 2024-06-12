@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node --loader=ts-node/esm --watch src/main.ts",
     "work": "node --loader=ts-node/esm --watch src/v2/userland/main.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --loader=ts-node/esm --watch src/v2/foo.test.ts"
   },
   "keywords": [],
   "author": "",

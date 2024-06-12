@@ -335,8 +335,17 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		c.onError?.(data, error)
 		const key = hash(data)
 		const value = serializeError(error)
-		// match input to the database
-		// mark it as errored, with the error
+		db.prepare(/* sql */`
+			INSERT OR REPLACE
+			INTO tasks (program, key, input, status, data)
+			VALUES (@program, @key, @input, @status, @data)
+		`).run({
+			program: c.id,
+			key,
+			input: JSON.stringify(data),
+			status: 'error',
+			data: value,
+		})
 		emitter.emit(events.settled, data, error, null)
 		emitter.emit(SYSTEM_EVENTS.error, { id: c.id, in: data, error: error })
 	})
@@ -398,6 +407,8 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 
 	executables.set(c.id, async (input: Data, stepData: Record<string, { error: string | null, data: Data | null }>) => {
 		let index = 0
+		let errorStep: string | null = null
+		let latestStep: string | null = null
 		const key = hash(input)
 		const promises: Promise<any>[] = []
 		const store: Store = {
@@ -412,46 +423,49 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 				const n = typeof name === 'string' ? name : name.name
 				// identify self using name and store
 				const stepKey = `${kind}:${n}:${index}`
+				latestStep = stepKey
 				index++
 				// get self data from store
 				const entry = stepData[stepKey]
 				if (entry) {
-					if (entry.error) return Promise.reject(hydrateError(entry.error))
+					if (entry.error) {
+						errorStep = stepKey
+						return Promise.reject(hydrateError(entry.error))
+					}
 					return Promise.resolve(entry.data)
 				}
 
 				// TODO: in v2, check if the result of `fn()` is a promise, if not we could just continue execution
-				const promise = Promise.resolve<Data>(asyncLocalStorage.run(null, fn))
-				promise.then((result) => {
-					// store result in store
-					stepData[stepKey] = { data: result, error: null }
-					db.prepare(/* sql */`
-						INSERT OR REPLACE
-						INTO memo (program, key, step, status, data)
-						VALUES (@program, @key, @step, @status, @data)
-					`).run({
-						program: c.id,
-						key,
-						step: stepKey,
-						status: 'success',
-						data: JSON.stringify(result),
+				const promise = Promise.resolve(asyncLocalStorage.run(null, fn))
+					.then((data) => {
+						db.prepare(/* sql */`
+							INSERT OR REPLACE
+							INTO memo (program, key, step, status, data)
+							VALUES (@program, @key, @step, @status, @data)
+						`).run({
+							program: c.id,
+							key,
+							step: stepKey,
+							status: 'success',
+							data: JSON.stringify(data),
+						})
 					})
-				})
-				promise.catch((error) => {
-					// store error in store
-					stepData[stepKey] = { error: serializeError(error), data: null }
-					db.prepare(/* sql */`
-						INSERT OR REPLACE
-						INTO memo (program, key, step, status, data)
-						VALUES (@program, @key, @step, @status, @data)
-					`).run({
-						program: c.id,
-						key,
-						step: stepKey,
-						status: 'error',
-						data: serializeError(error),
+					.catch((error) => {
+						errorStep = stepKey
+						// store result in store
+						db.prepare(/* sql */`
+							INSERT OR REPLACE
+							INTO memo (program, key, step, status, data)
+							VALUES (@program, @key, @step, @status, @data)
+						`).run({
+							program: c.id,
+							key,
+							step: stepKey,
+							status: 'error',
+							data: serializeError(error),
+						})
 					})
-				})
+
 				promises.push(promise)
 				await Promise.resolve()
 				throw interrupt
@@ -500,7 +514,11 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 				emitter.emit(
 					events.error,
 					input,
-					new Error(`Runtime error in ${c.id} during/after step ${'not implemented yet'}`, { cause: error })
+					new Error(errorStep
+						? `Runtime error in "${c.id}" during step "${errorStep}"`
+						: `Runtime error in "${c.id}" after step "${latestStep}"`,
+						{ cause: error }
+					)
 				)
 			}
 		})

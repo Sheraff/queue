@@ -46,4 +46,5 @@ declare global {
 	}
 }
 
-pokemon.invoke({ id: 25 })
+
+pokemon.invoke({ id: 25 }).catch(() => { })

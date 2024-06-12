@@ -498,7 +498,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		}
 		asyncLocalStorage.run(store, async () => {
 			try {
-				await step.run({ name: 'start', retry: { attempts: 0 } }, () => { emitter.emit(events.start, input) })
+				await step.run({ name: 'system-start', retry: { attempts: 0 } }, () => { emitter.emit(events.start, input) })
 				const validIn = c.input ? c.input.parse(input) : input
 				const output = await fn(validIn as In)
 				const validOut = c.output ? c.output.parse(output) : output

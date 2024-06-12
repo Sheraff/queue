@@ -13,9 +13,9 @@ const pokemon = createProgram({
 		return response.json() as Promise<{ name: string, order: number }>
 	})
 
-	step.dispatchProgram('foo', { fa: '1' })
-	// step.dispatchProgram(pokemon, { id: 23 })
-	step.dispatchProgram(foo, { fa: '1' })
+	step.dispatchProgram('foo', { fa: '2' })
+	step.dispatchProgram(pokemon, { id: 23 })
+	step.dispatchProgram(foo, { fa: '2' })
 	// const eventData = await step.waitForEvent('foo-trigger')
 
 	// step.dispatchEvent('poke', { fa: '1', id: 12 })
@@ -46,4 +46,4 @@ declare global {
 	}
 }
 
-pokemon.invoke({ id: 23 })
+pokemon.invoke({ id: 25 })

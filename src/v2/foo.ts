@@ -395,6 +395,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 	executables.set(c.id, async (input: Data, stepData: Record<string, { error: string | null, data: Data | null }>) => {
 		let index = 0
 		const key = serialize(input)
+		const promises: Promise<any>[] = []
 		const store: Store = {
 			// state: {
 			// 	id: c.id,
@@ -447,10 +448,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 						data: serializeError(error),
 					})
 				})
-				promise.finally(() => {
-					// notify the program that we're done
-					emitter.emit(events.continue, input)
-				})
+				promises.push(promise)
 				await Promise.resolve()
 				throw interrupt
 			},
@@ -469,7 +467,11 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 			},
 			dispatchProgram(idOrProgram, input) {
 				const program = typeof idOrProgram === 'string' ? internalRegistry[idOrProgram as keyof Registry2['registry']] : idOrProgram
-				return store.run(program.id, () => program.dispatch(input), 'dispatchProgram')
+				store.run(program.id, () => program.dispatch(input), 'dispatchProgram')
+					// dispatch is not meant to be awaited, so we need to catch the interrupt here
+					.catch(e => {
+						if (e !== interrupt) throw e
+					})
 			},
 			invokeProgram(idOrProgram, input) {
 				const program = typeof idOrProgram === 'string' ? internalRegistry[idOrProgram as keyof Registry2['registry']] : idOrProgram
@@ -478,13 +480,18 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		}
 		asyncLocalStorage.run(store, async () => {
 			try {
-				step.run({ name: 'start', retry: { attempts: 0 } }, () => { emitter.emit(events.start, input) })
+				await step.run({ name: 'start', retry: { attempts: 0 } }, () => { emitter.emit(events.start, input) })
 				const validIn = c.input ? c.input.parse(input) : input
 				const output = await fn(validIn as In)
 				const validOut = c.output ? c.output.parse(output) : output
 				emitter.emit(events.success, validIn, validOut)
 			} catch (error) {
-				if (error === interrupt) return
+				if (error === interrupt) {
+					Promise.all(promises).finally(() => {
+						emitter.emit(events.continue, input)
+					})
+					return
+				}
 				// ignoring retries for now, should they be handled here or in the event listener?
 				emitter.emit(
 					events.error,

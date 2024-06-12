@@ -1,7 +1,8 @@
 import { z } from "zod"
-import { step, createProgram, registerPrograms } from './foo.js'
+import { step, createProgram } from '../queue.js'
+import { foo } from "./foo.js"
 
-const pokemon = createProgram({
+export const pokemon = createProgram({
 	id: 'pokemon',
 	output: z.object({ name: z.string() }),
 	input: z.object({ id: z.number() }),
@@ -25,26 +26,3 @@ const pokemon = createProgram({
 
 	return { name: data.name }
 })
-
-const foo = createProgram({
-	id: 'foo',
-	input: z.object({ fa: z.string() }),
-	output: z.object({ fi: z.string() }),
-	triggers: { event: ['foo-trigger', 'poke'] }
-}, async (input) => {
-	return { fi: input.fa }
-})
-
-const registry = registerPrograms({
-	pokemon,
-	foo,
-})
-
-declare global {
-	interface Registry2 {
-		registry: typeof registry
-	}
-}
-
-
-pokemon.invoke({ id: 25 }).catch(() => { })

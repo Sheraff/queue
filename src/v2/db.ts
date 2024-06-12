@@ -146,3 +146,5 @@ export function makeDb(filename?: string) {
 		getMemosForTask,
 	}
 }
+
+export type Storage = ReturnType<typeof makeDb>

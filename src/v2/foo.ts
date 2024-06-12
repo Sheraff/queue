@@ -1,7 +1,7 @@
-import { z } from "zod"
 import { AsyncLocalStorage } from "node:async_hooks"
 import Database from 'better-sqlite3'
 import EventEmitter from "node:events"
+import { createHash } from 'node:crypto'
 
 const db: Database.Database = new Database('woop.db', {})
 db.pragma('journal_mode = WAL')
@@ -267,6 +267,11 @@ function hydrateError(serialized: string): Error {
 function isPromise(obj: unknown): obj is Promise<any> {
 	return !!obj && typeof obj === 'object' && 'then' in obj && typeof obj.then === 'function'
 }
+function hash(input: Data) {
+	const string = serialize(input)
+	if (string.length < 40) return string
+	return createHash('md5').update(Buffer.from(string)).digest('hex')
+}
 
 export function createProgram<In extends Data = Data, Out extends Data = Data, Events extends string = never, const Id extends string = never>(
 	config: ProgramOptions<In, Out, Events, Id>,
@@ -317,7 +322,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 
 	emitter.on(events.cancel, (data: In) => {
 		c.onCancel?.(data)
-		const key = serialize(data)
+		const key = hash(data)
 		// match it with the database
 		// mark it as cancelled
 		emitter.emit(events.settled, data, null, null)
@@ -325,7 +330,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 	})
 	emitter.on(events.error, (data: In, error: Error) => {
 		c.onError?.(data, error)
-		const key = serialize(data)
+		const key = hash(data)
 		const value = serializeError(error)
 		// match input to the database
 		// mark it as errored, with the error
@@ -334,7 +339,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 	})
 	emitter.on(events.trigger, (data: In) => {
 		c.onTrigger?.(data)
-		const key = serialize(data)
+		const key = hash(data)
 		// TODO: should we reset the retries / error if trying to re-trigger?
 		db.prepare(/* sql */`
 			INSERT OR IGNORE
@@ -350,8 +355,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 	})
 	emitter.on(events.success, (input: In, out: Out) => {
 		c.onSuccess?.(input, out)
-		const key = serialize(input)
-		const value = serialize(out)
+		const key = hash(input)
 		db.prepare(/* sql */`
 			INSERT OR REPLACE
 			INTO tasks (program, key, input, status, data)
@@ -368,7 +372,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 	})
 	emitter.on(events.start, (data: In) => {
 		c.onStart?.(data)
-		const key = serialize(data)
+		const key = hash(data)
 		db.prepare(/* sql */`
 			INSERT OR REPLACE
 			INTO tasks (program, key, input, status)
@@ -391,7 +395,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 
 	executables.set(c.id, async (input: Data, stepData: Record<string, { error: string | null, data: Data | null }>) => {
 		let index = 0
-		const key = serialize(input)
+		const key = hash(input)
 		const promises: Promise<any>[] = []
 		const store: Store = {
 			// state: {
@@ -501,9 +505,9 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 
 	function invoke(input: In): Promise<Out> {
 		return new Promise((resolve, reject) => {
-			const key = serialize(input)
+			const key = hash(input)
 			emitter.once(events.settled, (input: In, err: Error | null, output: Out | null) => {
-				const match = key === serialize(input)
+				const match = key === hash(input)
 				if (!match) return
 				if (err) return reject(err)
 				resolve(output as Out)

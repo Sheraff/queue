@@ -267,10 +267,13 @@ function hydrateError(serialized: string): Error {
 function isPromise(obj: unknown): obj is Promise<any> {
 	return !!obj && typeof obj === 'object' && 'then' in obj && typeof obj.then === 'function'
 }
+function md5(input: string): string {
+	return createHash('md5').update(Buffer.from(input)).digest('hex')
+}
 function hash(input: Data) {
 	const string = serialize(input)
 	if (string.length < 40) return string
-	return createHash('md5').update(Buffer.from(string)).digest('hex')
+	return md5(string)
 }
 
 export function createProgram<In extends Data = Data, Out extends Data = Data, Events extends string = never, const Id extends string = never>(

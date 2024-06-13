@@ -6,6 +6,8 @@ type Task = {
 	input: string
 	status: string
 	created_at: number
+	timeout_at: number
+	did_timeout: 0 | 1,
 	data: string | null
 }
 
@@ -29,6 +31,7 @@ export function makeDb(filename?: string) {
 			-- waiting: { until: timestamp }
 			status_data TEXT, -- extra data for status, shape depends on status
 			created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
+			timeout_at INTEGER NOT NULL DEFAULT 1e999,
 			priority INTEGER NOT NULL,
 			data TEXT -- { data: } json of output / error / reason (based on status)
 		);
@@ -107,23 +110,24 @@ export function makeDb(filename?: string) {
 
 	const insertOrIgnoreTaskStatement = db.prepare(/* sql */`
 		INSERT OR IGNORE
-		INTO tasks (program, key, input, status, priority)
-		VALUES (@program, @key, @input, @status, @priority)
+		INTO tasks (program, key, input, status, priority, timeout_at)
+		VALUES (@program, @key, @input, @status, @priority, unixepoch('subsec') + @timeout_in)
 	`)
 
-	function insertOrIgnoreTask(task: {
+	function createTask(task: {
 		program: string,
 		key: string,
 		input: string,
 		status: string,
 		priority: number,
+		timeout_in: number,
 	}) {
 		insertOrIgnoreTaskStatement.run(task)
 	}
 
 
 	const nextTask = db.prepare<[], Task>(/* sql */`
-		SELECT * FROM tasks
+		SELECT *, timeout_at < unixepoch('subsec') as did_timeout FROM tasks
 		WHERE
 			status IN ('pending', 'started')
 			OR (
@@ -143,12 +147,22 @@ export function makeDb(filename?: string) {
 
 	const futureTask = db.prepare<[], { wait_seconds: number }>(/* sql */`
 		SELECT
-			json_extract(status_data, '$.until') - unixepoch('subsec') AS wait_seconds
+			MIN(
+				json_extract(status_data, '$.until') - unixepoch('subsec'),
+				timeout_at - unixepoch('subsec')
+			) AS wait_seconds
 		FROM tasks
 		WHERE
-			status IS 'waiting'
-			AND json_extract(status_data, '$.until') > unixepoch('subsec')
-		ORDER BY json_extract(status_data, '$.until')
+			(
+				status IS 'waiting'
+				AND json_extract(status_data, '$.until') > unixepoch('subsec')
+			)
+			OR (
+				status NOT IN ('cancelled', 'error', 'success')
+				AND timeout_at IS NOT NULL
+				AND timeout_at < 1e999
+			)
+		ORDER BY wait_seconds ASC
 		LIMIT 1
 	`)
 	function getNextFutureTask() {
@@ -213,7 +227,7 @@ export function makeDb(filename?: string) {
 	return {
 		close: () => { db.close() },
 		insertOrReplaceTask,
-		insertOrIgnoreTask,
+		createTask,
 		sleepOrIgnoreTask,
 		getNextTask,
 		getNextFutureTask,

@@ -346,12 +346,13 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 			const key = hash(data ?? {})
 			// TODO: should we reset the retries / error if trying to re-trigger?
 			const priority = typeof c.priority === 'function' ? c.priority(data) : c.priority ?? 0
-			db.insertOrIgnoreTask({
+			db.createTask({
 				program: c.id,
 				key,
 				input: JSON.stringify(data),
 				status: 'pending',
 				priority,
+				timeout_in: (c.timings?.timeout ?? Infinity) / 1000,
 			})
 			emitter.emit(SYSTEM_EVENTS.trigger, { id: c.id, in: data })
 		})
@@ -388,12 +389,10 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		}
 
 		return async (input: Data, stepData: Record<string, StepData>, task: Task) => {
-			if (c.timings?.timeout) {
-				if (task.created_at * 1000 + c.timings.timeout < Date.now()) {
-					c.onTimeout?.(input as In)
-					emitter.emit(events.cancel, input)
-					return
-				}
+			if (task.did_timeout) {
+				c.onTimeout?.(input as In)
+				emitter.emit(events.cancel, input)
+				return
 			}
 			let index = 0
 			let errorStep: string | null = null

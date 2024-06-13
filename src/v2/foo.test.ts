@@ -162,7 +162,8 @@ test.describe('retry', () => {
 		const queue = new Queue({
 			delayedRetry: createProgram({ id: 'delayedRetry' }, async () => {
 				await step.run({
-					name: 'yo', retry: {
+					name: 'yo',
+					retry: {
 						attempts: 3,
 						delay: 10,
 					}

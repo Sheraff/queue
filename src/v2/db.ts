@@ -17,6 +17,8 @@ export function makeDb(filename?: string) {
 			-- error: not finished, data will be a serialized error
 			-- success: finished, data will be the output
 			status TEXT NOT NULL,
+			-- waiting: { until: timestamp }
+			status_data TEXT, -- extra data for status, shape depends on status
 			data TEXT -- { data: } json of output / error / reason (based on status)
 		);
 	
@@ -65,6 +67,24 @@ export function makeDb(filename?: string) {
 		}
 	}
 
+	const sleepOrIgnoreTaskStatement = db.prepare(/* sql */`
+		UPDATE tasks
+		SET
+			status = 'waiting',
+			status_data = json_object('until', unixepoch('subsec') + @seconds)
+		WHERE
+			program = @program
+			AND key = @key
+	`)
+
+	function sleepOrIgnoreTask(task: {
+		program: string,
+		key: string,
+		seconds: number,
+	}) {
+		sleepOrIgnoreTaskStatement.run(task)
+	}
+
 	const insertOrIgnoreTaskStatement = db.prepare(/* sql */`
 		INSERT OR IGNORE
 		INTO tasks (program, key, input, status)
@@ -89,13 +109,32 @@ export function makeDb(filename?: string) {
 	}
 	const task = db.prepare<[], Task>(/* sql */`
 		SELECT * FROM tasks
-		WHERE status NOT IN ('cancelled', 'error', 'success', 'stalled')
+		WHERE
+			status IN ('pending', 'started')
+			OR (
+				status IS 'waiting'
+				AND json_extract(status_data, '$.until') < unixepoch('subsec')
+			)
 		ORDER BY id
 		LIMIT 1
 	`)
 
 	function getNextTask() {
 		return task.get()
+	}
+
+	const futureTask = db.prepare<[], { wait_seconds: number }>(/* sql */`
+		SELECT
+			json_extract(status_data, '$.until') - unixepoch('subsec') AS wait_seconds
+		FROM tasks
+		WHERE
+			status IS 'waiting'
+			AND json_extract(status_data, '$.until') > unixepoch('subsec')
+		ORDER BY json_extract(status_data, '$.until')
+		LIMIT 1
+	`)
+	function getNextFutureTask() {
+		return futureTask.get()
 	}
 
 
@@ -141,7 +180,9 @@ export function makeDb(filename?: string) {
 		close: () => { db.close() },
 		insertOrReplaceTask,
 		insertOrIgnoreTask,
+		sleepOrIgnoreTask,
 		getNextTask,
+		getNextFutureTask,
 		insertOrReplaceMemo,
 		getMemosForTask,
 	}

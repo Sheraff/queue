@@ -84,7 +84,7 @@ export interface Program<In extends Data = Data, Out extends Data = Data, Events
 	readonly __in: In
 	readonly __out: Out
 	readonly __events: Events
-	readonly __register: (emitter: EventEmitter, asyncLocalStorage: AsyncLocalStorage<Store | null>, registry: BaseRegistry, interrupt: symbol, db: Storage) => (input: Data, stepData: Record<string, { error: string | null, data: Data }>) => Promise<any>
+	readonly __register: (emitter: EventEmitter, asyncLocalStorage: AsyncLocalStorage<Store | null>, registry: BaseRegistry, db: Storage) => (input: Data, stepData: Record<string, { error: string | null, data: Data }>) => Promise<any>
 	readonly __system_events: Record<string, string>
 }
 
@@ -192,6 +192,7 @@ const SYSTEM_EVENTS = {
 }
 
 function serialize(obj: Data): string {
+	if (obj === undefined) return 'undefined'
 	if (!obj || typeof obj !== 'object') return JSON.stringify(obj)
 	if (Array.isArray(obj)) return `[${obj.map(serialize).join(',')}]`
 	const keys = Object.keys(obj).sort()
@@ -230,6 +231,20 @@ function hash(input: Data) {
 	const string = serialize(input)
 	if (string.length < 40) return string
 	return md5(string)
+}
+
+const interruptToken = Symbol('interrupt')
+type InterruptError = {
+	[interruptToken]: true,
+	data: {
+		updateStatus: boolean
+	}
+}
+function isInterrupt(e: any): e is InterruptError {
+	return e && typeof e === 'object' && interruptToken in e
+}
+function interrupt(data: InterruptError['data']) {
+	throw { [interruptToken]: true, data }
 }
 
 export function createProgram<In extends Data = Data, Out extends Data = Data, Events extends string = never, const Id extends string = never>(
@@ -283,7 +298,6 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		emitter: EventEmitter,
 		asyncLocalStorage: AsyncLocalStorage<Store | null>,
 		registry: BaseRegistry,
-		interrupt: symbol,
 		db: Storage
 	) {
 
@@ -336,13 +350,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		})
 		emitter.on(events.start, (data: In) => {
 			c.onStart?.(data)
-			const key = hash(data)
-			db.insertOrReplaceTask({
-				program: c.id,
-				key,
-				input: JSON.stringify(data),
-				status: 'started',
-			})
+			// const key = hash(data)
 			emitter.emit(SYSTEM_EVENTS.start, { id: c.id, in: data })
 		})
 		emitter.on(events.settled, (input: In, error: Error | null, output: Out | null) => {
@@ -414,12 +422,17 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 
 					promises.push(promise)
 					await Promise.resolve()
-					throw interrupt
+					const updateStatus = n !== 'sleep' || kind !== 'system'
+					interrupt({ updateStatus })
 				},
-				sleep(ms) {
-					// todo
-					throw new Error("Method not implemented")
-
+				async sleep(ms) {
+					await store.run({ name: 'sleep', retry: { attempts: 0 } }, () => {
+						db.sleepOrIgnoreTask({
+							program: c.id,
+							key,
+							seconds: ms / 1000,
+						})
+					}, 'system')
 				},
 				dispatchEvent(name, data) {
 					// todo
@@ -435,7 +448,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					store.run(program.id, () => program.dispatch(input), 'dispatchProgram')
 						// dispatch is not meant to be awaited, so we need to catch the interrupt here
 						.catch(e => {
-							if (e !== interrupt) throw e
+							if (!isInterrupt(e)) throw e
 						})
 				},
 				invokeProgram(idOrProgram, input) {
@@ -459,14 +472,16 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 						const validOut = c.output ? c.output.parse(output) : output
 						emitter.emit(events.success, validIn, validOut)
 					} catch (error) {
-						if (error === interrupt) {
+						if (isInterrupt(error)) {
 							Promise.all(promises).finally(() => {
-								db.insertOrReplaceTask({
-									program: c.id,
-									key,
-									input: JSON.stringify(input),
-									status: 'started',
-								})
+								if (error.data.updateStatus) {
+									db.insertOrReplaceTask({
+										program: c.id,
+										key,
+										input: JSON.stringify(input),
+										status: 'started',
+									})
+								}
 								emitter.emit(events.continue, input)
 							})
 							return
@@ -551,36 +566,39 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 			...program,
 			invoke: (input: In): Promise<Out> => {
 				return new Promise((resolve, reject) => {
-					const key = hash(input)
+					const i = input ?? {}
+					const key = hash(i)
 					this.emitter.once(program.__system_events.settled!, (input: In, err: Error | null, output: Out | null) => {
-						const match = key === hash(input)
+						const match = key === hash(input ?? {})
 						if (!match) return
 						if (err) return reject(err)
 						resolve(output as Out)
 					})
-					this.emitter.emit(program.__system_events.trigger!, input)
+					this.emitter.emit(program.__system_events.trigger!, i)
 				})
 			},
 			dispatch: (input: In): void => {
-				this.emitter.emit(program.__system_events.trigger!, input)
+				this.emitter.emit(program.__system_events.trigger!, input ?? {})
 			},
 			cancel: (input: In): void => {
-				this.emitter.emit(program.__system_events.cancel!, input)
+				this.emitter.emit(program.__system_events.cancel!, input ?? {})
 			},
 		} as any
-		this.#executables.set(program.id, program.__register(this.emitter, this.#asyncLocalStorage, this.registry, this.#interrupt, this.#db))
+		this.#executables.set(program.id, program.__register(this.emitter, this.#asyncLocalStorage, this.registry, this.#db))
 	}
 
 
 	#running = new Set<Promise<any>>()
 
 	#start() {
+		let willRun = false
 		const execOne = () => {
+			willRun = false
 			const task = this.#db.getNextTask()
-			if (!task) return
+			if (!task) return 'no-task'
 			const { key, input, program } = task
 			const executable = this.#executables.get(program)
-			if (!executable) return
+			if (!executable) throw new Error(`Program "${program}" not found`)
 			const stepData = this.#db.getMemosForTask({ program, key })
 			const promise = executable(
 				JSON.parse(input),
@@ -596,9 +614,28 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 			promise.finally(() => {
 				this.#running.delete(promise)
 			})
+			return 'ok'
 		}
-		this.emitter.on(SYSTEM_EVENTS.trigger, execOne)
-		this.emitter.on(SYSTEM_EVENTS.continue, execOne)
+		let sleepId: NodeJS.Timeout | null = null
+		const mightExec = () => {
+			if (willRun) return
+			willRun = true
+			if (sleepId) {
+				clearTimeout(sleepId)
+				sleepId = null
+			}
+			setImmediate(() => {
+				const status = execOne()
+				if (status === 'no-task') {
+					const future = this.#db.getNextFutureTask()
+					if (!future) return
+					sleepId = setTimeout(mightExec, Math.ceil(future.wait_seconds * 1000) + 1)
+				}
+			})
+		}
+		this.emitter.on(SYSTEM_EVENTS.trigger, mightExec)
+		this.emitter.on(SYSTEM_EVENTS.continue, mightExec)
+		mightExec()
 		{
 			const emit = this.emitter.emit
 			// @ts-expect-error -- temp monkey patch
@@ -616,7 +653,6 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 	}
 
 	#asyncLocalStorage = new AsyncLocalStorage<RegistryStore<Registry> | null>()
-	#interrupt = Symbol('interrupt')
 	#executables = new Map<string, (input: Data, stepData: Record<string, { error: string | null, data: Data }>) => Promise<any>>()
 	#db = makeDb()
 

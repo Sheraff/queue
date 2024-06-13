@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 import EventEmitter from "node:events"
 import { createHash } from 'node:crypto'
-import { makeDb, type Storage } from "./db.js"
+import { makeDb, type Storage, type Task } from "./db.js"
 
 type Scalar = string | number | boolean | null
 
@@ -88,7 +88,7 @@ export interface Program<In extends Data = Data, Out extends Data = Data, Events
 	readonly __in: In
 	readonly __out: Out
 	readonly __events: Events
-	readonly __register: (emitter: EventEmitter, asyncLocalStorage: AsyncLocalStorage<Store | null>, registry: BaseRegistry, db: Storage) => (input: Data, stepData: Record<string, StepData>) => Promise<any>
+	readonly __register: (emitter: EventEmitter, asyncLocalStorage: AsyncLocalStorage<Store | null>, registry: BaseRegistry, db: Storage) => (input: Data, stepData: Record<string, StepData>, task: Task) => Promise<any>
 	readonly __system_events: Record<string, string>
 }
 
@@ -311,6 +311,12 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 	) {
 
 		const resolveCancel = (data: In) => {
+			db.insertOrReplaceTask({
+				program: c.id,
+				key: hash(data ?? {}),
+				input: JSON.stringify(data),
+				status: 'cancelled',
+			})
 			c.onCancel?.(data)
 			emitter.emit(events.settled, data, null, null)
 			emitter.emit(SYSTEM_EVENTS.cancel, { id: c.id, in: data })
@@ -320,12 +326,6 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 			const match = db.getTask({ program: c.id, key })
 			if (!match) return
 			if (match.status === 'pending' || match.status === 'started' || match.status === 'waiting') {
-				db.insertOrReplaceTask({
-					program: c.id,
-					key,
-					input: match.input,
-					status: 'cancelled',
-				})
 				resolveCancel(data)
 			}
 
@@ -388,7 +388,14 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 			})
 		}
 
-		return async (input: Data, stepData: Record<string, StepData>) => {
+		return async (input: Data, stepData: Record<string, StepData>, task: Task) => {
+			if (c.timings?.timeout) {
+				if (task.created_at * 1000 + c.timings.timeout < Date.now()) {
+					c.onTimeout?.(input as In)
+					emitter.emit(events.cancel, input)
+					return
+				}
+			}
 			let index = 0
 			let errorStep: string | null = null
 			let latestStep: string | null = null
@@ -543,12 +550,6 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 							Promise.all(promises).then(() => {
 								emitter.off(events.cancel, onCancel)
 								if (cancelled) {
-									db.insertOrReplaceTask({
-										program: c.id,
-										key,
-										input: JSON.stringify(input),
-										status: 'cancelled',
-									})
 									resolveCancel(input as In)
 									return
 								}
@@ -648,7 +649,7 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 	public emitter = new EventEmitter()
 
 	#asyncLocalStorage = new AsyncLocalStorage<RegistryStore<Registry> | null>()
-	#executables = new Map<string, (input: Data, stepData: Record<string, StepData>) => Promise<any>>()
+	#executables = new Map<string, (input: Data, stepData: Record<string, StepData>, task: Task) => Promise<any>>()
 	#db: Storage
 
 	constructor(
@@ -714,7 +715,8 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 						lastRun: cur.last_run,
 					}
 					return acc
-				}, {})
+				}, {}),
+				task
 			)
 			this.#running.add(promise)
 			promise.finally(() => {

@@ -1,5 +1,14 @@
 import Database from 'better-sqlite3'
 
+type Task = {
+	program: string
+	key: string
+	input: string
+	status: string
+	created_at: number
+	data: string | null
+}
+
 export function makeDb(filename?: string) {
 	const db: Database.Database = new Database(filename, {})
 	db.pragma('journal_mode = WAL')
@@ -19,6 +28,7 @@ export function makeDb(filename?: string) {
 			status TEXT NOT NULL,
 			-- waiting: { until: timestamp }
 			status_data TEXT, -- extra data for status, shape depends on status
+			created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 			data TEXT -- { data: } json of output / error / reason (based on status)
 		);
 	
@@ -44,14 +54,22 @@ export function makeDb(filename?: string) {
 	///////// TASK
 
 	const insertOrReplaceTaskStatement = db.prepare(/* sql */`
-		INSERT OR REPLACE
-		INTO tasks (program, key, input, status, data)
-		VALUES (@program, @key, @input, @status, @data)
+		UPDATE tasks
+		SET
+			input = @input,
+			status = @status,
+			data = @data
+		WHERE
+			program = @program
+			AND key = @key
 	`)
 	const insertOrReplaceTaskNoDataStatement = db.prepare(/* sql */`
-		INSERT OR REPLACE
-		INTO tasks (program, key, input, status)
-		VALUES (@program, @key, @input, @status)
+		UPDATE tasks
+		SET
+			status = @status
+		WHERE
+			program = @program
+			AND key = @key
 	`)
 
 	function insertOrReplaceTask(task: {
@@ -101,13 +119,7 @@ export function makeDb(filename?: string) {
 		insertOrIgnoreTaskStatement.run(task)
 	}
 
-	type Task = {
-		program: string
-		key: string
-		input: string
-		status: string
-		data: string | null
-	}
+
 	const nextTask = db.prepare<[], Task>(/* sql */`
 		SELECT * FROM tasks
 		WHERE
@@ -207,3 +219,4 @@ export function makeDb(filename?: string) {
 }
 
 export type Storage = ReturnType<typeof makeDb>
+export type { Task }

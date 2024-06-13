@@ -310,12 +310,49 @@ test.describe('cancel', () => {
 				await step.sleep(20)
 				await step.run('b', async () => {
 					found.push('b')
-					await new Promise(r => setTimeout(r, 50))
+					await new Promise(r => setTimeout(r, 20))
 				})
 				await step.run('c', () => found.push('c'))
 			})
 		})
 		setTimeout(() => queue.registry.hello.cancel(), 30)
+		await queue.registry.hello.invoke()
+		t.diagnostic('Steps executed: ' + found.join(', '))
+		assert.strictEqual(found.join(','), 'a,b', 'Only a and b should have been executed')
+		await queue.close()
+	})
+})
+
+test.describe('timeout', () => {
+	test('during task', async (t) => {
+		const found: string[] = []
+		const queue = new Queue({
+			hello: createProgram({ id: 'hello', timings: { timeout: 30 } }, async () => {
+				await step.run('a', () => found.push('a'))
+				await step.sleep(20)
+				await step.run('b', async () => found.push('b'))
+				await step.sleep(20)
+				await step.run('c', () => found.push('c'))
+			})
+		})
+		await queue.registry.hello.invoke()
+		t.diagnostic('Steps executed: ' + found.join(', '))
+		assert.strictEqual(found.join(','), 'a,b', 'Only a and b should have been executed')
+		await queue.close()
+	})
+	test('between tasks', async (t) => {
+		const found: string[] = []
+		const queue = new Queue({
+			hello: createProgram({ id: 'hello', timings: { timeout: 30 } }, async () => {
+				await step.run('a', () => found.push('a'))
+				await step.sleep(20)
+				await step.run('b', async () => {
+					found.push('b')
+					await new Promise(r => setTimeout(r, 20))
+				})
+				await step.run('c', () => found.push('c'))
+			})
+		})
 		await queue.registry.hello.invoke()
 		t.diagnostic('Steps executed: ' + found.join(', '))
 		assert.strictEqual(found.join(','), 'a,b', 'Only a and b should have been executed')

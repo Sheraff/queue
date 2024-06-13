@@ -5,9 +5,9 @@
   "main": "main.ts",
   "type": "module",
   "scripts": {
-    "dev": "node --loader=ts-node/esm --watch src/main.ts",
-    "work": "node --loader=ts-node/esm --watch src/v2/userland/main.ts",
-    "test": "node --loader=ts-node/esm --watch src/v2/foo.test.ts"
+    "dev": "tsx --watch src/main.ts",
+    "work": "tsx --watch src/v2/userland/main.ts",
+    "test": "tsx --watch src/v2/foo.test.ts"
   },
   "keywords": [],
   "author": "",
@@ -19,7 +19,6 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.10",
     "@types/node": "^20.14.2",
-    "esbuild": "^0.21.4",
-    "ts-node": "^10.9.2"
+    "tsx": "4.15.4"
   }
 }

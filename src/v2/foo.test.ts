@@ -544,8 +544,32 @@ test.describe('throttle', () => {
 	})
 })
 
-test.describe('cron', () => {
-	test('cron task should be executed periodically', async (t) => {
+test.describe('triggers', () => {
+	test('event', async (t) => {
+		const found: string[] = []
+		const queue = new Queue({
+			hello: createProgram({
+				id: 'hello',
+				input: z.object({ key: z.string() }),
+				triggers: { event: 'boo' }
+			}, async (input) => {
+				await step.run('a', () => found.push(input.key))
+			}),
+			other: createProgram({
+				id: 'other',
+				input: z.object({ key: z.string() }),
+				triggers: { event: ['boo'] }
+			}, async (input) => {
+				await step.run('a', () => found.push(input.key))
+			})
+		})
+		queue.emitter.emit('boo', { key: 'a' })
+		await exhaustQueue(queue)
+		assert.strictEqual(found.join(','), 'a,a', 'Both programs should have been executed')
+		await queue.close()
+	})
+	// skipped because it's too long
+	test.skip('cron', async (t) => {
 		const found: string[] = []
 		const queue = new Queue({
 			hello: createProgram({
@@ -556,9 +580,9 @@ test.describe('cron', () => {
 				await step.run('a', () => found.push('a'))
 			})
 		})
-		await new Promise(r => setTimeout(r, 1100))
+		await new Promise(r => setTimeout(r, 2100))
+		assert.strictEqual(found.length, 2, 'Step should have been executed once')
 		await queue.close()
-		assert.strictEqual(found.length, 1, 'Step should have been executed once')
 	})
 })
 

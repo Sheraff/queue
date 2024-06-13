@@ -117,7 +117,6 @@ type RunOptions = {
 	name: string
 	retry?: ProgramRetry
 	concurrency?: ConcurrencyOptions
-	__sleep?: number
 }
 
 interface Utils {
@@ -240,20 +239,14 @@ function hash(input: Data) {
 }
 
 const interruptToken = Symbol('interrupt')
-type StepPromiseData = {
-	sleep: number
-}
 type InterruptError = {
 	[interruptToken]: true,
-	data: {
-		sleep: number
-	}
 }
 function isInterrupt(e: any): e is InterruptError {
 	return e && typeof e === 'object' && interruptToken in e
 }
-function interrupt(data: InterruptError['data']) {
-	throw { [interruptToken]: true, data }
+function interrupt() {
+	throw { [interruptToken]: true }
 }
 export function forwardInterrupt(e: any) {
 	if (isInterrupt(e)) throw e
@@ -384,14 +377,11 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 			let errorStep: string | null = null
 			let latestStep: string | null = null
 			const key = hash(input)
-			const promises: Promise<StepPromiseData>[] = []
+			const promises: Promise<void>[] = []
+			const schedulerData: {
+				sleep: number
+			}[] = []
 			const store: Store = {
-				// state: {
-				// 	id: c.id,
-				// 	key: serialize(input),
-				// 	data: stepData,
-				// 	index: 0,
-				// },
 				async run(name, fn, kind = 'run') {
 					const opts = typeof name === 'string' ? { name } : name
 					const n = opts.name
@@ -415,16 +405,14 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 							const delta = now - entry.lastRun
 							if (delta < delay) {
 								// early exit, this task is not ready to re-run yet
+								schedulerData.push({ sleep: delay - delta })
 								await Promise.resolve()
-								interrupt({ sleep: delay - delta })
+								interrupt()
 							}
 						}
 					}
 
 					let delegateToNextTick = true
-					const schedulerData: StepPromiseData = {
-						sleep: 0
-					}
 
 					const onSuccess = (data: Data) => {
 						db.insertOrReplaceMemo({
@@ -436,12 +424,11 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 							last_run: Date.now(),
 							data: JSON.stringify(data),
 						})
-						schedulerData.sleep = opts.__sleep ?? 0
-						return schedulerData
 					}
+					const run = entry ? entry.runs + 1 : 1
+					const canRetry = run < attempts
 					const onError = (error: unknown) => {
 						errorStep = stepKey
-						const run = entry ? entry.runs + 1 : 1
 						db.insertOrReplaceMemo({
 							program: c.id,
 							key,
@@ -451,20 +438,14 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 							last_run: Date.now(),
 							data: serializeError(error),
 						})
-						const canRetry = run < attempts
-						schedulerData.sleep = opts.__sleep ?? 0
 						if (canRetry && opts.retry?.delay) {
 							const delay = typeof opts.retry.delay === 'function' ? opts.retry.delay(run) : opts.retry.delay
-							schedulerData.sleep = delay
+							schedulerData.push({ sleep: delay })
 						}
-						// TODO: if `canRetry` but task has already been updated to `status:'waiting'` by another parallel step that resolved earlier
-						// then we should check whether *this* step would like to retry earlier than the other step (and if so, update the task)
-						// this can only happen if we have parallel synchronous steps that fail
-						return schedulerData
 					}
 
 					let syncResult: Data
-					let syncError = false
+					let syncError: unknown
 					try {
 						const maybePromise = asyncLocalStorage.run(null, fn)
 						if (isPromise(maybePromise)) {
@@ -477,17 +458,21 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 						}
 					} catch (error) {
 						onError(error)
-						syncError = true
+						delegateToNextTick = canRetry
+						syncError = error
 					}
 
-					if (delegateToNextTick || schedulerData.sleep || syncError) {
+					if (delegateToNextTick) {
 						await Promise.resolve() // give other parallel tasks a chance to run before we throw an interrupt
-						interrupt(schedulerData)
+						interrupt()
 					}
+					if (syncError) throw syncError
 					return syncResult
 				},
 				async sleep(ms) {
-					await store.run({ name: 'sleep', retry: { attempts: 0 }, __sleep: ms }, () => { }, 'system')
+					await store.run({ name: 'sleep', retry: { attempts: 0 } }, async () => {
+						schedulerData.push({ sleep: ms })
+					}, 'system')
 				},
 				dispatchEvent(name, data) {
 					// todo
@@ -528,9 +513,8 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 						emitter.emit(events.success, validIn, validOut)
 					} catch (error) {
 						if (isInterrupt(error)) {
-							Promise.all(promises).then((steps) => {
-								const sleeps = steps.map(s => s.sleep)
-								if (error.data.sleep) sleeps.push(error.data.sleep)
+							Promise.all(promises).then(() => {
+								const sleeps = schedulerData.map(s => s.sleep)
 								const sleep = Math.min(...sleeps)
 								if (sleeps.length && sleep) {
 									db.sleepOrIgnoreTask({

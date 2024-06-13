@@ -495,7 +495,6 @@ test.describe('debounce', () => {
 	})
 })
 
-// TODO: test memoization
 // TODO: test queue can be killed and recreated from DB
 // TODO: fix Test "pokemon" at src/v2/foo.test.ts:1:603 generated asynchronous activity after the test ended. This activity created the error "TypeError: The database connection is not open" and would have caused the test to fail, but instead triggered an unhandledRejection event.
 

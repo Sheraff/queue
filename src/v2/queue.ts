@@ -17,7 +17,7 @@ type ProgramTriggers<Events extends string = never> = {
 
 type ConcurrencyOptions = {
 	/** Globally unique identifier for the concurrency check, defaults to `id` of the program */
-	id?: string
+	id?: string | ((input: Data) => string)
 	/** How many calls to run concurrently. Defaults to `1`. */
 	limit?: number
 	/** How long to wait before running the next batch of calls. */
@@ -27,20 +27,20 @@ type ConcurrencyOptions = {
 type ProgramTimings = {
 	/** How long to wait before running the program. If other calls are made before this time, the timer is reset. */
 	// TODO: can be implemented with "cancel" + Promise.race("sleep", "waitForEvent")
-	debounce?: number | { timeout: number, match?: (input: Data) => string }
+	debounce?: number | { timeout: number, id?: string | ((input: Data) => string) }
 	/** How long before the program is considered to have timed out, and should be cancelled. */
-	// TODO: requires "cancel
+	// TODO: requires "cancel"
 	timeout?: number
 	/** How long to wait between each call to the program. If other calls are made before this time, they are dropped. */
-	throttle?: number | { timeout: number, match?: (input: Data) => string }
+	throttle?: number | { timeout: number, id?: string | ((input: Data) => string) }
 	/** `input` will be an array of inputs batched over time. */
 	batch?: {
 		/** How many calls to batch together. */
 		size: number
 		/** How long to wait before sending a batch, even if it's not full. */
 		timeout?: number
-		/** Return a group id, only tasks with the same group id are batched together. Defaults to the program name. */
-		match?: (input: Data) => string
+		/** Return a group id, only tasks with the same group id are batched together, defaults to `id` of the program. */
+		id?: string | ((input: Data) => string)
 	}
 	concurrency?: number | ConcurrencyOptions | ConcurrencyOptions[]
 }

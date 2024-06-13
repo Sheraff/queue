@@ -16,6 +16,8 @@ import { pokemon } from "./pokemon.js"
 export const queue = new Queue({
 	pokemon,
 	foo,
+}, {
+	dbName: 'woop.db'
 })
 
 queue.registry.pokemon.invoke({ id: 25 }).catch(() => { })

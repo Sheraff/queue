@@ -466,7 +466,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 						status: 'stalled',
 					})
 					try {
-						await store.run({ name: 'system-start', retry: { attempts: 0 } }, () => { emitter.emit(events.start, input) })
+						await store.run({ name: 'start', retry: { attempts: 0 } }, () => { emitter.emit(events.start, input) }, 'system')
 						const validIn = c.input ? c.input.parse(input) : input
 						const output = await fn(validIn as In)
 						const validOut = c.output ? c.output.parse(output) : output
@@ -553,7 +553,17 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 	public registry: Registry
 	public emitter = new EventEmitter()
 
-	constructor(registry: Registry) {
+	#asyncLocalStorage = new AsyncLocalStorage<RegistryStore<Registry> | null>()
+	#executables = new Map<string, (input: Data, stepData: Record<string, { error: string | null, data: Data }>) => Promise<any>>()
+	#db: Storage
+
+	constructor(
+		registry: Registry,
+		options: {
+			dbName?: string
+		} = {}
+	) {
+		this.#db = makeDb(options.dbName)
 		this.registry = {} as Registry
 		for (const key in registry) {
 			this.#registerProgram(registry[key]!)
@@ -651,10 +661,6 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 		this.#db.close()
 		this.emitter.removeAllListeners()
 	}
-
-	#asyncLocalStorage = new AsyncLocalStorage<RegistryStore<Registry> | null>()
-	#executables = new Map<string, (input: Data, stepData: Record<string, { error: string | null, data: Data }>) => Promise<any>>()
-	#db = makeDb()
 
 	run<T extends Data>(name: string | {
 		name: string

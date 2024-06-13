@@ -29,7 +29,6 @@ type ProgramTimings = {
 	// TODO: can be implemented with "cancel" + Promise.race("sleep", "waitForEvent")
 	debounce?: number | { timeout: number, id?: string | ((input: Data) => string) }
 	/** How long before the program is considered to have timed out, and should be cancelled. */
-	// TODO: requires "cancel"
 	timeout?: number
 	/** How long to wait between each call to the program. If other calls are made before this time, they are dropped. */
 	throttle?: number | { timeout: number, id?: string | ((input: Data) => string) }
@@ -525,9 +524,9 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 						})
 				},
 				invokeProgram(idOrProgram, input) {
-					const program = (typeof idOrProgram === 'string' ? registry[idOrProgram as keyof typeof registry] : registry[idOrProgram.id]) as Program | undefined
-					if (!program) throw new Error(`Program not found`)
-					return store.run(program.id, () => program.invoke(input), 'invokeProgram')
+					// todo: we cannot just invoke the other program and return its promise here, programs could take a long time to run
+					// we should register a trigger (likely based on "wait for event"), and here we just fire-and-forget the other program
+					throw new Error("Method not implemented")
 				},
 			}
 			await storageStorage.run(asyncLocalStorage, () =>

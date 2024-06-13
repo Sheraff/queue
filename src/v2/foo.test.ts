@@ -70,6 +70,22 @@ test.describe('benchmark', () => {
 	})
 })
 
+test('memo', async (t) => {
+	let count = 0
+	const queue = new Queue({
+		hey: createProgram({ id: 'hey' }, async () => {
+			await step.run('ya', () => { count++ })
+		})
+	})
+	queue.registry.hey.dispatch()
+	queue.registry.hey.dispatch()
+	queue.registry.hey.dispatch()
+	queue.registry.hey.dispatch()
+	await exhaustQueue(queue)
+	assert.strictEqual(count, 1, 'Step should have been memoized')
+	await queue.close()
+})
+
 test('sleep', async (t) => {
 	const queue = new Queue({
 		hey: createProgram({ id: 'hey' }, async () => {

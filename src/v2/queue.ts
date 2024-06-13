@@ -82,7 +82,7 @@ export interface Program<In extends Data = Data, Out extends Data = Data, Events
 	readonly dispatch: (input: In) => void
 	readonly cancel: (input: In) => void
 	readonly id: Id
-	readonly opts: {}
+	readonly opts: NoInfer<ProgramOptions<In, Out, Events, Id>>
 	readonly __in: In
 	readonly __out: Out
 	readonly __events: Events
@@ -653,7 +653,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		dispatch: unregisteredCall as any,
 		cancel: unregisteredCall as any,
 		id: c.id,
-		opts: c,
+		opts: c as any,
 		__in: {} as In,
 		__out: {} as Out,
 		__events: {} as Events,
@@ -716,10 +716,13 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 	) {
 		this.#db = makeDb(options.dbName)
 		this.registry = {} as Registry
+		let hasCronTrigger = false
 		for (const key in registry) {
 			this.#registerProgram(registry[key]!)
+			hasCronTrigger ||= !!registry[key]!.opts.triggers?.cron
 		}
 		this.#start()
+		if (hasCronTrigger) this.#cron()
 	}
 
 	#registerProgram<In extends Data, Out extends Data>(program: Program<In, Out, any, any>) {
@@ -764,6 +767,32 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 			// }
 		} as any
 		this.#executables.set(program.id, program.__register(this.emitter, this.#asyncLocalStorage, this.registry, this.#db))
+	}
+
+	async #cron() {
+		const { schedule } = await import('node-cron').catch((error: Error) => {
+			throw new Error('Install "node-cron" to use cron triggers', { cause: error })
+		})
+		const now = new Date().toISOString()
+		for (const key in this.registry) {
+			const program = this.registry[key]!
+			if (program.opts.input) {
+				try {
+					program.opts.input.parse({ date: now })
+				} catch (e) {
+					throw new Error(`Program "${program.id}" has a cron trigger, but its input does not accept an ISO date string as \`{ date }\` input`, { cause: e })
+				}
+			}
+			let cron = program.opts.triggers?.cron
+			if (!cron) continue
+			if (typeof cron === 'string') cron = [cron]
+			for (const c of cron) {
+				schedule(c, (date) => {
+					if (typeof date === 'string') return
+					this.emitter.emit(program.__system_events.trigger!, { date: date.toISOString() })
+				})
+			}
+		}
 	}
 
 

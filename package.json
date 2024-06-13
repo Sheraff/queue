@@ -19,6 +19,10 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.10",
     "@types/node": "^20.14.2",
+    "@types/node-cron": "^3.0.11",
     "tsx": "4.15.4"
+  },
+  "optionalDependencies": {
+    "node-cron": ">=3.0.0"
   }
 }

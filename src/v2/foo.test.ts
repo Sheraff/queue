@@ -544,6 +544,24 @@ test.describe('throttle', () => {
 	})
 })
 
+test.describe('cron', () => {
+	test('cron task should be executed periodically', async (t) => {
+		const found: string[] = []
+		const queue = new Queue({
+			hello: createProgram({
+				id: 'hello',
+				input: z.object({ date: z.string().datetime() }),
+				triggers: { cron: '*/1 * * * * *' }, // min duration for a cron is 1s
+			}, async () => {
+				await step.run('a', () => found.push('a'))
+			})
+		})
+		await new Promise(r => setTimeout(r, 1100))
+		await queue.close()
+		assert.strictEqual(found.length, 1, 'Step should have been executed once')
+	})
+})
+
 // TODO: test queue can be killed and recreated from DB
 
 

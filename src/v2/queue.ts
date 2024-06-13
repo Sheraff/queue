@@ -26,17 +26,21 @@ type ConcurrencyOptions = {
 
 type ProgramTimings = {
 	/** How long to wait before running the program. If other calls are made before this time, the timer is reset. */
-	debounce?: number
+	// TODO: can be implemented with "cancel" + Promise.race("sleep", "waitForEvent")
+	debounce?: number | { timeout: number, match?: (input: Data) => string }
 	/** How long before the program is considered to have timed out, and should be cancelled. */
+	// TODO: requires "cancel
 	timeout?: number
 	/** How long to wait between each call to the program. If other calls are made before this time, they are dropped. */
-	throttle?: number
+	throttle?: number | { timeout: number, match?: (input: Data) => string }
 	/** `input` will be an array of inputs batched over time. */
 	batch?: {
 		/** How many calls to batch together. */
 		size: number
 		/** How long to wait before sending a batch, even if it's not full. */
 		timeout?: number
+		/** Return a group id, only tasks with the same group id are batched together. Defaults to the program name. */
+		match?: (input: Data) => string
 	}
 	concurrency?: number | ConcurrencyOptions | ConcurrencyOptions[]
 }

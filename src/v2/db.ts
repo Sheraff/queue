@@ -89,7 +89,7 @@ export function makeDb(filename?: string) {
 	}
 	const task = db.prepare<[], Task>(/* sql */`
 		SELECT * FROM tasks
-		WHERE status NOT IN ('cancelled', 'error', 'success')
+		WHERE status NOT IN ('cancelled', 'error', 'success', 'stalled')
 		ORDER BY id
 		LIMIT 1
 	`)

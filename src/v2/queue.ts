@@ -446,6 +446,12 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 			}
 			storageStorage.run(asyncLocalStorage, () =>
 				asyncLocalStorage.run(store, async () => {
+					db.insertOrReplaceTask({
+						program: c.id,
+						key,
+						input: JSON.stringify(input),
+						status: 'stalled',
+					})
 					try {
 						await store.run({ name: 'system-start', retry: { attempts: 0 } }, () => { emitter.emit(events.start, input) })
 						const validIn = c.input ? c.input.parse(input) : input
@@ -455,6 +461,12 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					} catch (error) {
 						if (error === interrupt) {
 							Promise.all(promises).finally(() => {
+								db.insertOrReplaceTask({
+									program: c.id,
+									key,
+									input: JSON.stringify(input),
+									status: 'started',
+								})
 								emitter.emit(events.continue, input)
 							})
 							return

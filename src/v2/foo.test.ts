@@ -121,6 +121,35 @@ test.describe('retry', () => {
 	})
 })
 
+test('parallel', async (t) => {
+	let attemptsA = 0
+	let attemptsB = 0
+	const queue = new Queue({
+		parallel: createProgram({ id: 'parallel' }, async () => {
+			const [a, b] = await Promise.all([
+				step.run('a', async () => {
+					await new Promise(r => setTimeout(r, 10))
+					if (attemptsA++ === 0) {
+						throw new Error('a failed')
+					}
+					return 'a'
+				}),
+				step.run('b', async () => {
+					if (attemptsB++ === 0) {
+						throw new Error('b failed')
+					}
+					return 'b'
+				}),
+			])
+			return { a, b }
+		})
+	})
+	const result = await queue.registry.parallel.invoke()
+	assert.strictEqual(result.a, 'a')
+	assert.strictEqual(result.b, 'b')
+	await queue.close()
+})
+
 
 function exhaustQueue(queue: Queue<any>) {
 	return new Promise<void>((resolve) => {

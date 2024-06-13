@@ -9,6 +9,7 @@ type Task = {
 	timeout_at: number
 	did_timeout: 0 | 1,
 	debounce_group: string | null
+	throttle_group: string | null
 	priority: number
 	data: string | null
 }
@@ -34,12 +35,14 @@ export function makeDb(filename?: string) {
 			status_data TEXT, -- extra data for status, shape depends on status
 			created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 			timeout_at INTEGER NOT NULL DEFAULT 1e999,
-			debounce_group TEXT, -- if set, only one task per group will be run at a time
+			debounce_group TEXT, -- if set, incoming tasks with the same group will reset the start timeout, task only starts after timeout
+			throttle_group TEXT, -- if set, incoming tasks with the same group will be ignored for the throttle period
 			priority INTEGER NOT NULL,
 			data TEXT -- { data: } json of output / error / reason (based on status)
 		);
 	
 		CREATE UNIQUE INDEX IF NOT EXISTS tasks_program_key ON tasks (program, key);
+		CREATE INDEX IF NOT EXISTS tasks_status ON tasks (status);
 	
 		CREATE TABLE IF NOT EXISTS memo (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,8 +132,8 @@ export function makeDb(filename?: string) {
 
 	const insertOrIgnoreTaskStatement = db.prepare(/* sql */`
 		INSERT OR IGNORE
-		INTO tasks (program, key, input, status, priority, timeout_at, debounce_group)
-		VALUES (@program, @key, @input, @status, @priority, unixepoch('subsec') + @timeout_in, @debounce_group)
+		INTO tasks (program, key, input, status, priority, timeout_at, debounce_group, throttle_group)
+		VALUES (@program, @key, @input, @status, @priority, unixepoch('subsec') + @timeout_in, @debounce_group, @throttle_group)
 	`)
 
 	function createTask(task: {
@@ -141,6 +144,7 @@ export function makeDb(filename?: string) {
 		priority: number,
 		timeout_in: number,
 		debounce_group: string | null,
+		throttle_group: string | null,
 	}) {
 		insertOrIgnoreTaskStatement.run(task)
 	}
@@ -213,6 +217,25 @@ export function makeDb(filename?: string) {
 		return taskByDebounceGroup.all(task)
 	}
 
+	const latestTaskByThrottleGroup = db.prepare<{
+		throttle_group: string
+		timeout: number
+	}, Task>(/* sql */`
+		SELECT * FROM tasks
+		WHERE
+			throttle_group = @throttle_group
+			AND status IS NOT 'cancelled'
+			AND created_at + @timeout > unixepoch('subsec')
+		ORDER BY created_at DESC
+		LIMIT 1
+	`)
+	function getLatestTaskByThrottleGroup(task: {
+		throttle_group: string
+		timeout: number
+	}) {
+		return latestTaskByThrottleGroup.get(task)
+	}
+
 
 	/////// MEMO
 
@@ -266,6 +289,7 @@ export function makeDb(filename?: string) {
 		getNextFutureTask,
 		getTask,
 		getTaskByDebounceGroup,
+		getLatestTaskByThrottleGroup,
 		insertOrReplaceMemo,
 		getMemosForTask,
 	}

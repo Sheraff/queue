@@ -495,8 +495,56 @@ test.describe('debounce', () => {
 	})
 })
 
+test.describe('throttle', () => {
+	test('throttled task should be executed only once', async (t) => {
+		const found: string[] = []
+		const queue = new Queue({
+			hello: createProgram({
+				id: 'hello',
+				timings: { throttle: 15 },
+				input: z.object({ key: z.string() })
+			}, async (input) => {
+				await step.run('a', () => found.push(input.key))
+			})
+		})
+		queue.registry.hello.dispatch({ key: 'a' })
+		queue.registry.hello.dispatch({ key: 'b' })
+		await new Promise(r => setTimeout(r, 30))
+		queue.registry.hello.dispatch({ key: 'c' })
+		await new Promise(r => setTimeout(r, 10))
+		queue.registry.hello.dispatch({ key: 'd' })
+		await exhaustQueue(queue)
+		assert.strictEqual(found.join(','), 'a,c', 'Only the first task should have been executed')
+		await queue.close()
+	})
+	test('throttling works across multiple programs', async (t) => {
+		const found: string[] = []
+		const queue = new Queue({
+			hello: createProgram({
+				id: 'hello',
+				timings: { throttle: { timeout: 10, id: 'group-id' } },
+				input: z.object({ key: z.string() })
+			}, async (input) => {
+				await step.run('a', () => found.push(`hello:${input.key}`))
+			}),
+			hola: createProgram({
+				id: 'hola',
+				timings: { throttle: { timeout: 10, id: 'group-id' } },
+				input: z.object({ key: z.string() })
+			}, async (input) => {
+				await step.run('a', () => found.push(`hola:${input.key}`))
+			})
+		})
+		queue.registry.hello.dispatch({ key: 'a' })
+		queue.registry.hola.dispatch({ key: 'b' })
+		queue.registry.hello.dispatch({ key: 'c' })
+		queue.registry.hola.dispatch({ key: 'd' })
+		await new Promise(r => queue.emitter.once('system/success', r))
+		assert.strictEqual(found.join(','), 'hello:a', 'Only the first task should have been executed')
+	})
+})
+
 // TODO: test queue can be killed and recreated from DB
-// TODO: fix Test "pokemon" at src/v2/foo.test.ts:1:603 generated asynchronous activity after the test ended. This activity created the error "TypeError: The database connection is not open" and would have caused the test to fail, but instead triggered an unhandledRejection event.
 
 
 function exhaustQueue(queue: Queue<any>) {

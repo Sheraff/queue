@@ -372,6 +372,21 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					emitter.emit(`program/${task.program}/cancel`, JSON.parse(task.input))
 				}
 			}
+			const throttle_group = c.timings?.throttle
+				? typeof c.timings.throttle === 'number'
+					? c.id
+					: typeof c.timings.throttle.id === 'function'
+						? c.timings.throttle.id(data)
+						: c.timings.throttle.id ?? c.id
+				: null
+			if (throttle_group) {
+				const throttleTimeout = typeof c.timings?.throttle === 'number' ? c.timings.throttle : c.timings?.throttle?.timeout ?? 0
+				const existing = db.getLatestTaskByThrottleGroup({ throttle_group, timeout: throttleTimeout / 1000 })
+				if (existing) {
+					emitter.emit(`program/${existing.program}/cancel`, data)
+					return
+				}
+			}
 			db.createTask({
 				program: c.id,
 				key,
@@ -379,7 +394,8 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 				status: 'pending',
 				priority,
 				timeout_in: (c.timings?.timeout ?? Infinity) / 1000,
-				debounce_group
+				debounce_group,
+				throttle_group,
 			})
 			emitter.emit(SYSTEM_EVENTS.trigger, { id: c.id, in: data })
 		})

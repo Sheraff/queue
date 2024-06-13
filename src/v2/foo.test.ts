@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { foo } from "./userland/foo.js"
 import { Queue, createProgram, forwardInterrupt, step } from "./queue.js"
 import { pokemon } from "./userland/pokemon.js"
+import { z } from "zod"
 
 test('foo', async (t) => {
 	const queue = new Queue({
@@ -359,6 +360,41 @@ test.describe('timeout', () => {
 		await queue.close()
 	})
 })
+
+test.describe('priority', () => {
+	test('higher priority task should be executed first', async (t) => {
+		const order: number[] = []
+		let externalResolve: () => void
+		const externalEvent = new Promise<void>(r => externalResolve = r)
+		const queue = new Queue({
+			hello: createProgram({
+				id: 'hello',
+				priority: (input) => input.priority,
+				input: z.object({ priority: z.number() })
+			}, async (input) => {
+				await step.run('fake fetch', async () => {
+					await externalEvent
+				})
+				await step.run('log', async () => {
+					order.push(input.priority)
+				})
+			}),
+		})
+		const before = queue.registry.hello.invoke({ priority: 0 })
+		await new Promise(r => setTimeout(r, 10))
+		const after = queue.registry.hello.invoke({ priority: 99 })
+		externalResolve!()
+
+		await Promise.all([before, after])
+		t.diagnostic('Steps executed: ' + order.join(', '))
+		assert.strictEqual(order.join(','), '99,0', 'Higher priority task should be executed first')
+		await queue.close()
+	})
+})
+
+// TODO: test memoization
+// TODO: test queue can be killed and recreated from DB
+// TODO: fix Test "pokemon" at src/v2/foo.test.ts:1:603 generated asynchronous activity after the test ended. This activity created the error "TypeError: The database connection is not open" and would have caused the test to fail, but instead triggered an unhandledRejection event.
 
 
 function exhaustQueue(queue: Queue<any>) {

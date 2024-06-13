@@ -29,6 +29,7 @@ export function makeDb(filename?: string) {
 			-- waiting: { until: timestamp }
 			status_data TEXT, -- extra data for status, shape depends on status
 			created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
+			priority INTEGER NOT NULL,
 			data TEXT -- { data: } json of output / error / reason (based on status)
 		);
 	
@@ -106,8 +107,8 @@ export function makeDb(filename?: string) {
 
 	const insertOrIgnoreTaskStatement = db.prepare(/* sql */`
 		INSERT OR IGNORE
-		INTO tasks (program, key, input, status)
-		VALUES (@program, @key, @input, @status)
+		INTO tasks (program, key, input, status, priority)
+		VALUES (@program, @key, @input, @status, @priority)
 	`)
 
 	function insertOrIgnoreTask(task: {
@@ -115,6 +116,7 @@ export function makeDb(filename?: string) {
 		key: string,
 		input: string,
 		status: string,
+		priority: number,
 	}) {
 		insertOrIgnoreTaskStatement.run(task)
 	}
@@ -128,7 +130,10 @@ export function makeDb(filename?: string) {
 				status IS 'waiting'
 				AND json_extract(status_data, '$.until') < unixepoch('subsec')
 			)
-		ORDER BY id
+		ORDER BY
+			priority DESC,
+			created_at ASC,
+			id
 		LIMIT 1
 	`)
 

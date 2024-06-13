@@ -268,8 +268,6 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 	c.retry ??= { attempts: 2, delay: 1000 }
 	c.retry.attempts ||= 2
 
-	c.priority ??= 0
-
 	if (typeof c.timings?.concurrency === 'number') {
 		c.timings.concurrency = [{
 			limit: c.timings.concurrency,
@@ -348,11 +346,13 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 			c.onTrigger?.(data)
 			const key = hash(data ?? {})
 			// TODO: should we reset the retries / error if trying to re-trigger?
+			const priority = typeof c.priority === 'function' ? c.priority(data) : c.priority ?? 0
 			db.insertOrIgnoreTask({
 				program: c.id,
 				key,
 				input: JSON.stringify(data),
 				status: 'pending',
+				priority,
 			})
 			emitter.emit(SYSTEM_EVENTS.trigger, { id: c.id, in: data })
 		})
@@ -673,12 +673,14 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 				return new Promise((resolve, reject) => {
 					const i = input ?? {}
 					const key = hash(i)
-					this.emitter.once(program.__system_events.settled!, (input: In, err: Error | null, output: Out | null) => {
+					const onSettled = (input: In, err: Error | null, output: Out | null) => {
 						const match = key === hash(input ?? {})
 						if (!match) return
+						this.emitter.off(program.__system_events.settled!, onSettled)
 						if (err) return reject(err)
-						resolve(output as Out)
-					})
+						resolve(output!)
+					}
+					this.emitter.on(program.__system_events.settled!, onSettled)
 					this.emitter.emit(program.__system_events.trigger!, i)
 				})
 			},
@@ -744,6 +746,8 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 		}
 		this.emitter.on(SYSTEM_EVENTS.trigger, mightExec)
 		this.emitter.on(SYSTEM_EVENTS.continue, mightExec)
+		this.emitter.on(SYSTEM_EVENTS.cancel, mightExec)
+		this.emitter.on(SYSTEM_EVENTS.settled, mightExec)
 		mightExec()
 		// {
 		// 	const emit = this.emitter.emit

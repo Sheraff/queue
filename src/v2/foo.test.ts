@@ -17,7 +17,7 @@ test('foo', async (t) => {
 	const result = await queue.registry.foo.invoke({ fa: '1' })
 	assert.strictEqual(result.fi, '1')
 	assert.strictEqual(successes, 1)
-	queue.close()
+	await queue.close()
 })
 
 test('pokemon', async (t) => {
@@ -35,7 +35,7 @@ test('pokemon', async (t) => {
 	assert.strictEqual(result.name, 'pikachu')
 	await exhaustQueue(queue)
 	assert.strictEqual(successes, 1, 'Success event for pokemon#25 should trigger only once')
-	queue.close()
+	await queue.close()
 })
 
 function exhaustQueue(queue: Queue<any>) {

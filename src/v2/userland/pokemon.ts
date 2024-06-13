@@ -16,7 +16,7 @@ export const pokemon = createProgram({
 
 	step.dispatchProgram('foo', { fa: '2' })
 	step.dispatchProgram(pokemon, { id: 23 })
-	step.dispatchProgram(foo, { fa: '2' })
+	step.dispatchProgram(foo, { fa: '4' })
 	// const eventData = await step.waitForEvent('foo-trigger')
 
 	// step.dispatchEvent('poke', { fa: '1', id: 12 })

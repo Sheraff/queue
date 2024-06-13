@@ -572,6 +572,7 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 	}
 
 
+	#running = new Set<Promise<any>>()
 
 	#start() {
 		const execOne = () => {
@@ -581,7 +582,7 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 			const executable = this.#executables.get(program)
 			if (!executable) return
 			const stepData = this.#db.getMemosForTask({ program, key })
-			executable(
+			const promise = executable(
 				JSON.parse(input),
 				stepData.reduce((acc, cur) => {
 					acc[cur.step] = {
@@ -591,20 +592,25 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 					return acc
 				}, {} as Record<string, { error: string | null, data: Data | null }>)
 			)
+			this.#running.add(promise)
+			promise.finally(() => {
+				this.#running.delete(promise)
+			})
 		}
 		this.emitter.on(SYSTEM_EVENTS.trigger, execOne)
 		this.emitter.on(SYSTEM_EVENTS.continue, execOne)
-		// {
-		// 	const emit = this.emitter.emit
-		// 	// @ts-expect-error -- temp monkey patch
-		// 	this.emitter.emit = (event, ...args) => {
-		// 		console.log('emit', event, args)
-		// 		emit.apply(this.emitter, [event, ...args])
-		// 	}
-		// }
+		{
+			const emit = this.emitter.emit
+			// @ts-expect-error -- temp monkey patch
+			this.emitter.emit = (event, ...args) => {
+				console.log('emit', event, args)
+				emit.apply(this.emitter, [event, ...args])
+			}
+		}
 	}
 
-	close() {
+	async close() {
+		await Promise.all(this.#running)
 		this.#db.close()
 		this.emitter.removeAllListeners()
 	}

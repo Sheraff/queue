@@ -33,6 +33,7 @@ export function makeDb(filename?: string) {
 			-- success: execution finished
 			-- error: execution failed
 			status TEXT NOT NULL,
+			runs INTEGER NOT NULL DEFAULT 0, -- number of times this step has been run
 			data TEXT -- { data: } json of output / error (based on status)
 		);
 	
@@ -143,8 +144,8 @@ export function makeDb(filename?: string) {
 
 	const insertOrReplaceMemoStatement = db.prepare(/* sql */`
 		INSERT OR REPLACE
-		INTO memo (program, key, step, status, data)
-		VALUES (@program, @key, @step, @status, @data)
+		INTO memo (program, key, step, status, runs, data)
+		VALUES (@program, @key, @step, @status, @runs, @data)
 	`)
 
 	function insertOrReplaceMemo(memo: {
@@ -152,6 +153,7 @@ export function makeDb(filename?: string) {
 		key: string,
 		step: string,
 		status: string,
+		runs: number,
 		data: string,
 	}) {
 		insertOrReplaceMemoStatement.run(memo)
@@ -165,6 +167,7 @@ export function makeDb(filename?: string) {
 		key: string
 		step: string
 		status: string
+		runs: number
 		data: string | null
 	}>(/* sql */`
 		SELECT * FROM memo

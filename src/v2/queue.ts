@@ -84,7 +84,7 @@ export interface Program<In extends Data = Data, Out extends Data = Data, Events
 	readonly __in: In
 	readonly __out: Out
 	readonly __events: Events
-	readonly __register: (emitter: EventEmitter, asyncLocalStorage: AsyncLocalStorage<Store | null>, registry: BaseRegistry, db: Storage) => (input: Data, stepData: Record<string, { error: string | null, data: Data }>) => Promise<any>
+	readonly __register: (emitter: EventEmitter, asyncLocalStorage: AsyncLocalStorage<Store | null>, registry: BaseRegistry, db: Storage) => (input: Data, stepData: Record<string, StepData>) => Promise<any>
 	readonly __system_events: Record<string, string>
 }
 
@@ -113,12 +113,14 @@ type RegistryPrograms = {
 	}
 }
 
+type RunOptions = {
+	name: string
+	retry?: ProgramRetry
+	concurrency?: ConcurrencyOptions
+}
+
 interface Utils {
-	run<T extends Data>(name: string | {
-		name: string
-		retry?: ProgramRetry
-		concurrency?: ConcurrencyOptions
-	}, fn: () => Promise<T> | T): Promise<T>
+	run<T extends Data>(name: string | RunOptions, fn: () => Promise<T> | T): Promise<T>
 	sleep(ms: number): Promise<void>
 	/** dispatch an event */
 	dispatchEvent<Event extends keyof RegistryEvents & string>(name: Event, data: RegistryEvents[Event]): void
@@ -132,7 +134,7 @@ interface Utils {
 }
 
 type Store = {
-	run(name: string | object, fn: () => (Data | Promise<Data>), kind?: string): Promise<Data>
+	run(name: string | RunOptions, fn: () => (Data | Promise<Data>), kind?: string): Promise<Data>
 	sleep(ms: number): Promise<void>
 	dispatchEvent(name: string, data: Data): void
 	waitForEvent(name: string | object): Promise<Data>
@@ -198,8 +200,11 @@ function serialize(obj: Data): string {
 	const keys = Object.keys(obj).sort()
 	return `{${keys.map((key) => `"${key}":${serialize(obj[key])}`).join(',')}}`
 }
-function serializeError(error: Error): string {
-	const cause = error.cause
+function serializeError(error: unknown): string {
+	const e = error instanceof Error
+		? error
+		: new Error(JSON.stringify(error))
+	const cause = e.cause
 	if (cause instanceof Error) {
 		return JSON.stringify({
 			message: cause.message,
@@ -209,8 +214,8 @@ function serializeError(error: Error): string {
 		})
 	}
 	return JSON.stringify({
-		message: error.message,
-		stack: error.stack,
+		message: e.message,
+		stack: e.stack,
 	})
 }
 function hydrateError(serialized: string): Error {
@@ -245,6 +250,9 @@ function isInterrupt(e: any): e is InterruptError {
 }
 function interrupt(data: InterruptError['data']) {
 	throw { [interruptToken]: true, data }
+}
+export function forwardInterrupt(e: any) {
+	if (isInterrupt(e)) throw e
 }
 
 export function createProgram<In extends Data = Data, Out extends Data = Data, Events extends string = never, const Id extends string = never>(
@@ -367,7 +375,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 			})
 		}
 
-		return async (input: Data, stepData: Record<string, { error: string | null, data: Data | null }>) => {
+		return async (input: Data, stepData: Record<string, StepData>) => {
 			let index = 0
 			let errorStep: string | null = null
 			let latestStep: string | null = null
@@ -381,8 +389,8 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 				// 	index: 0,
 				// },
 				async run(name, fn, kind = 'run') {
-					// @ts-expect-error -- we need to implement "first param is string or object"
-					const n = typeof name === 'string' ? name : name.name
+					const opts = typeof name === 'string' ? { name } : name
+					const n = opts.name
 					// identify self using name and store
 					const stepKey = `${kind}:${n}:${index}`
 					latestStep = stepKey
@@ -391,39 +399,59 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					const entry = stepData[stepKey]
 					if (entry) {
 						if (entry.error) {
-							errorStep = stepKey
-							return Promise.reject(hydrateError(entry.error))
+							const attempts = opts.retry?.attempts ?? 3
+							const canRetry = entry.runs < attempts
+							if (!canRetry) {
+								errorStep = stepKey
+								return Promise.reject(hydrateError(entry.error))
+							}
+						} else {
+							return Promise.resolve(entry.data)
 						}
-						return Promise.resolve(entry.data)
 					}
 
-					// TODO: in v2, check if the result of `fn()` is a promise, if not we could just continue execution
-					const promise = Promise.resolve(asyncLocalStorage.run(null, fn))
-						.then((data) => {
-							db.insertOrReplaceMemo({
-								program: c.id,
-								key,
-								step: stepKey,
-								status: 'success',
-								data: JSON.stringify(data),
-							})
+					const onSuccess = (data: Data) => {
+						db.insertOrReplaceMemo({
+							program: c.id,
+							key,
+							step: stepKey,
+							status: 'success',
+							runs: entry ? entry.runs + 1 : 1,
+							data: JSON.stringify(data),
 						})
-						.catch((error) => {
-							errorStep = stepKey
-							// store result in store
-							db.insertOrReplaceMemo({
-								program: c.id,
-								key,
-								step: stepKey,
-								status: 'error',
-								data: serializeError(error),
-							})
+					}
+					const onError = (error: unknown) => {
+						errorStep = stepKey
+						db.insertOrReplaceMemo({
+							program: c.id,
+							key,
+							step: stepKey,
+							status: 'error',
+							runs: entry ? entry.runs + 1 : 1,
+							data: serializeError(error),
 						})
+					}
 
-					promises.push(promise)
-					await Promise.resolve()
-					const updateStatus = n !== 'sleep' || kind !== 'system'
-					interrupt({ updateStatus })
+					let delegateToNextTick = true
+					try {
+						const maybePromise = asyncLocalStorage.run(null, fn)
+						if (isPromise(maybePromise)) {
+							const promise = maybePromise.then(onSuccess).catch(onError)
+							promises.push(promise)
+						} else {
+							onSuccess(maybePromise)
+							delegateToNextTick = false
+						}
+					} catch (error) {
+						onError(error)
+					}
+
+					const isSleepTask = n === 'sleep' && kind === 'system'
+					if (delegateToNextTick || isSleepTask) {
+						await Promise.resolve() // give other parallel tasks a chance to run before we throw an interrupt
+						const updateStatus = !isSleepTask
+						interrupt({ updateStatus })
+					}
 				},
 				async sleep(ms) {
 					await store.run({ name: 'sleep', retry: { attempts: 0 } }, () => {
@@ -548,13 +576,19 @@ type RegistryStore<Registry extends BaseRegistry> = {
 	invokeProgram(id: any, input: any): Promise<any>
 }
 
+type StepData = {
+	error: string | null,
+	data: Data | null,
+	runs: number,
+}
+
 export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 
 	public registry: Registry
 	public emitter = new EventEmitter()
 
 	#asyncLocalStorage = new AsyncLocalStorage<RegistryStore<Registry> | null>()
-	#executables = new Map<string, (input: Data, stepData: Record<string, { error: string | null, data: Data }>) => Promise<any>>()
+	#executables = new Map<string, (input: Data, stepData: Record<string, StepData>) => Promise<any>>()
 	#db: Storage
 
 	constructor(
@@ -612,13 +646,14 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 			const stepData = this.#db.getMemosForTask({ program, key })
 			const promise = executable(
 				JSON.parse(input),
-				stepData.reduce((acc, cur) => {
+				stepData.reduce<Record<string, StepData>>((acc, cur) => {
 					acc[cur.step] = {
 						error: cur.status === 'error' ? cur.data : null,
-						data: cur.status === 'success' ? JSON.parse(cur.data!) : null
+						data: cur.status === 'success' ? JSON.parse(cur.data!) : null,
+						runs: cur.runs,
 					}
 					return acc
-				}, {} as Record<string, { error: string | null, data: Data | null }>)
+				}, {})
 			)
 			this.#running.add(promise)
 			promise.finally(() => {

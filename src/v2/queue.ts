@@ -544,33 +544,37 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 						const output = await fn(validIn as In)
 						const validOut = c.output ? c.output.parse(output) : output
 						if (!cancelled) emitter.emit(events.success, validIn, validOut)
+						emitter.off(events.cancel, onCancel)
 					} catch (error) {
+						emitter.off(events.cancel, onCancel)
 						if (isInterrupt(error)) {
 							emitter.on(events.cancel, onCancel)
-							Promise.all(promises).then(() => {
-								emitter.off(events.cancel, onCancel)
-								if (cancelled) {
-									resolveCancel(input as In)
-									return
-								}
-								const sleeps = schedulerData.map(s => s.sleep)
-								const sleep = Math.min(...sleeps)
-								if (sleeps.length && sleep) {
-									db.sleepOrIgnoreTask({
-										program: c.id,
-										key,
-										seconds: sleep / 1000,
-									})
-								} else {
-									db.insertOrReplaceTask({
-										program: c.id,
-										key,
-										input: JSON.stringify(input),
-										status: 'started',
-									})
-								}
-								emitter.emit(events.continue, input)
-							})
+							return Promise.all(promises)
+								.then(() => new Promise(setImmediate)) // allow multiple programs finishing a step on the same tick to continue in priority order
+								.then(() => {
+									emitter.off(events.cancel, onCancel)
+									if (cancelled) {
+										resolveCancel(input as In)
+										return
+									}
+									const sleeps = schedulerData.map(s => s.sleep)
+									const sleep = Math.min(...sleeps)
+									if (sleeps.length && sleep) {
+										db.sleepOrIgnoreTask({
+											program: c.id,
+											key,
+											seconds: sleep / 1000,
+										})
+									} else {
+										db.insertOrReplaceTask({
+											program: c.id,
+											key,
+											input: JSON.stringify(input),
+											status: 'started',
+										})
+									}
+									emitter.emit(events.continue, input)
+								})
 						} else if (!cancelled) {
 							// ignoring retries for now, should they be handled here or in the event listener?
 							emitter.emit(
@@ -586,7 +590,6 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					}
 				})
 			)
-			emitter.off(events.cancel, onCancel)
 		}
 	}
 
@@ -696,13 +699,16 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 
 
 	#running = new Set<Promise<any>>()
+	#sleepRunTimeout: NodeJS.Timeout | null = null
 
 	#start() {
 		let willRun = false
-		const execOne = () => {
-			willRun = false
-			const task = this.#db.getNextTask()
-			if (!task) return 'no-task'
+		const execOne = (): 'no-task' | 'ok' => {
+			const [task, next] = this.#db.getNextTask()
+			if (!task) {
+				willRun = false
+				return 'no-task'
+			}
 			const { key, input, program } = task
 			const executable = this.#executables.get(program)
 			if (!executable) throw new Error(`Program "${program}" not found`)
@@ -724,15 +730,18 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 			promise.finally(() => {
 				this.#running.delete(promise)
 			})
+			if (next) {
+				return execOne()
+			}
+			willRun = false
 			return 'ok'
 		}
-		let sleepId: NodeJS.Timeout | null = null
 		const mightExec = () => {
 			if (willRun) return
 			willRun = true
-			if (sleepId) {
-				clearTimeout(sleepId)
-				sleepId = null
+			if (this.#sleepRunTimeout) {
+				clearTimeout(this.#sleepRunTimeout)
+				this.#sleepRunTimeout = null
 			}
 			setImmediate(() => {
 				if (this.#closed) return
@@ -740,14 +749,14 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 				if (status === 'no-task') {
 					const future = this.#db.getNextFutureTask()
 					if (!future) return
-					sleepId = setTimeout(mightExec, Math.ceil(future.wait_seconds * 1000) + 1)
+					this.#sleepRunTimeout = setTimeout(mightExec, Math.ceil(future.wait_seconds * 1000) + 1)
 				}
 			})
 		}
 		this.emitter.on(SYSTEM_EVENTS.trigger, mightExec)
 		this.emitter.on(SYSTEM_EVENTS.continue, mightExec)
-		this.emitter.on(SYSTEM_EVENTS.cancel, mightExec)
-		this.emitter.on(SYSTEM_EVENTS.settled, mightExec)
+		// this.emitter.on(SYSTEM_EVENTS.cancel, mightExec) // re-add this when we have triggers that depend on other programs
+		// this.emitter.on(SYSTEM_EVENTS.settled, mightExec) // re-add this when we have triggers that depend on other programs
 		mightExec()
 		// {
 		// 	const emit = this.emitter.emit
@@ -763,6 +772,10 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 	async close() {
 		if (this.#closed) return
 		this.#closed = true
+		if (this.#sleepRunTimeout) {
+			clearTimeout(this.#sleepRunTimeout)
+			this.#sleepRunTimeout = null
+		}
 		await Promise.all(this.#running)
 		this.#db.close()
 		this.emitter.removeAllListeners()

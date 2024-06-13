@@ -134,11 +134,11 @@ export function makeDb(filename?: string) {
 			priority DESC,
 			created_at ASC,
 			id
-		LIMIT 1
+		LIMIT 2
 	`)
 
 	function getNextTask() {
-		return nextTask.get()
+		return nextTask.all()
 	}
 
 	const futureTask = db.prepare<[], { wait_seconds: number }>(/* sql */`

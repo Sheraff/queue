@@ -35,6 +35,41 @@ test('pokemon', async (t) => {
 	await queue.close()
 })
 
+test.describe('benchmark', () => {
+	test('synchronous', async (t) => {
+		const queue = new Queue({
+			hello: createProgram({ id: 'hello' }, async () => {
+				for (let i = 0; i < 100; i++) {
+					await step.run('a', () => 'a')
+				}
+			})
+		})
+		performance.mark('start')
+		await queue.registry.hello.invoke()
+		performance.mark('end')
+		const duration = performance.measure('hello', 'start', 'end').duration
+		t.diagnostic(`100 sync steps took ${duration.toFixed(2)}ms`)
+		assert(duration < 2, `Benchmark took ${duration}ms, expected less than 1ms`)
+		await queue.close()
+	})
+	test('asynchronous', async (t) => {
+		const queue = new Queue({
+			hello: createProgram({ id: 'hello' }, async () => {
+				for (let i = 0; i < 100; i++) {
+					await step.run('a', async () => 'a')
+				}
+			})
+		})
+		performance.mark('start')
+		await queue.registry.hello.invoke()
+		performance.mark('end')
+		const duration = performance.measure('hello', 'start', 'end').duration
+		t.diagnostic(`100 async steps took ${duration.toFixed(2)}ms`)
+		assert(duration < 50, `Benchmark took ${duration}ms, expected less than 50ms`)
+		await queue.close()
+	})
+})
+
 test('sleep', async (t) => {
 	const queue = new Queue({
 		hey: createProgram({ id: 'hey' }, async () => {
@@ -382,6 +417,7 @@ test.describe('priority', () => {
 		})
 		const before = queue.registry.hello.invoke({ priority: 0 })
 		await new Promise(r => setTimeout(r, 10))
+		assert.strictEqual(order.length, 0, 'Step should not have been executed yet')
 		const after = queue.registry.hello.invoke({ priority: 99 })
 		externalResolve!()
 

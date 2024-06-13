@@ -429,6 +429,56 @@ test.describe('priority', () => {
 	})
 })
 
+test.describe('debounce', () => {
+	test('debounced task should be executed only once', async (t) => {
+		const found: string[] = []
+		const queue = new Queue({
+			hello: createProgram({
+				id: 'hello',
+				timings: { debounce: 15 },
+				input: z.object({ key: z.string() })
+			}, async (input) => {
+				await step.run('a', () => found.push(input.key))
+			})
+		})
+		queue.registry.hello.dispatch({ key: 'a' })
+		queue.registry.hello.dispatch({ key: 'b' })
+		await new Promise(r => setTimeout(r, 10))
+		queue.registry.hello.dispatch({ key: 'c' })
+		await new Promise(r => setTimeout(r, 30))
+		queue.registry.hello.dispatch({ key: 'd' })
+		await new Promise(r => queue.emitter.once('system/success', r))
+		assert.strictEqual(found.join(','), 'c,d', 'Only the last task should have been executed')
+		await queue.close()
+	})
+	test('debouncing works across multiple programs', async (t) => {
+		const found: string[] = []
+		const queue = new Queue({
+			hello: createProgram({
+				id: 'hello',
+				timings: { debounce: { timeout: 10, id: 'group-id' } },
+				input: z.object({ key: z.string() })
+			}, async (input) => {
+				await step.run('a', () => found.push(`hello:${input.key}`))
+			}),
+			hola: createProgram({
+				id: 'hola',
+				timings: { debounce: { timeout: 10, id: 'group-id' } },
+				input: z.object({ key: z.string() })
+			}, async (input) => {
+				await step.run('a', () => found.push(`hola:${input.key}`))
+			})
+		})
+		queue.registry.hello.dispatch({ key: 'a' })
+		queue.registry.hola.dispatch({ key: 'b' })
+		queue.registry.hello.dispatch({ key: 'c' })
+		queue.registry.hola.dispatch({ key: 'd' })
+		await new Promise(r => queue.emitter.once('system/success', r))
+		assert.strictEqual(found.join(','), 'hola:d', 'Only the last task should have been executed')
+		await queue.close()
+	})
+})
+
 // TODO: test memoization
 // TODO: test queue can be killed and recreated from DB
 // TODO: fix Test "pokemon" at src/v2/foo.test.ts:1:603 generated asynchronous activity after the test ended. This activity created the error "TypeError: The database connection is not open" and would have caused the test to fail, but instead triggered an unhandledRejection event.

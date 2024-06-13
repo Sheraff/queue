@@ -8,6 +8,8 @@ type Task = {
 	created_at: number
 	timeout_at: number
 	did_timeout: 0 | 1,
+	debounce_group: string | null
+	priority: number
 	data: string | null
 }
 
@@ -32,6 +34,7 @@ export function makeDb(filename?: string) {
 			status_data TEXT, -- extra data for status, shape depends on status
 			created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 			timeout_at INTEGER NOT NULL DEFAULT 1e999,
+			debounce_group TEXT, -- if set, only one task per group will be run at a time
 			priority INTEGER NOT NULL,
 			data TEXT -- { data: } json of output / error / reason (based on status)
 		);
@@ -90,6 +93,22 @@ export function makeDb(filename?: string) {
 		}
 	}
 
+	const clearTaskDebounceGroupStatement = db.prepare(/* sql */`
+		UPDATE tasks
+		SET
+			debounce_group = '---'
+		WHERE
+			program = @program
+			AND key = @key
+	`)
+
+	function clearTaskDebounceGroup(task: {
+		program: string,
+		key: string,
+	}) {
+		clearTaskDebounceGroupStatement.run(task)
+	}
+
 	const sleepOrIgnoreTaskStatement = db.prepare(/* sql */`
 		UPDATE tasks
 		SET
@@ -110,8 +129,8 @@ export function makeDb(filename?: string) {
 
 	const insertOrIgnoreTaskStatement = db.prepare(/* sql */`
 		INSERT OR IGNORE
-		INTO tasks (program, key, input, status, priority, timeout_at)
-		VALUES (@program, @key, @input, @status, @priority, unixepoch('subsec') + @timeout_in)
+		INTO tasks (program, key, input, status, priority, timeout_at, debounce_group)
+		VALUES (@program, @key, @input, @status, @priority, unixepoch('subsec') + @timeout_in, @debounce_group)
 	`)
 
 	function createTask(task: {
@@ -121,6 +140,7 @@ export function makeDb(filename?: string) {
 		status: string,
 		priority: number,
 		timeout_in: number,
+		debounce_group: string | null,
 	}) {
 		insertOrIgnoreTaskStatement.run(task)
 	}
@@ -181,6 +201,18 @@ export function makeDb(filename?: string) {
 		return taskByKey.get(task)
 	}
 
+	const taskByDebounceGroup = db.prepare<{
+		debounce_group: string
+	}, Task>(/* sql */`
+		SELECT * FROM tasks
+		WHERE
+			debounce_group = @debounce_group
+			AND status NOT IN ('cancelled', 'error', 'success')
+	`)
+	function getTaskByDebounceGroup(task: { debounce_group: string }) {
+		return taskByDebounceGroup.all(task)
+	}
+
 
 	/////// MEMO
 
@@ -229,9 +261,11 @@ export function makeDb(filename?: string) {
 		insertOrReplaceTask,
 		createTask,
 		sleepOrIgnoreTask,
+		clearTaskDebounceGroup,
 		getNextTask,
 		getNextFutureTask,
 		getTask,
+		getTaskByDebounceGroup,
 		insertOrReplaceMemo,
 		getMemosForTask,
 	}

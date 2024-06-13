@@ -26,7 +26,6 @@ type ConcurrencyOptions = {
 
 type ProgramTimings = {
 	/** How long to wait before running the program. If other calls are made before this time, the timer is reset. */
-	// TODO: can be implemented with "cancel" + Promise.race("sleep", "waitForEvent")
 	debounce?: number | { timeout: number, id?: string | ((input: Data) => string) }
 	/** How long before the program is considered to have timed out, and should be cancelled. */
 	timeout?: number
@@ -89,6 +88,20 @@ export interface Program<In extends Data = Data, Out extends Data = Data, Events
 	readonly __events: Events
 	readonly __register: (emitter: EventEmitter, asyncLocalStorage: AsyncLocalStorage<Store | null>, registry: BaseRegistry, db: Storage) => (input: Data, stepData: Record<string, StepData>, task: Task) => Promise<any>
 	readonly __system_events: Record<string, string>
+	// waitForEvent(event: `program/${Id}/trigger`, input: NoInfer<In>, cb: NoInfer<(input: In) => void>): void
+	// waitForEvent(event: `program/${Id}/start`, input: NoInfer<In>, cb: NoInfer<(input: In) => void>): void
+	// waitForEvent(event: `program/${Id}/cancel`, input: NoInfer<In>, cb: NoInfer<(input: In) => void>): void
+	// waitForEvent(event: `program/${Id}/continue`, input: NoInfer<In>, cb: NoInfer<(input: In) => void>): void
+	// waitForEvent(event: `program/${Id}/success`, input: NoInfer<In>, cb: NoInfer<(input: In, output: Out) => void>): void
+	// waitForEvent(event: `program/${Id}/error`, input: NoInfer<In>, cb: NoInfer<(input: In, error: Error) => void>): void
+	// waitForEvent(event: `program/${Id}/settled`, input: NoInfer<In>, cb: NoInfer<(input: In, error: Error | null, output: Out | null) => void>): void
+	// dispatchEvent(event: `program/${Id}/trigger`, input: NoInfer<In>): void
+	// dispatchEvent(event: `program/${Id}/start`, input: NoInfer<In>): void
+	// dispatchEvent(event: `program/${Id}/cancel`, input: NoInfer<In>): void
+	// dispatchEvent(event: `program/${Id}/continue`, input: NoInfer<In>): void
+	// dispatchEvent(event: `program/${Id}/success`, input: NoInfer<In>, output: NoInfer<Out>): void
+	// dispatchEvent(event: `program/${Id}/error`, input: NoInfer<In>, error: NoInfer<Error>): void
+	// dispatchEvent(event: `program/${Id}/settled`, input: NoInfer<In>, error: NoInfer<Error | null>, output: NoInfer<Out | null>): void
 }
 
 declare global {
@@ -346,6 +359,19 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 			const key = hash(data ?? {})
 			// TODO: should we reset the retries / error if trying to re-trigger?
 			const priority = typeof c.priority === 'function' ? c.priority(data) : c.priority ?? 0
+			const debounce_group = c.timings?.debounce
+				? typeof c.timings.debounce === 'number'
+					? c.id
+					: typeof c.timings.debounce.id === 'function'
+						? c.timings.debounce.id(data)
+						: c.timings.debounce.id ?? c.id
+				: null
+			if (debounce_group) {
+				const existing = db.getTaskByDebounceGroup({ debounce_group })
+				for (const task of existing) {
+					emitter.emit(`program/${task.program}/cancel`, JSON.parse(task.input))
+				}
+			}
 			db.createTask({
 				program: c.id,
 				key,
@@ -353,6 +379,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 				status: 'pending',
 				priority,
 				timeout_in: (c.timings?.timeout ?? Infinity) / 1000,
+				debounce_group
 			})
 			emitter.emit(SYSTEM_EVENTS.trigger, { id: c.id, in: data })
 		})
@@ -537,6 +564,16 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 						status: 'stalled',
 					})
 					try {
+						if (task.debounce_group) {
+							const sleep = typeof c.timings?.debounce === 'number' ? c.timings.debounce : c.timings?.debounce?.timeout ?? 0
+							await store.sleep(sleep)
+							await store.run({ name: 'exit-debounce-group', }, () => {
+								db.clearTaskDebounceGroup({
+									program: c.id,
+									key,
+								})
+							}, 'system')
+						}
 						await store.run({ name: 'start', retry: { attempts: 0 } }, () => { emitter.emit(events.start, input) }, 'system')
 						const validIn = c.input ? c.input.parse(input) : input
 						const output = await fn(validIn as In)
@@ -606,6 +643,8 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		__events: {} as Events,
 		__register: register,
 		__system_events: events,
+		// dispatchEvent: unregisteredCall as any,
+		// waitForEvent: unregisteredCall as any,
 	}
 }
 
@@ -691,6 +730,22 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 			cancel: (input: In): void => {
 				this.emitter.emit(program.__system_events.cancel!, input ?? {})
 			},
+			// dispatchEvent: (name: string, ...args: any[]) => {
+			// 	if (!(name in program.__events)) throw new Error(`Event "${name}" not found`)
+			// 	this.emitter.emit(name, ...args)
+			// },
+			// waitForEvent: (name: string, input: In, callback: (...args: any[]) => void) => {
+			// 	if (!(name in program.__events)) throw new Error(`Event "${name}" not found`)
+			// 	const i = input ?? {}
+			// 	const key = hash(i)
+			// 	const onEvent = (...data: any[]) => {
+			// 		const match = key === hash(input ?? {})
+			// 		if (!match) return
+			// 		this.emitter.off(name, onEvent)
+			// 		callback(...data)
+			// 	}
+			// 	this.emitter.on(name, onEvent)
+			// }
 		} as any
 		this.#executables.set(program.id, program.__register(this.emitter, this.#asyncLocalStorage, this.registry, this.#db))
 	}

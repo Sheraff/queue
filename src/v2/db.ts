@@ -108,7 +108,7 @@ export function makeDb(filename?: string) {
 		status: string
 		data: string | null
 	}
-	const task = db.prepare<[], Task>(/* sql */`
+	const nextTask = db.prepare<[], Task>(/* sql */`
 		SELECT * FROM tasks
 		WHERE
 			status IN ('pending', 'started')
@@ -121,7 +121,7 @@ export function makeDb(filename?: string) {
 	`)
 
 	function getNextTask() {
-		return task.get()
+		return nextTask.get()
 	}
 
 	const futureTask = db.prepare<[], { wait_seconds: number }>(/* sql */`
@@ -136,6 +136,18 @@ export function makeDb(filename?: string) {
 	`)
 	function getNextFutureTask() {
 		return futureTask.get()
+	}
+
+	const taskByKey = db.prepare<{
+		program: string
+		key: string
+	}, Task>(/* sql */`
+		SELECT * FROM tasks
+		WHERE program = @program
+		AND key = @key
+	`)
+	function getTask(task: { program: string, key: string }) {
+		return taskByKey.get(task)
 	}
 
 
@@ -188,6 +200,7 @@ export function makeDb(filename?: string) {
 		sleepOrIgnoreTask,
 		getNextTask,
 		getNextFutureTask,
+		getTask,
 		insertOrReplaceMemo,
 		getMemosForTask,
 	}

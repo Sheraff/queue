@@ -310,17 +310,29 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		db: Storage
 	) {
 
-		emitter.on(events.cancel, (data: In) => {
+		const resolveCancel = (data: In) => {
 			c.onCancel?.(data)
-			const key = hash(data)
-			// match it with the database
-			// mark it as cancelled
 			emitter.emit(events.settled, data, null, null)
 			emitter.emit(SYSTEM_EVENTS.cancel, { id: c.id, in: data })
+		}
+		emitter.on(events.cancel, (data: In) => {
+			const key = hash(data ?? {})
+			const match = db.getTask({ program: c.id, key })
+			if (!match) return
+			if (match.status === 'pending' || match.status === 'started' || match.status === 'waiting') {
+				db.insertOrReplaceTask({
+					program: c.id,
+					key,
+					input: match.input,
+					status: 'cancelled',
+				})
+				resolveCancel(data)
+			}
+
 		})
 		emitter.on(events.error, (data: In, error: Error) => {
 			c.onError?.(data, error)
-			const key = hash(data)
+			const key = hash(data ?? {})
 			const value = serializeError(error)
 			db.insertOrReplaceTask({
 				program: c.id,
@@ -334,7 +346,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		})
 		emitter.on(events.trigger, (data: In) => {
 			c.onTrigger?.(data)
-			const key = hash(data)
+			const key = hash(data ?? {})
 			// TODO: should we reset the retries / error if trying to re-trigger?
 			db.insertOrIgnoreTask({
 				program: c.id,
@@ -346,7 +358,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		})
 		emitter.on(events.success, (input: In, out: Out) => {
 			c.onSuccess?.(input, out)
-			const key = hash(input)
+			const key = hash(input ?? {})
 			db.insertOrReplaceTask({
 				program: c.id,
 				key,
@@ -385,8 +397,16 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 			const schedulerData: {
 				sleep: number
 			}[] = []
+			let cancelled = false
+			const onCancel = (data: In) => {
+				const incoming = hash(data ?? {})
+				if (incoming !== key) return
+				cancelled = true
+			}
+			emitter.on(events.cancel, onCancel)
 			const store: Store = {
 				async run(name, fn, kind = 'run') {
+					if (cancelled) interrupt()
 					const opts = typeof name === 'string' ? { name } : name
 					const n = opts.name
 					// identify self using name and store
@@ -419,6 +439,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					let delegateToNextTick = true
 
 					const onSuccess = (data: Data) => {
+						if (cancelled) return
 						db.insertOrReplaceMemo({
 							program: c.id,
 							key,
@@ -432,6 +453,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					const run = entry ? entry.runs + 1 : 1
 					const canRetry = run < attempts
 					const onError = (error: unknown) => {
+						if (cancelled) return
 						errorStep = stepKey
 						db.insertOrReplaceMemo({
 							program: c.id,
@@ -501,7 +523,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					return store.run(program.id, () => program.invoke(input), 'invokeProgram')
 				},
 			}
-			storageStorage.run(asyncLocalStorage, () =>
+			await storageStorage.run(asyncLocalStorage, () =>
 				asyncLocalStorage.run(store, async () => {
 					db.insertOrReplaceTask({
 						program: c.id,
@@ -514,10 +536,22 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 						const validIn = c.input ? c.input.parse(input) : input
 						const output = await fn(validIn as In)
 						const validOut = c.output ? c.output.parse(output) : output
-						emitter.emit(events.success, validIn, validOut)
+						if (!cancelled) emitter.emit(events.success, validIn, validOut)
 					} catch (error) {
 						if (isInterrupt(error)) {
+							emitter.on(events.cancel, onCancel)
 							Promise.all(promises).then(() => {
+								emitter.off(events.cancel, onCancel)
+								if (cancelled) {
+									db.insertOrReplaceTask({
+										program: c.id,
+										key,
+										input: JSON.stringify(input),
+										status: 'cancelled',
+									})
+									resolveCancel(input as In)
+									return
+								}
 								const sleeps = schedulerData.map(s => s.sleep)
 								const sleep = Math.min(...sleeps)
 								if (sleeps.length && sleep) {
@@ -536,21 +570,22 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 								}
 								emitter.emit(events.continue, input)
 							})
-							return
-						}
-						// ignoring retries for now, should they be handled here or in the event listener?
-						emitter.emit(
-							events.error,
-							input,
-							new Error(errorStep
-								? `Runtime error in "${c.id}" during step "${errorStep}"`
-								: `Runtime error in "${c.id}" after step "${latestStep}"`,
-								{ cause: error }
+						} else if (!cancelled) {
+							// ignoring retries for now, should they be handled here or in the event listener?
+							emitter.emit(
+								events.error,
+								input,
+								new Error(errorStep
+									? `Runtime error in "${c.id}" during step "${errorStep}"`
+									: `Runtime error in "${c.id}" after step "${latestStep}"`,
+									{ cause: error }
+								)
 							)
-						)
+						}
 					}
 				})
 			)
+			emitter.off(events.cancel, onCancel)
 		}
 	}
 
@@ -696,6 +731,7 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 				sleepId = null
 			}
 			setImmediate(() => {
+				if (this.#closed) return
 				const status = execOne()
 				if (status === 'no-task') {
 					const future = this.#db.getNextFutureTask()
@@ -717,7 +753,10 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 		// }
 	}
 
+	#closed = false
 	async close() {
+		if (this.#closed) return
+		this.#closed = true
 		await Promise.all(this.#running)
 		this.#db.close()
 		this.emitter.removeAllListeners()
@@ -769,5 +808,10 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 		return store.invokeProgram(id, input)
 	}
 
+	cancelProgram<P extends keyof RegPrograms<Registry>>(idOrProgram: P | RegPrograms<Registry>[P]['p'], input?: RegPrograms<Registry>[P]['__in']): void {
+		const program = (typeof idOrProgram === 'string' ? this.registry[idOrProgram as keyof typeof this.registry] : this.registry[(idOrProgram as Program).id]) as Program | undefined
+		if (!program) throw new Error(`Program not found`)
+		this.emitter.emit(`program/${program.id}/cancel`, input)
+	}
 }
 

@@ -117,6 +117,7 @@ type RunOptions = {
 	name: string
 	retry?: ProgramRetry
 	concurrency?: ConcurrencyOptions
+	__sleep?: number
 }
 
 interface Utils {
@@ -239,10 +240,13 @@ function hash(input: Data) {
 }
 
 const interruptToken = Symbol('interrupt')
+type StepPromiseData = {
+	sleep: number
+}
 type InterruptError = {
 	[interruptToken]: true,
 	data: {
-		updateStatus: boolean
+		sleep: number
 	}
 }
 function isInterrupt(e: any): e is InterruptError {
@@ -380,7 +384,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 			let errorStep: string | null = null
 			let latestStep: string | null = null
 			const key = hash(input)
-			const promises: Promise<any>[] = []
+			const promises: Promise<StepPromiseData>[] = []
 			const store: Store = {
 				// state: {
 				// 	id: c.id,
@@ -397,17 +401,29 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					index++
 					// get self data from store
 					const entry = stepData[stepKey]
+					const attempts = opts.retry?.attempts ?? 3
 					if (entry) {
-						if (entry.error) {
-							const attempts = opts.retry?.attempts ?? 3
-							const canRetry = entry.runs < attempts
-							if (!canRetry) {
-								errorStep = stepKey
-								return Promise.reject(hydrateError(entry.error))
-							}
-						} else {
-							return Promise.resolve(entry.data)
+						if (!entry.error) return Promise.resolve(entry.data)
+						const canRetry = entry.runs < attempts
+						if (!canRetry) {
+							errorStep = stepKey
+							return Promise.reject(hydrateError(entry.error))
 						}
+						const delay = typeof opts.retry?.delay === 'function' ? opts.retry.delay(entry.runs) : opts.retry?.delay ?? 0
+						if (delay) {
+							const now = Date.now()
+							const delta = now - entry.lastRun
+							if (delta < delay) {
+								// early exit, this task is not ready to re-run yet
+								await Promise.resolve()
+								interrupt({ sleep: delay - delta })
+							}
+						}
+					}
+
+					let delegateToNextTick = true
+					const schedulerData: StepPromiseData = {
+						sleep: 0
 					}
 
 					const onSuccess = (data: Data) => {
@@ -417,22 +433,38 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 							step: stepKey,
 							status: 'success',
 							runs: entry ? entry.runs + 1 : 1,
+							last_run: Date.now(),
 							data: JSON.stringify(data),
 						})
+						schedulerData.sleep = opts.__sleep ?? 0
+						return schedulerData
 					}
 					const onError = (error: unknown) => {
 						errorStep = stepKey
+						const run = entry ? entry.runs + 1 : 1
 						db.insertOrReplaceMemo({
 							program: c.id,
 							key,
 							step: stepKey,
 							status: 'error',
-							runs: entry ? entry.runs + 1 : 1,
+							runs: run,
+							last_run: Date.now(),
 							data: serializeError(error),
 						})
+						const canRetry = run < attempts
+						schedulerData.sleep = opts.__sleep ?? 0
+						if (canRetry && opts.retry?.delay) {
+							const delay = typeof opts.retry.delay === 'function' ? opts.retry.delay(run) : opts.retry.delay
+							schedulerData.sleep = delay
+						}
+						// TODO: if `canRetry` but task has already been updated to `status:'waiting'` by another parallel step that resolved earlier
+						// then we should check whether *this* step would like to retry earlier than the other step (and if so, update the task)
+						// this can only happen if we have parallel synchronous steps that fail
+						return schedulerData
 					}
 
-					let delegateToNextTick = true
+					let syncResult: Data
+					let syncError = false
 					try {
 						const maybePromise = asyncLocalStorage.run(null, fn)
 						if (isPromise(maybePromise)) {
@@ -441,26 +473,21 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 						} else {
 							onSuccess(maybePromise)
 							delegateToNextTick = false
+							syncResult = maybePromise
 						}
 					} catch (error) {
 						onError(error)
+						syncError = true
 					}
 
-					const isSleepTask = n === 'sleep' && kind === 'system'
-					if (delegateToNextTick || isSleepTask) {
+					if (delegateToNextTick || schedulerData.sleep || syncError) {
 						await Promise.resolve() // give other parallel tasks a chance to run before we throw an interrupt
-						const updateStatus = !isSleepTask
-						interrupt({ updateStatus })
+						interrupt(schedulerData)
 					}
+					return syncResult
 				},
 				async sleep(ms) {
-					await store.run({ name: 'sleep', retry: { attempts: 0 } }, () => {
-						db.sleepOrIgnoreTask({
-							program: c.id,
-							key,
-							seconds: ms / 1000,
-						})
-					}, 'system')
+					await store.run({ name: 'sleep', retry: { attempts: 0 }, __sleep: ms }, () => { }, 'system')
 				},
 				dispatchEvent(name, data) {
 					// todo
@@ -501,8 +528,17 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 						emitter.emit(events.success, validIn, validOut)
 					} catch (error) {
 						if (isInterrupt(error)) {
-							Promise.all(promises).finally(() => {
-								if (error.data.updateStatus) {
+							Promise.all(promises).then((steps) => {
+								const sleeps = steps.map(s => s.sleep)
+								if (error.data.sleep) sleeps.push(error.data.sleep)
+								const sleep = Math.min(...sleeps)
+								if (sleeps.length && sleep) {
+									db.sleepOrIgnoreTask({
+										program: c.id,
+										key,
+										seconds: sleep / 1000,
+									})
+								} else {
 									db.insertOrReplaceTask({
 										program: c.id,
 										key,
@@ -580,6 +616,7 @@ type StepData = {
 	error: string | null,
 	data: Data | null,
 	runs: number,
+	lastRun: number,
 }
 
 export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
@@ -651,6 +688,7 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 						error: cur.status === 'error' ? cur.data : null,
 						data: cur.status === 'success' ? JSON.parse(cur.data!) : null,
 						runs: cur.runs,
+						lastRun: cur.last_run,
 					}
 					return acc
 				}, {})
@@ -681,14 +719,14 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 		this.emitter.on(SYSTEM_EVENTS.trigger, mightExec)
 		this.emitter.on(SYSTEM_EVENTS.continue, mightExec)
 		mightExec()
-		{
-			const emit = this.emitter.emit
-			// @ts-expect-error -- temp monkey patch
-			this.emitter.emit = (event, ...args) => {
-				console.log('emit', event, args)
-				emit.apply(this.emitter, [event, ...args])
-			}
-		}
+		// {
+		// 	const emit = this.emitter.emit
+		// 	// @ts-expect-error -- temp monkey patch
+		// 	this.emitter.emit = (event, ...args) => {
+		// 		console.log('emit', event, args)
+		// 		emit.apply(this.emitter, [event, ...args])
+		// 	}
+		// }
 	}
 
 	async close() {

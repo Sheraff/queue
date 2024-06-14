@@ -11,8 +11,8 @@ export function exhaustQueue(queue: Queue<any>) {
 	})
 }
 
-function listenAll(queue: Queue, cb: () => void) {
+export function listenAll(queue: Queue<any>, cb: (event: string) => void) {
 	const oldEmit = queue.emitter.emit
 	// @ts-ignore
-	queue.emitter.emit = function () { cb(); oldEmit.apply(queue.emitter, arguments) }
+	queue.emitter.emit = function () { cb(arguments[0]); oldEmit.apply(queue.emitter, arguments) }
 }

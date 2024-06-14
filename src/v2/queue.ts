@@ -366,7 +366,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 				const throttleTimeout = typeof c.timings?.throttle === 'number' ? c.timings.throttle : c.timings?.throttle?.timeout ?? 0
 				const existing = db.getLatestTaskByThrottleGroup({ throttle_group, timeout: throttleTimeout / 1000 })
 				if (existing) {
-					emitter.emit(`program/${existing.program}/cancel`, data)
+					emitter.emit(events.cancel, data)
 					return
 				}
 			}
@@ -747,10 +747,12 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 						const match = key === hash(input ?? {})
 						if (!match) return
 						this.emitter.off(program.__system_events.settled!, onSettled)
+						this.emitter.off(program.__system_events.cancel!, onSettled)
 						if (err) return reject(err)
 						resolve(output!)
 					}
 					this.emitter.on(program.__system_events.settled!, onSettled)
+					this.emitter.on(program.__system_events.cancel!, onSettled)
 					this.emitter.emit(program.__system_events.trigger!, i)
 				})
 			},

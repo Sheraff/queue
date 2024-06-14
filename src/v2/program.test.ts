@@ -1,6 +1,6 @@
 import assert from "node:assert"
 import { test } from 'node:test'
-import { Queue, createProgram, forwardInterrupt, step } from "./queue"
+import { Queue, createProgram, step } from "./queue"
 import { z } from "zod"
 import { exhaustQueue } from "./test.utils"
 
@@ -179,8 +179,7 @@ test.describe('throttle', () => {
 		await new Promise(r => setTimeout(r, 30))
 		queue.registry.hello.dispatch({ key: 'c' })
 		await new Promise(r => setTimeout(r, 10))
-		queue.registry.hello.dispatch({ key: 'd' })
-		await exhaustQueue(queue)
+		await queue.registry.hello.invoke({ key: 'd' })
 		assert.strictEqual(found.join(','), 'a,c', 'Only the first task should have been executed')
 		await queue.close()
 	})
@@ -208,6 +207,7 @@ test.describe('throttle', () => {
 		queue.registry.hola.dispatch({ key: 'd' })
 		await new Promise(r => queue.emitter.once('system/success', r))
 		assert.strictEqual(found.join(','), 'hello:a', 'Only the first task should have been executed')
+		await queue.close()
 	})
 })
 
@@ -232,8 +232,7 @@ test.describe('concurrency', () => {
 		queue.registry.hello.dispatch({ key: 'a' })
 		queue.registry.hello.dispatch({ key: 'b' })
 		queue.registry.hello.dispatch({ key: 'c' })
-		queue.registry.hello.dispatch({ key: 'd' })
-		await exhaustQueue(queue)
+		await queue.registry.hello.invoke({ key: 'd' })
 		const total = timings.d!.end - timings.a!.start
 		t.diagnostic(`Total time: ${total}ms (concurrency 2, 4 tasks of 10ms each)`)
 		assert(total > 20 && total < 30, 'Batches of to makes 2 runs of 10ms each')
@@ -272,8 +271,7 @@ test.describe('concurrency', () => {
 		queue.registry.hello.dispatch({ key: 'a' })
 		queue.registry.hola.dispatch({ key: 'b' })
 		queue.registry.hello.dispatch({ key: 'c' })
-		queue.registry.hola.dispatch({ key: 'd' })
-		await exhaustQueue(queue)
+		await queue.registry.hola.invoke({ key: 'd' })
 		const total = timings.d!.end - timings.a!.start
 		t.diagnostic(`Total time: ${total}ms (concurrency 2, 4 tasks of 10ms each, 10ms enforced delay)`)
 		assert(total > 30 && total < 45, 'Batches of to makes 2 runs of 10ms each, plus 10ms in between')

@@ -54,12 +54,11 @@ jobs:
         run: pnpm i --frozen-lockfile
 
       - name: 🚦 Run tests
-        continue-on-error: true
         run: pnpm test:cov
 
       - name: ☂️ Coverage
         # only if we're on a pull request
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         uses: codecov/codecov-action@v4.0.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

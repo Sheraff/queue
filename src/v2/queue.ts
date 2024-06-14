@@ -780,6 +780,7 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 		this.#executables.set(program.id, program.__register(this.emitter, this.#asyncLocalStorage as any, this.registry, this.#db))
 	}
 
+	#cronjobs: Array<{ stop(): void }> = []
 	async #cron() {
 		const { schedule } = await import('node-cron').catch((error: Error) => {
 			throw new Error('Install "node-cron" to use cron triggers', { cause: error })
@@ -798,10 +799,10 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 			if (!cron) continue
 			if (typeof cron === 'string') cron = [cron]
 			for (const c of cron) {
-				schedule(c, (date) => {
+				this.#cronjobs.push(schedule(c, (date) => {
 					if (typeof date === 'string') return
 					this.emitter.emit(program.__system_events.trigger!, { date: date.toISOString() })
-				})
+				}))
 			}
 		}
 	}
@@ -885,6 +886,7 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 			clearTimeout(this.#sleepRunTimeout)
 			this.#sleepRunTimeout = null
 		}
+		this.#cronjobs.forEach(job => job.stop())
 		await Promise.all(this.#running)
 		this.#db.close()
 		this.emitter.removeAllListeners()

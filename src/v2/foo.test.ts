@@ -49,7 +49,7 @@ test.describe('benchmark', () => {
 		performance.mark('end')
 		const duration = performance.measure('hello', 'start', 'end').duration
 		t.diagnostic(`100 sync steps took ${duration.toFixed(2)}ms`)
-		assert(duration < 2, `Benchmark took ${duration}ms, expected less than 1ms`)
+		assert(duration < 2, `Benchmark took ${duration}ms, expected less than 2ms`)
 		await queue.close()
 	})
 	test('asynchronous', async (t) => {

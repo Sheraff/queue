@@ -49,6 +49,7 @@ jobs:
         run: pnpm test:cov
 
       - name: ☂️ Coverage
+        if: always()
         uses: romeovs/lcov-reporter-action@v0.3.1
         with:
           lcov-file: ./lcov.info

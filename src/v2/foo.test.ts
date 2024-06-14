@@ -544,6 +544,76 @@ test.describe('throttle', () => {
 	})
 })
 
+test.describe('concurrency', () => {
+	test('concurrent tasks should be executed in parallel', async (t) => {
+		const timings: Record<string, { start: number, end: number }> = {}
+		const queue = new Queue({
+			hello: createProgram({
+				id: 'hello',
+				timings: { concurrency: 2 },
+				input: z.object({ key: z.string() })
+			}, async (input) => {
+				await step.run('before', () => {
+					timings[input.key] = { start: Date.now(), end: 0 }
+				})
+				await step.sleep(10)
+				await step.run('after', () => {
+					timings[input.key]!.end = Date.now()
+				})
+			})
+		})
+		queue.registry.hello.dispatch({ key: 'a' })
+		queue.registry.hello.dispatch({ key: 'b' })
+		queue.registry.hello.dispatch({ key: 'c' })
+		queue.registry.hello.dispatch({ key: 'd' })
+		await exhaustQueue(queue)
+		const total = timings.d!.end - timings.a!.start
+		t.diagnostic(`Total time: ${total}ms (concurrency 2, 4 tasks of 10ms each)`)
+		assert(total > 20 && total < 30, 'Batches of to makes 2 runs of 10ms each')
+		await queue.close()
+	})
+	test('concurrency works across multiple programs, with in-between delay', async (t) => {
+		const timings: Record<string, { start: number, end: number }> = {}
+		const queue = new Queue({
+			hello: createProgram({
+				id: 'hello',
+				timings: { concurrency: { id: 'group-id', delay: 10, limit: 2 } },
+				input: z.object({ key: z.string() })
+			}, async (input) => {
+				await step.run('before', () => {
+					timings[input.key] = { start: Date.now(), end: 0 }
+				})
+				await step.sleep(10)
+				await step.run('after', () => {
+					timings[input.key]!.end = Date.now()
+				})
+			}),
+			hola: createProgram({
+				id: 'hola',
+				timings: { concurrency: { id: 'group-id', delay: 10, limit: 2 } },
+				input: z.object({ key: z.string() })
+			}, async (input) => {
+				await step.run('before', () => {
+					timings[input.key] = { start: Date.now(), end: 0 }
+				})
+				await step.sleep(10)
+				await step.run('after', () => {
+					timings[input.key]!.end = Date.now()
+				})
+			})
+		})
+		queue.registry.hello.dispatch({ key: 'a' })
+		queue.registry.hola.dispatch({ key: 'b' })
+		queue.registry.hello.dispatch({ key: 'c' })
+		queue.registry.hola.dispatch({ key: 'd' })
+		await exhaustQueue(queue)
+		const total = timings.d!.end - timings.a!.start
+		t.diagnostic(`Total time: ${total}ms (concurrency 2, 4 tasks of 10ms each, 10ms enforced delay)`)
+		assert(total > 30 && total < 45, 'Batches of to makes 2 runs of 10ms each, plus 10ms in between')
+		await queue.close()
+	})
+})
+
 test.describe('triggers', () => {
 	test('event', async (t) => {
 		const found: string[] = []

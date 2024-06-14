@@ -20,7 +20,7 @@ type ConcurrencyOptions = {
 	id?: string | ((input: Data) => string)
 	/** How many calls to run concurrently. Defaults to `1`. */
 	limit?: number
-	/** How long to wait before running the next batch of calls. */
+	/** How long to wait after concurrent run count came off of the limit before running the next task. */
 	delay?: number
 }
 
@@ -40,7 +40,7 @@ type ProgramTimings = {
 		/** Return a group id, only tasks with the same group id are batched together, defaults to `id` of the program. */
 		id?: string | ((input: Data) => string)
 	}
-	concurrency?: number | ConcurrencyOptions | ConcurrencyOptions[]
+	concurrency?: number | ConcurrencyOptions
 }
 
 type ProgramRetry = {
@@ -150,7 +150,7 @@ interface Utils {
 }
 
 type Store = {
-	run(name: string | RunOptions, fn: () => (Data | Promise<Data>), kind?: string): Promise<Data>
+	run<T extends Data>(name: string | RunOptions, fn: () => (T | Promise<T>), kind?: string): Promise<T>
 	sleep(ms: number): Promise<void>
 	dispatchEvent(name: string, data: Data): void
 	waitForEvent(name: string | object): Promise<Data>
@@ -280,22 +280,6 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 	c.retry ??= { attempts: 2, delay: 1000 }
 	c.retry.attempts ||= 2
 
-	if (typeof c.timings?.concurrency === 'number') {
-		c.timings.concurrency = [{
-			limit: c.timings.concurrency,
-			id: c.id,
-			delay: 0,
-		}]
-	} if (c.timings?.concurrency) {
-		if (!Array.isArray(c.timings.concurrency)) c.timings.concurrency = [c.timings.concurrency]
-		c.timings.concurrency = c.timings.concurrency.map((concurrency) => ({
-			...concurrency,
-			id: concurrency.id ?? c.id,
-			limit: concurrency.limit ?? 1,
-			delay: concurrency.delay ?? 0,
-		}))
-	}
-
 	const events = {
 		/** when the program was just added to the queue */
 		trigger: `program/${c.id}/trigger`,
@@ -321,11 +305,11 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 	) {
 
 		const resolveCancel = (data: In) => {
-			db.insertOrReplaceTask({
+			db.settleTask({
 				program: c.id,
 				key: hash(data ?? {}),
-				input: JSON.stringify(data),
 				status: 'cancelled',
+				data: null,
 			})
 			c.onCancel?.(data)
 			emitter.emit(events.settled, data, null, null)
@@ -344,10 +328,9 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 			c.onError?.(data, error)
 			const key = hash(data ?? {})
 			const value = serializeError(error)
-			db.insertOrReplaceTask({
+			db.settleTask({
 				program: c.id,
 				key,
-				input: JSON.stringify(data),
 				status: 'error',
 				data: value,
 			})
@@ -387,6 +370,18 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					return
 				}
 			}
+			const concurrency_group = c.timings?.concurrency
+				? typeof c.timings.concurrency === 'number'
+					? c.id
+					: typeof c.timings.concurrency.id === 'function'
+						? c.timings.concurrency.id(data)
+						: c.timings.concurrency.id ?? c.id
+				: null
+			const concurrency_limit = c.timings?.concurrency
+				? typeof c.timings.concurrency === 'number'
+					? c.timings.concurrency
+					: c.timings.concurrency.limit ?? 1
+				: 1
 			db.createTask({
 				program: c.id,
 				key,
@@ -396,16 +391,17 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 				timeout_in: (c.timings?.timeout ?? Infinity) / 1000,
 				debounce_group,
 				throttle_group,
+				concurrency_group,
+				concurrency_limit,
 			})
 			emitter.emit(SYSTEM_EVENTS.trigger, { id: c.id, in: data })
 		})
 		emitter.on(events.success, (input: In, out: Out) => {
 			c.onSuccess?.(input, out)
 			const key = hash(input ?? {})
-			db.insertOrReplaceTask({
+			db.settleTask({
 				program: c.id,
 				key,
-				input: JSON.stringify(input),
 				status: 'success',
 				data: JSON.stringify(out),
 			})
@@ -414,7 +410,6 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 		})
 		emitter.on(events.start, (data: In) => {
 			c.onStart?.(data)
-			// const key = hash(data)
 			emitter.emit(SYSTEM_EVENTS.start, { id: c.id, in: data })
 		})
 		emitter.on(events.settled, (input: In, error: Error | null, output: Out | null) => {
@@ -465,7 +460,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					const entry = stepData[stepKey]
 					const attempts = opts.retry?.attempts ?? 3
 					if (entry) {
-						if (!entry.error) return Promise.resolve(entry.data)
+						if (!entry.error) return Promise.resolve(entry.data as any)
 						const canRetry = entry.runs < attempts
 						if (!canRetry) {
 							errorStep = stepKey
@@ -573,10 +568,9 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 			}
 			await storageStorage.run(asyncLocalStorage, () =>
 				asyncLocalStorage.run(store, async () => {
-					db.insertOrReplaceTask({
+					db.updateTaskProgress({
 						program: c.id,
 						key,
-						input: JSON.stringify(input),
 						status: 'stalled',
 					})
 					try {
@@ -589,6 +583,24 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 									key,
 								})
 							}, 'system')
+						}
+						if (task.concurrency_group) {
+							const required = typeof c.timings?.concurrency === 'number' ? 0 : c.timings?.concurrency?.delay ?? 0
+							if (required) {
+								const concurrency_group = task.concurrency_group
+								const concurrency_limit = task.concurrency_limit - 1
+								const sleep = await store.run({ name: 'enter-concurrency-group', }, () => {
+									const previous = db.getLatestSettledTaskByConcurrencyGroup({ concurrency_group, concurrency_limit })
+									if (!previous) {
+										return 0
+									}
+									const remaining = Math.max(0, required - previous.since * 1000)
+									return remaining
+								}, 'system')
+								if (sleep) {
+									await store.sleep(sleep)
+								}
+							}
 						}
 						await store.run({ name: 'start', retry: { attempts: 0 } }, () => { emitter.emit(events.start, input) }, 'system')
 						const validIn = c.input ? c.input.parse(input) : input
@@ -617,10 +629,9 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 											seconds: sleep / 1000,
 										})
 									} else {
-										db.insertOrReplaceTask({
+										db.updateTaskProgress({
 											program: c.id,
 											key,
-											input: JSON.stringify(input),
 											status: 'started',
 										})
 									}
@@ -766,7 +777,7 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 			// 	this.emitter.on(name, onEvent)
 			// }
 		} as any
-		this.#executables.set(program.id, program.__register(this.emitter, this.#asyncLocalStorage, this.registry, this.#db))
+		this.#executables.set(program.id, program.__register(this.emitter, this.#asyncLocalStorage as any, this.registry, this.#db))
 	}
 
 	async #cron() {
@@ -853,8 +864,8 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 		}
 		this.emitter.on(SYSTEM_EVENTS.trigger, mightExec)
 		this.emitter.on(SYSTEM_EVENTS.continue, mightExec)
-		// this.emitter.on(SYSTEM_EVENTS.cancel, mightExec) // re-add this when we have triggers that depend on other programs
-		// this.emitter.on(SYSTEM_EVENTS.settled, mightExec) // re-add this when we have triggers that depend on other programs
+		this.emitter.on(SYSTEM_EVENTS.cancel, mightExec)
+		this.emitter.on(SYSTEM_EVENTS.settled, mightExec)
 		mightExec()
 		// {
 		// 	const emit = this.emitter.emit

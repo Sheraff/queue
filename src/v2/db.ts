@@ -10,6 +10,8 @@ type Task = {
 	did_timeout: 0 | 1,
 	debounce_group: string | null
 	throttle_group: string | null
+	concurrency_group: string | null
+	concurrency_limit: number
 	priority: number
 	data: string | null
 }
@@ -34,9 +36,12 @@ export function makeDb(filename?: string) {
 			-- waiting: { until: timestamp }
 			status_data TEXT, -- extra data for status, shape depends on status
 			created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
+			settled_at INTEGER, -- timestamp of when the task was settled
 			timeout_at INTEGER NOT NULL DEFAULT 1e999,
 			debounce_group TEXT, -- if set, incoming tasks with the same group will reset the start timeout, task only starts after timeout
 			throttle_group TEXT, -- if set, incoming tasks with the same group will be ignored for the throttle period
+			concurrency_group TEXT, -- if set, only N tasks in the group can run at a time
+			concurrency_limit INTEGER NOT NULL DEFAULT 1, -- sets the limit N for the concurrency group
 			priority INTEGER NOT NULL,
 			data TEXT -- { data: } json of output / error / reason (based on status)
 		);
@@ -63,17 +68,7 @@ export function makeDb(filename?: string) {
 
 	///////// TASK
 
-	const insertOrReplaceTaskStatement = db.prepare(/* sql */`
-		UPDATE tasks
-		SET
-			input = @input,
-			status = @status,
-			data = @data
-		WHERE
-			program = @program
-			AND key = @key
-	`)
-	const insertOrReplaceTaskNoDataStatement = db.prepare(/* sql */`
+	const updateTaskProgressStatement = db.prepare(/* sql */`
 		UPDATE tasks
 		SET
 			status = @status
@@ -81,19 +76,31 @@ export function makeDb(filename?: string) {
 			program = @program
 			AND key = @key
 	`)
-
-	function insertOrReplaceTask(task: {
+	function updateTaskProgress(task: {
 		program: string,
 		key: string,
-		input: string,
-		status: string,
-		data?: string,
+		status: 'started' | 'stalled' | 'waiting',
 	}) {
-		if (task.data) {
-			insertOrReplaceTaskStatement.run(task)
-		} else {
-			insertOrReplaceTaskNoDataStatement.run(task)
-		}
+		updateTaskProgressStatement.run(task)
+	}
+
+	const settleTaskStatement = db.prepare(/* sql */`
+		UPDATE tasks
+		SET
+			status = @status,
+			settled_at = unixepoch('subsec'),
+			data = @data
+		WHERE
+			program = @program
+			AND key = @key
+	`)
+	function settleTask(task: {
+		program: string,
+		key: string,
+		status: 'cancelled' | 'error' | 'success',
+		data: string | null,
+	}) {
+		settleTaskStatement.run(task)
 	}
 
 	const clearTaskDebounceGroupStatement = db.prepare(/* sql */`
@@ -130,33 +137,50 @@ export function makeDb(filename?: string) {
 		sleepOrIgnoreTaskStatement.run(task)
 	}
 
-	const insertOrIgnoreTaskStatement = db.prepare(/* sql */`
+	const createTaskStatement = db.prepare(/* sql */`
 		INSERT OR IGNORE
-		INTO tasks (program, key, input, status, priority, timeout_at, debounce_group, throttle_group)
-		VALUES (@program, @key, @input, @status, @priority, unixepoch('subsec') + @timeout_in, @debounce_group, @throttle_group)
+		INTO tasks (program, key, input, status, priority, timeout_at, debounce_group, throttle_group, concurrency_group, concurrency_limit)
+		VALUES (@program, @key, @input, @status, @priority, unixepoch('subsec') + @timeout_in, @debounce_group, @throttle_group, @concurrency_group, @concurrency_limit)
 	`)
 
 	function createTask(task: {
 		program: string,
 		key: string,
 		input: string,
-		status: string,
+		status: 'pending',
 		priority: number,
 		timeout_in: number,
 		debounce_group: string | null,
 		throttle_group: string | null,
+		concurrency_group: string | null,
+		concurrency_limit: number | null,
 	}) {
-		insertOrIgnoreTaskStatement.run(task)
+		createTaskStatement.run(task)
 	}
 
 
 	const nextTask = db.prepare<[], Task>(/* sql */`
 		SELECT *, timeout_at < unixepoch('subsec') as did_timeout FROM tasks
 		WHERE
-			status IN ('pending', 'started')
+			(
+				status IS 'started'
+			)
 			OR (
 				status IS 'waiting'
 				AND json_extract(status_data, '$.until') < unixepoch('subsec')
+			)
+			OR (
+				status IS 'pending'
+				AND (
+					concurrency_group IS NULL
+					OR concurrency_limit > (
+						SELECT COUNT(*)
+						FROM tasks
+						WHERE
+							status NOT IN ('cancelled', 'error', 'success', 'pending')
+							AND concurrency_group = tasks.concurrency_group
+					)
+				)
 			)
 		ORDER BY
 			priority DESC,
@@ -236,6 +260,24 @@ export function makeDb(filename?: string) {
 		return latestTaskByThrottleGroup.get(task)
 	}
 
+	const latestSettledTaskByConcurrencyGroup = db.prepare<{
+		concurrency_group: string
+	}, { since: number }>(/* sql */`
+		SELECT (unixepoch('subsec') - settled_at) as since FROM tasks
+		WHERE
+			concurrency_group = @concurrency_group
+			AND settled_at NOT NULL
+		ORDER BY settled_at DESC
+		LIMIT 1
+		OFFSET @concurrency_limit
+	`)
+	function getLatestSettledTaskByConcurrencyGroup(task: {
+		concurrency_group: string
+		concurrency_limit: number
+	}) {
+		return latestSettledTaskByConcurrencyGroup.get(task)
+	}
+
 
 	/////// MEMO
 
@@ -281,7 +323,8 @@ export function makeDb(filename?: string) {
 
 	return {
 		close: () => { db.close() },
-		insertOrReplaceTask,
+		updateTaskProgress,
+		settleTask,
 		createTask,
 		sleepOrIgnoreTask,
 		clearTaskDebounceGroup,
@@ -290,6 +333,7 @@ export function makeDb(filename?: string) {
 		getTask,
 		getTaskByDebounceGroup,
 		getLatestTaskByThrottleGroup,
+		getLatestSettledTaskByConcurrencyGroup,
 		insertOrReplaceMemo,
 		getMemosForTask,
 	}

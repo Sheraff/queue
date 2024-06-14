@@ -881,6 +881,11 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 	}
 
 	#closed = false
+	// #loop() {
+	// 	if (this.#closed) return
+	// 	this.#yo = setTimeout(this.#loop.bind(this), 2_147_483_647)
+	// }
+	// #yo = setTimeout(this.#loop.bind(this), 2_147_483_647)
 	async close() {
 		if (this.#closed) return
 		this.#closed = true
@@ -892,6 +897,7 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 		await Promise.all(this.#running)
 		this.#db.close()
 		this.emitter.removeAllListeners()
+		// clearTimeout(this.#yo)
 	}
 
 	run<T extends Data>(name: string | {

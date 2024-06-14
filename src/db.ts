@@ -160,14 +160,14 @@ export function makeDb(filename?: string) {
 
 
 	const nextTask = db.prepare<[], Task>(/* sql */`
-		SELECT *, timeout_at < unixepoch('subsec') as did_timeout FROM tasks
+		SELECT *, timeout_at <= unixepoch('subsec') as did_timeout FROM tasks
 		WHERE
 			(
 				status IS 'started'
 			)
 			OR (
 				status IS 'waiting'
-				AND json_extract(status_data, '$.until') < unixepoch('subsec')
+				AND json_extract(status_data, '$.until') <= unixepoch('subsec')
 			)
 			OR (
 				status IS 'pending'
@@ -203,7 +203,7 @@ export function makeDb(filename?: string) {
 		WHERE
 			(
 				status IS 'waiting'
-				AND json_extract(status_data, '$.until') > unixepoch('subsec')
+				AND json_extract(status_data, '$.until') >= unixepoch('subsec')
 			)
 			OR (
 				status NOT IN ('cancelled', 'error', 'success')
@@ -249,7 +249,7 @@ export function makeDb(filename?: string) {
 		WHERE
 			throttle_group = @throttle_group
 			AND status IS NOT 'cancelled'
-			AND created_at + @timeout > unixepoch('subsec')
+			AND created_at + @timeout >= unixepoch('subsec')
 		ORDER BY created_at DESC
 		LIMIT 1
 	`)

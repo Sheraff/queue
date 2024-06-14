@@ -1,6 +1,6 @@
 
 
-[![codecov](https://codecov.io/github/Sheraff/queue/graph/badge.svg?token=EHIZNXM114)](https://codecov.io/github/Sheraff/queue)
+[![codecov](https://codecov.io/gh/Sheraff/queue/graph/badge.svg?token=EHIZNXM114)](https://codecov.io/gh/Sheraff/queue)
 
 
-![coverage graph](https://codecov.io/github/Sheraff/queue/graphs/sunburst.svg?token=EHIZNXM114)
+![coverage graph](https://codecov.io/gh/Sheraff/queue/graphs/sunburst.svg?token=EHIZNXM114)

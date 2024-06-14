@@ -10,9 +10,9 @@ test.describe('cancel', () => {
 		const queue = new Queue({
 			hello: createProgram({ id: 'hello' }, async () => {
 				await step.run('a', () => found.push('a'))
-				await step.sleep(20)
+				await step.sleep(10)
 				await step.run('b', async () => found.push('b'))
-				await step.sleep(20)
+				await step.sleep(50)
 				await step.run('c', () => found.push('c'))
 			})
 		})

@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 import EventEmitter from "node:events"
 import { createHash } from 'node:crypto'
-import { makeDb, type Storage, type Task } from "./db.js"
+import { makeDb, type Storage, type Task } from "./db"
 
 type Scalar = string | number | boolean | null
 

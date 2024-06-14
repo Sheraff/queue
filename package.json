@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx --watch src/main.ts",
     "work": "tsx --watch src/v2/userland/main.ts",
-    "test": "tsx --watch src/v2/foo.test.ts"
+    "test": "tsx --watch --test"
   },
   "keywords": [],
   "author": "",

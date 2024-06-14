@@ -1,0 +1,56 @@
+name: 🐙 Install and run unit-tests
+
+on:
+  # Runs on pushes targeting the default branch
+  push:
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🔱 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: ⚙️ Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: ⚙️ Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: 📁 Get pnpm store directory
+        shell: bash
+        id: get-store-path
+        run: |
+          echo "store-path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: 📦 Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.get-store-path.outputs.store-path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: 🧰 Install dependencies
+        run: pnpm i --frozen-lockfile
+
+      - name: 🚦 Run tests
+        run: pnpm test:cov
+
+      - name: ☂️ Coverage
+        uses: romeovs/lcov-reporter-action@v0.3.1
+        with:
+          lcov-file: ./lcov.info
+        # uses: codecov/codecov-action@v2
+        # with:
+        #   token: ${{ secrets.CODECOV_TOKEN }}

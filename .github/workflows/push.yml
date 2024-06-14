@@ -60,9 +60,10 @@ jobs:
       - name: ☂️ Coverage
         # only if we're on a pull request
         if: github.event_name == 'pull_request'
-        uses: romeovs/lcov-reporter-action@v0.3.1
-        with:
-          lcov-file: ./lcov.info
-        # uses: codecov/codecov-action@v2
+        # uses: romeovs/lcov-reporter-action@v0.4.0
         # with:
-        #   token: ${{ secrets.CODECOV_TOKEN }}
+        #   lcov-file: ./lcov.info
+        #   delete-old-comments: true
+        uses: codecov/codecov-action@v4.0.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}

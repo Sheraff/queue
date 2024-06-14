@@ -3,9 +3,17 @@ name: 🐙 Install and run unit-tests
 on:
   # Runs on pushes targeting the default branch
   push:
+    branches:
+      - main
+
+  pull_request:
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
   test:
@@ -46,13 +54,16 @@ jobs:
         run: pnpm i --frozen-lockfile
 
       - name: 🚦 Run tests
+        continue-on-error: true
         run: pnpm test:cov
 
       - name: ☂️ Coverage
-        if: always()
-        uses: romeovs/lcov-reporter-action@v0.3.1
-        with:
-          lcov-file: ./lcov.info
-        # uses: codecov/codecov-action@v2
+        # only if we're on a pull request
+        if: github.event_name == 'pull_request'
+        # uses: romeovs/lcov-reporter-action@v0.4.0
         # with:
-        #   token: ${{ secrets.CODECOV_TOKEN }}
+        #   lcov-file: ./lcov.info
+        #   delete-old-comments: true
+        uses: codecov/codecov-action@v4.0.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}

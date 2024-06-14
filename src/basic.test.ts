@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { Queue, createProgram, step } from "./queue"
 import { z } from "zod"
 
-test.describe('benchmark', () => {
+test.describe('benchmark', { skip: !!process.env.CI }, () => {
 	test('synchronous', async (t) => {
 		const queue = new Queue({
 			hello: createProgram({ id: 'hello' }, async () => {

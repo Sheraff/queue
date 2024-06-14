@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx --watch src/userland/main.ts",
     "test": "tsx --watch --test",
-    "test:cov": "tsx --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=lcov.info"
+    "test:cov": "tsx --test"
   },
   "keywords": [],
   "author": "",

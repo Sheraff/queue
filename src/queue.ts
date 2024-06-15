@@ -484,10 +484,10 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 						}
 						const delay = typeof opts.retry?.delay === 'function' ? opts.retry.delay(entry.runs) : opts.retry?.delay ?? 0
 						if (delay) {
-							const delta = entry.elapsed * 1000
-							if (delta < delay) {
+							const delta = delay - entry.elapsed * 1000
+							if (delta > 0.0001) { // small tolerance for floating point errors
 								// early exit, this task is not ready to re-run yet
-								schedulerData.push({ sleep: delay - delta })
+								schedulerData.push({ sleep: delta })
 								await Promise.resolve()
 								interrupt()
 							}

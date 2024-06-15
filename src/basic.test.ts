@@ -18,6 +18,7 @@ test.describe('benchmark', { skip: !!process.env.CI }, () => {
 		performance.mark('end')
 		const duration = performance.measure('hello', 'start', 'end').duration
 		t.diagnostic(`10000 sync steps took ${duration.toFixed(2)}ms`)
+		t.diagnostic(`Overall: ${(duration / 10000).toFixed(4)} ms/step`)
 		assert(duration < 100, `Benchmark took ${duration}ms, expected less than 100ms`)
 		await queue.close()
 	})
@@ -34,6 +35,7 @@ test.describe('benchmark', { skip: !!process.env.CI }, () => {
 		performance.mark('end')
 		const duration = performance.measure('hello', 'start', 'end').duration
 		t.diagnostic(`100 async steps took ${duration.toFixed(2)}ms`)
+		t.diagnostic(`Overall: ${(duration / 100).toFixed(4)} ms/step`)
 		assert(duration < 50, `Benchmark took ${duration}ms, expected less than 50ms`)
 		await queue.close()
 	})
@@ -248,31 +250,35 @@ test.describe('events', () => {
 			})
 		})
 		listenAll(queue, (event) => events.push(event))
-		await queue.registry.hey.invoke().catch(() => { })
-		t.diagnostic(`Events: ${callbacks.join(', ')}`)
-		assert.deepEqual(callbacks, [
-			'trigger',
-			'start',
-			// 'retry',
-			'error',
-			'settled'
-		], 'Callbacks should have been triggered in order')
-		assert.deepEqual(events, [
-			'program/hey/trigger',
-			'system/trigger',
-			'program/hey/start',
-			'system/start',
-			'program/hey/continue',
-			'system/continue',
-			// 'program/hey/retry',
-			// 'system/retry',
-			'program/hey/continue',
-			'system/continue',
-			'program/hey/error',
-			'program/hey/settled',
-			'system/settled',
-			'system/error'
-		], 'Events should have been triggered in order')
+		for (let i = 0; i < 50; i++) {
+			await queue.registry.hey.invoke({ i }).catch(() => { })
+			i === 0 && t.diagnostic(`Events: ${callbacks.join(', ')}`)
+			assert.deepEqual(callbacks, [
+				'trigger',
+				'start',
+				// 'retry',
+				'error',
+				'settled'
+			], 'Callbacks should have been triggered in order')
+			assert.deepEqual(events, [
+				'program/hey/trigger',
+				'system/trigger',
+				'program/hey/start',
+				'system/start',
+				'program/hey/continue',
+				'system/continue',
+				// 'program/hey/retry',
+				// 'system/retry',
+				'program/hey/continue',
+				'system/continue',
+				'program/hey/error',
+				'program/hey/settled',
+				'system/settled',
+				'system/error'
+			], 'Events should have been triggered in order')
+			callbacks.length = 0
+			events.length = 0
+		}
 		await queue.close()
 	})
 })

@@ -625,7 +625,10 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 						emitter.off(events.cancel, onCancel)
 						if (isInterrupt(error)) {
 							emitter.on(events.cancel, onCancel)
-							return Promise.all(promises)
+							// if userland creates a Promise.all(short, long) and the short fails (with retries)
+							// - with Promise.all here, the long won't be awaited, and will be re-executed
+							// - with Promise.allSettled here, both will be awaited before re-executing
+							return Promise.allSettled(promises)
 								.then(() => new Promise(setImmediate)) // allow multiple programs finishing a step on the same tick to continue in priority order
 								.then(() => {
 									emitter.off(events.cancel, onCancel)

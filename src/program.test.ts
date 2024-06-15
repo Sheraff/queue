@@ -16,10 +16,16 @@ test.describe('cancel', () => {
 				await step.run('c', () => found.push('c'))
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		setTimeout(() => queue.registry.hello.cancel(), 30)
 		await queue.registry.hello.invoke()
 		t.diagnostic('Steps executed: ' + found.join(', '))
 		assert.strictEqual(found.join(','), 'a,b', 'Only a and b should have been executed')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 3)
 		await queue.close()
 	})
 	test('between tasks', async (t) => {
@@ -35,10 +41,16 @@ test.describe('cancel', () => {
 				await step.run('c', () => found.push('c'))
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		setTimeout(() => queue.registry.hello.cancel(), 30)
 		await queue.registry.hello.invoke()
 		t.diagnostic('Steps executed: ' + found.join(', '))
 		assert.strictEqual(found.join(','), 'a,b', 'Only a and b should have been executed')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 1)
 		await queue.close()
 	})
 })
@@ -55,9 +67,15 @@ test.describe('timeout', () => {
 				await step.run('c', () => found.push('c'))
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		await queue.registry.hello.invoke()
 		t.diagnostic('Steps executed: ' + found.join(', '))
 		assert.strictEqual(found.join(','), 'a,b', 'Only a and b should have been executed')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 3)
 		await queue.close()
 	})
 	test('between tasks', async (t) => {
@@ -73,9 +91,15 @@ test.describe('timeout', () => {
 				await step.run('c', () => found.push('c'))
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		await queue.registry.hello.invoke()
 		t.diagnostic('Steps executed: ' + found.join(', '))
 		assert.strictEqual(found.join(','), 'a,b', 'Only a and b should have been executed')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 2)
 		await queue.close()
 	})
 })
@@ -99,6 +123,10 @@ test.describe('priority', () => {
 				})
 			}),
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		const before = queue.registry.hello.invoke({ priority: 0 })
 		await new Promise(r => setTimeout(r, 10))
 		assert.strictEqual(order.length, 0, 'Step should not have been executed yet')
@@ -108,6 +136,8 @@ test.describe('priority', () => {
 		await Promise.all([before, after])
 		t.diagnostic('Steps executed: ' + order.join(', '))
 		assert.strictEqual(order.join(','), '99,0', 'Higher priority task should be executed first')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 4)
 		await queue.close()
 	})
 })
@@ -124,6 +154,10 @@ test.describe('debounce', () => {
 				await step.run('a', () => found.push(input.key))
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		queue.registry.hello.dispatch({ key: 'a' })
 		queue.registry.hello.dispatch({ key: 'b' })
 		await new Promise(r => setTimeout(r, 10))
@@ -132,6 +166,8 @@ test.describe('debounce', () => {
 		queue.registry.hello.dispatch({ key: 'd' })
 		await new Promise(r => queue.emitter.once('system/success', r))
 		assert.strictEqual(found.join(','), 'c,d', 'Only the last task should have been executed')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 3)
 		await queue.close()
 	})
 	test('debouncing works across multiple programs', async (t) => {
@@ -152,12 +188,18 @@ test.describe('debounce', () => {
 				await step.run('a', () => found.push(`hola:${input.key}`))
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		queue.registry.hello.dispatch({ key: 'a' })
 		queue.registry.hola.dispatch({ key: 'b' })
 		queue.registry.hello.dispatch({ key: 'c' })
 		queue.registry.hola.dispatch({ key: 'd' })
 		await new Promise(r => queue.emitter.once('system/success', r))
 		assert.strictEqual(found.join(','), 'hola:d', 'Only the last task should have been executed')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 1)
 		await queue.close()
 	})
 })
@@ -174,6 +216,10 @@ test.describe('throttle', () => {
 				await step.run('a', () => found.push(input.key))
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		queue.registry.hello.dispatch({ key: 'a' })
 		queue.registry.hello.dispatch({ key: 'b' })
 		await new Promise(r => setTimeout(r, 30))
@@ -181,6 +227,8 @@ test.describe('throttle', () => {
 		await new Promise(r => setTimeout(r, 10))
 		await queue.registry.hello.invoke({ key: 'd' })
 		assert.strictEqual(found.join(','), 'a,c', 'Only the first task should have been executed')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 0)
 		await queue.close()
 	})
 	test('throttling works across multiple programs', async (t) => {
@@ -201,12 +249,18 @@ test.describe('throttle', () => {
 				await step.run('a', () => found.push(`hola:${input.key}`))
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		queue.registry.hello.dispatch({ key: 'a' })
 		queue.registry.hola.dispatch({ key: 'b' })
 		queue.registry.hello.dispatch({ key: 'c' })
 		queue.registry.hola.dispatch({ key: 'd' })
 		await new Promise(r => queue.emitter.once('system/success', r))
 		assert.strictEqual(found.join(','), 'hello:a', 'Only the first task should have been executed')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 0)
 		await queue.close()
 	})
 })
@@ -229,6 +283,10 @@ test.describe('concurrency', () => {
 				})
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		queue.registry.hello.dispatch({ key: 'a' })
 		queue.registry.hello.dispatch({ key: 'b' })
 		queue.registry.hello.dispatch({ key: 'c' })
@@ -236,6 +294,8 @@ test.describe('concurrency', () => {
 		const total = timings.d!.end - timings.a!.start
 		t.diagnostic(`Total time: ${total}ms (concurrency 2, 4 tasks of 10ms each)`)
 		assert(total > 20 && total < 30, 'Batches of to makes 2 runs of 10ms each')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 4)
 		await queue.close()
 	})
 	test('concurrency works across multiple programs, with in-between delay', async (t) => {
@@ -268,6 +328,10 @@ test.describe('concurrency', () => {
 				})
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		queue.registry.hello.dispatch({ key: 'a' })
 		queue.registry.hola.dispatch({ key: 'b' })
 		queue.registry.hello.dispatch({ key: 'c' })
@@ -275,6 +339,8 @@ test.describe('concurrency', () => {
 		const total = timings.d!.end - timings.a!.start
 		t.diagnostic(`Total time: ${total}ms (concurrency 2, 4 tasks of 10ms each, 10ms enforced delay)`)
 		assert(total > 30 && total < 45, 'Batches of to makes 2 runs of 10ms each, plus 10ms in between')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 6)
 		await queue.close()
 	})
 })
@@ -298,9 +364,15 @@ test.describe('triggers', () => {
 				await step.run('a', () => found.push(input.key))
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		queue.emitter.emit('boo', { key: 'a' })
 		await exhaustQueue(queue)
 		assert.strictEqual(found.join(','), 'a,a', 'Both programs should have been executed')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 0)
 		await queue.close()
 	})
 	// skipped because it's too long

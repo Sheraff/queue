@@ -17,11 +17,17 @@ test('sleep', async (t) => {
 	queue.emitter.on('program/hey/success', () => {
 		ended = Date.now()
 	})
+	let continues = 0
+	queue.emitter.on('system/continue', () => {
+		continues++
+	})
 	await queue.registry.hey.invoke()
+	t.diagnostic(`Sleep took ${ended - started}ms (requested 100ms)`)
 	assert.notEqual(started, 0, 'Start event should have been triggered')
 	assert.notEqual(ended, 0, 'Success event should have been triggered')
 	assert(ended - started >= 100, `Sleep should take at least 100ms, took ${ended - started}ms`)
-	t.diagnostic(`Sleep took ${ended - started}ms (requested 100ms)`)
+	t.diagnostic(`Continues: ${continues}`)
+	assert.equal(continues, 1, 'Continue event should have been triggered once')
 	await queue.close()
 })
 
@@ -40,8 +46,14 @@ test.describe('retry', () => {
 				})
 			}),
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		await queue.registry.eventualSuccess.invoke()
 		assert.strictEqual(successAttempts, 3, 'Retry should have been attempted 3 times')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 3)
 		await queue.close()
 	})
 	test('retries and fails', async (t) => {
@@ -55,6 +67,10 @@ test.describe('retry', () => {
 				})
 			}),
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		await assert.rejects(
 			() => queue.registry.alwaysFail.invoke(),
 			(err) => {
@@ -65,6 +81,8 @@ test.describe('retry', () => {
 			},
 		)
 		assert.strictEqual(failAttempts, 3, 'Retry should have been attempted 3 times, the default')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 3)
 		await queue.close()
 	})
 	test('errors can be caught in userland', async (t) => {
@@ -83,10 +101,15 @@ test.describe('retry', () => {
 				}
 			})
 		})
-
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		await assert.doesNotReject(() => queue.registry.catchable.invoke())
 		assert.strictEqual(afterStep, false, 'Step should not have been executed')
 		assert.strictEqual(inCatch, true, 'Error should have been caught in userland')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 2)
 		await queue.close()
 	})
 	test('delayed retry', async (t) => {
@@ -110,16 +133,22 @@ test.describe('retry', () => {
 				})
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		await queue.registry.delayedRetry.invoke()
 		const deltas = times.reduce<number[]>((acc, time, i) => {
 			if (i === 0) return acc
 			acc.push(time - times[i - 1]!)
 			return acc
 		}, [])
+		t.diagnostic(`deltas: ${deltas.join('ms, ')}ms (3 attempts, delay 10ms)`)
 		assert.strictEqual(attempts, 3, 'Retry should have been attempted 3 times')
 		assert.strictEqual(deltas.length, 2, 'There are 2 intervals between 3 retries')
 		assert(deltas.every(delta => delta >= 10), 'All retries should have taken at least 10ms')
-		t.diagnostic(`deltas: ${deltas.join('ms, ')}ms (3 attempts, delay 10ms)`)
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 2)
 		await queue.close()
 	})
 })
@@ -148,9 +177,15 @@ test.describe('parallel', () => {
 				return { a, b }
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		const result = await queue.registry.parallel.invoke()
 		assert.strictEqual(result.a, 'a')
 		assert.strictEqual(result.b, 'b')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 2)
 		await queue.close()
 	})
 	test('with delayed retries', async (t) => {
@@ -180,6 +215,10 @@ test.describe('parallel', () => {
 				return { a, b }
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		const result = await queue.registry.parallel.invoke()
 		assert.strictEqual(result.a, 'a')
 		assert.strictEqual(result.b, 'b')
@@ -201,6 +240,8 @@ test.describe('parallel', () => {
 		assert(bdeltas.every(delta => delta >= 20), 'All b retries should have taken at least 20ms')
 		assert(adeltas.every(delta => delta < 20), 'All a retries should have taken less than 20ms')
 		assert(bdeltas.every(delta => delta < 30), 'All b retries should have taken less than 30ms')
+		t.diagnostic(`Continues: ${continues}`)
+		// assert.equal(continues, 4) // TODO: this changes every time, there is an issue
 		await queue.close()
 	})
 	test('with synchronous delayed retries', async (t) => {
@@ -229,6 +270,10 @@ test.describe('parallel', () => {
 				return { a, b }
 			})
 		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
 		const result = await queue.registry.parallel.invoke()
 		assert.strictEqual(result.a, 'a')
 		assert.strictEqual(result.b, 'b')
@@ -250,6 +295,8 @@ test.describe('parallel', () => {
 		assert(bdeltas.every(delta => delta >= 10), 'All b retries should have taken at least 10ms')
 		assert(adeltas.every(delta => delta < 30), 'All a retries should have taken less than 30ms')
 		assert(bdeltas.every(delta => delta < 20), 'All b retries should have taken less than 20ms')
+		t.diagnostic(`Continues: ${continues}`)
+		// assert.equal(continues, 4) // TODO: this changes every time, there is an issue
 		await queue.close()
 	})
 })

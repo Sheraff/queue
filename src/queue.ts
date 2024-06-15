@@ -132,7 +132,7 @@ type RegistryPrograms = {
 type RunOptions = {
 	name: string
 	retry?: ProgramRetry
-	concurrency?: ConcurrencyOptions
+	// concurrency?: number | ConcurrencyOptions
 }
 
 interface Utils {
@@ -474,16 +474,17 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					const entry = stepData[stepKey]
 					const attempts = opts.retry?.attempts ?? 3
 					if (entry) {
-						if (!entry.error) return Promise.resolve(entry.data as any)
-						const canRetry = entry.runs < attempts
-						if (!canRetry) {
-							errorStep = stepKey
-							return Promise.reject(hydrateError(entry.error))
+						if (entry.status === 'success') return Promise.resolve(entry.data as any)
+						if (entry.status === 'error') {
+							const canRetry = entry.runs < attempts
+							if (!canRetry) {
+								errorStep = stepKey
+								return Promise.reject(hydrateError(entry.error!))
+							}
 						}
 						const delay = typeof opts.retry?.delay === 'function' ? opts.retry.delay(entry.runs) : opts.retry?.delay ?? 0
 						if (delay) {
-							const now = Date.now()
-							const delta = now - entry.lastRun
+							const delta = entry.elapsed * 1000
 							if (delta < delay) {
 								// early exit, this task is not ready to re-run yet
 								schedulerData.push({ sleep: delay - delta })
@@ -492,6 +493,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 							}
 						}
 					}
+					const run = entry ? entry.runs + 1 : 1
 
 					let delegateToNextTick = true
 
@@ -502,12 +504,10 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 							key,
 							step: stepKey,
 							status: 'success',
-							runs: entry ? entry.runs + 1 : 1,
-							last_run: Date.now(),
+							runs: run,
 							data: JSON.stringify(data),
 						})
 					}
-					const run = entry ? entry.runs + 1 : 1
 					const canRetry = run < attempts
 					const onError = (error: unknown) => {
 						if (cancelled) return
@@ -518,7 +518,6 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 							step: stepKey,
 							status: 'error',
 							runs: run,
-							last_run: Date.now(),
 							data: serializeError(error),
 						})
 						if (canRetry && opts.retry?.delay) {
@@ -721,7 +720,8 @@ type StepData = {
 	error: string | null,
 	data: Data | null,
 	runs: number,
-	lastRun: number,
+	elapsed: number,
+	status: 'success' | 'error',
 }
 
 export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
@@ -846,7 +846,8 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 						error: cur.status === 'error' ? cur.data : null,
 						data: cur.status === 'success' ? JSON.parse(cur.data!) : null,
 						runs: cur.runs,
-						lastRun: cur.last_run,
+						elapsed: cur.elapsed,
+						status: cur.status,
 					}
 					return acc
 				}, {}),

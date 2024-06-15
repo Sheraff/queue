@@ -749,6 +749,7 @@ export class Queue<const Registry extends BaseRegistry = BaseRegistry> {
 			this.#registerProgram(registry[key]!)
 			hasCronTrigger ||= !!registry[key]!.opts.triggers?.cron
 		}
+		this.emitter.setMaxListeners(Infinity)
 		this.#start()
 		if (hasCronTrigger) this.#cron()
 	}

@@ -37,6 +37,78 @@ test.describe('benchmark', { skip: !!process.env.CI }, () => {
 		assert(duration < 50, `Benchmark took ${duration}ms, expected less than 50ms`)
 		await queue.close()
 	})
+	test.skip('many', async (t) => {
+		let count = 0
+		const queue = new Queue({
+			hello: createProgram({
+				id: 'hello',
+				input: z.object({ id: z.string() }),
+			}, async (input) => {
+				for (let i = 0; i < 100; i++) {
+					await step.run('a', async () => {
+						count++
+						return 'a'
+					})
+				}
+				console.log('done', input.id, count)
+			})
+		})
+
+		let listeners = 0
+		const on = queue.emitter.on
+		queue.emitter.on = function (event, listener) {
+			listeners++
+			return on.call(this, event, listener)
+		}
+		const off = queue.emitter.off
+		queue.emitter.off = function (event, listener) {
+			listeners--
+			return off.call(this, event, listener)
+		}
+
+		for (let l = 0; l < 3; l++) {
+			performance.mark('start')
+			for (let i = 0; i < 100; i++) {
+				await Promise.all(Array.from({ length: 100 }, (_, j) => queue.registry.hello.invoke({ id: `${i}-${j}` })))
+			}
+			performance.mark('end')
+			const duration = performance.measure('hello', 'start', 'end').duration
+			t.diagnostic(`${l} 1000000 async steps took ${duration.toFixed(2)}ms`)
+			t.diagnostic(`${l} Overall: ${(duration / count).toFixed(4)} ms/step`)
+			t.diagnostic(`${l} Count: ${count}`)
+			t.diagnostic(`${l} Listeners: ${listeners}`)
+		}
+		await queue.close()
+
+
+		// sync
+		// ℹ 0 1000000 sync steps took 51183.47ms // 51s
+		// ℹ 0 Overall: 0.0512 ms/step
+		// ℹ 0 Count: 1000000
+		// ℹ 0 Listeners: 0
+		// ℹ 1 1000000 sync steps took 658.33ms
+		// ℹ 1 Overall: 0.0007 ms/step
+		// ℹ 1 Count: 1000000
+		// ℹ 1 Listeners: 0
+		// ℹ 2 1000000 sync steps took 648.95ms
+		// ℹ 2 Overall: 0.0006 ms/step
+		// ℹ 2 Count: 1000000
+		// ℹ 2 Listeners: 0
+
+		// async
+		// ℹ 0 1000000 async steps took 333695.90ms // 5m33s
+		// ℹ 0 Overall: 0.3337 ms/step
+		// ℹ 0 Count: 1000000
+		// ℹ 0 Listeners: 0
+		// ℹ 1 1000000 async steps took 693.14ms
+		// ℹ 1 Overall: 0.0007 ms/step
+		// ℹ 1 Count: 1000000
+		// ℹ 1 Listeners: 0
+		// ℹ 2 1000000 async steps took 686.49ms
+		// ℹ 2 Overall: 0.0007 ms/step
+		// ℹ 2 Count: 1000000
+		// ℹ 2 Listeners: 0
+	})
 })
 
 test.describe('memo', () => {

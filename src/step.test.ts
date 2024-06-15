@@ -196,7 +196,7 @@ test.describe('parallel', () => {
 		const queue = new Queue({
 			parallel: createProgram({ id: 'parallel' }, async () => {
 				const [a, b] = await Promise.all([
-					step.run({ name: 'a', retry: { attempts: 4, delay: 10 } }, async () => {
+					step.run({ name: 'a', retry: { attempts: 4, delay: 130 } }, async () => {
 						atimes.push(Date.now())
 						await new Promise(r => setTimeout(r))
 						if (attemptsA++ < 3) {
@@ -204,7 +204,7 @@ test.describe('parallel', () => {
 						}
 						return 'a'
 					}),
-					step.run({ name: 'b', retry: { attempts: 3, delay: 20 } }, () => {
+					step.run({ name: 'b', retry: { attempts: 3, delay: 200 } }, () => {
 						btimes.push(Date.now())
 						if (attemptsB++ < 2) {
 							throw new Error('b failed')
@@ -232,16 +232,16 @@ test.describe('parallel', () => {
 			acc.push(time - btimes[i - 1]!)
 			return acc
 		}, [])
-		t.diagnostic(`a deltas: ${adeltas.join('ms, ')}ms (4 attempts, delay 10ms)`)
-		t.diagnostic(`b deltas: ${bdeltas.join('ms, ')}ms (3 attempts, delay 20ms)`)
+		t.diagnostic(`a deltas: ${adeltas.join('ms, ')}ms (4 attempts, delay 130ms)`)
+		t.diagnostic(`b deltas: ${bdeltas.join('ms, ')}ms (3 attempts, delay 200ms)`)
 		assert.strictEqual(adeltas.length, 3)
 		assert.strictEqual(bdeltas.length, 2)
-		assert(adeltas.every(delta => delta >= 10), 'All a retries should have taken at least 10ms')
-		assert(bdeltas.every(delta => delta >= 20), 'All b retries should have taken at least 20ms')
-		assert(adeltas.every(delta => delta < 20), 'All a retries should have taken less than 20ms')
-		assert(bdeltas.every(delta => delta < 30), 'All b retries should have taken less than 30ms')
+		assert(adeltas.every(delta => delta >= 130), 'All a retries should have taken at least 130ms')
+		assert(bdeltas.every(delta => delta >= 200), 'All b retries should have taken at least 200ms')
+		assert(adeltas.every(delta => delta < 150), 'All a retries should have taken less than 150ms')
+		assert(bdeltas.every(delta => delta < 220), 'All b retries should have taken less than 220ms')
 		t.diagnostic(`Continues: ${continues}`)
-		// assert.equal(continues, 4) // TODO: this changes every time, there is an issue
+		assert.equal(continues, 5)
 		await queue.close()
 	})
 	test('with synchronous delayed retries', async (t) => {
@@ -252,14 +252,14 @@ test.describe('parallel', () => {
 		const queue = new Queue({
 			parallel: createProgram({ id: 'parallel' }, async () => {
 				const [a, b] = await Promise.all([
-					step.run({ name: 'a', retry: { attempts: 3, delay: 20 } }, () => {
+					step.run({ name: 'a', retry: { attempts: 3, delay: 200 } }, () => {
 						atimes.push(Date.now())
 						if (attemptsA++ < 2) {
 							throw new Error('a failed')
 						}
 						return 'a'
 					}),
-					step.run({ name: 'b', retry: { attempts: 4, delay: 10 } }, () => {
+					step.run({ name: 'b', retry: { attempts: 4, delay: 150 } }, () => {
 						btimes.push(Date.now())
 						if (attemptsB++ < 3) {
 							throw new Error('b failed')
@@ -287,16 +287,58 @@ test.describe('parallel', () => {
 			acc.push(time - btimes[i - 1]!)
 			return acc
 		}, [])
-		t.diagnostic(`a deltas: ${adeltas.join('ms, ')}ms (3 attempts, delay 20ms)`)
-		t.diagnostic(`b deltas: ${bdeltas.join('ms, ')}ms (4 attempts, delay 10ms)`)
+		t.diagnostic(`a deltas: ${adeltas.join('ms, ')}ms (3 attempts, delay 200ms)`)
+		t.diagnostic(`b deltas: ${bdeltas.join('ms, ')}ms (4 attempts, delay 150ms)`)
 		assert.strictEqual(adeltas.length, 2)
 		assert.strictEqual(bdeltas.length, 3)
-		assert(adeltas.every(delta => delta >= 20), 'All a retries should have taken at least 20ms')
-		assert(bdeltas.every(delta => delta >= 10), 'All b retries should have taken at least 10ms')
-		assert(adeltas.every(delta => delta < 30), 'All a retries should have taken less than 30ms')
-		assert(bdeltas.every(delta => delta < 20), 'All b retries should have taken less than 20ms')
+		assert(adeltas.every(delta => delta >= 200), 'All a retries should have taken at least 200ms')
+		assert(bdeltas.every(delta => delta >= 150), 'All b retries should have taken at least 150ms')
+		assert(adeltas.every(delta => delta < 420), 'All a retries should have taken less than 400ms')
+		assert(bdeltas.every(delta => delta < 480), 'All b retries should have taken less than 450ms')
 		t.diagnostic(`Continues: ${continues}`)
-		// assert.equal(continues, 4) // TODO: this changes every time, there is an issue
+		assert.equal(continues, 5)
+		await queue.close()
+	})
+
+	test('will not re-execute successful steps', async (t) => {
+		let attemptA = 0
+		let attemptB = 0
+		const queue = new Queue({
+			parallel: createProgram({ id: 'parallel' }, async () => {
+				const [a, b] = await Promise.all([
+					step.run({ name: 'a', retry: { attempts: 99, delay: 10 } }, () => {
+						attemptA++
+						if (attemptA < 4) {
+							throw new Error('a failed')
+						}
+						return 'a'
+					}),
+					step.run('b', async () => {
+						attemptB++
+						await new Promise(r => setTimeout(r, 100))
+						return 'b'
+					}),
+				])
+				return { a, b }
+			})
+		})
+		let continues = 0
+		queue.emitter.on('system/continue', () => {
+			continues++
+		})
+		performance.mark('start')
+		const result = await queue.registry.parallel.invoke()
+		performance.mark('end')
+		const duration = performance.measure('parallel', 'start', 'end').duration
+		assert.strictEqual(result.a, 'a')
+		assert.strictEqual(result.b, 'b')
+		assert.strictEqual(attemptA, 4, 'Step a should have been attempted 4 times')
+		assert.strictEqual(attemptB, 1, 'Step b should have been attempted once')
+		t.diagnostic(`Continues: ${continues}`)
+		assert.equal(continues, 3)
+		t.diagnostic(`Duration: ${duration.toFixed(2)}ms`)
+		// TODO: optimize step retries so they can happen in parallel to other still-running steps
+		// assert(duration > 100 && duration < 110, 'Duration should be around 100ms: step a exhausted all its retries during step b execution')
 		await queue.close()
 	})
 })

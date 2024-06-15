@@ -39,26 +39,47 @@ test.describe('benchmark', { skip: !!process.env.CI }, () => {
 	})
 })
 
-test('memo', async (t) => {
-	let count = 0
-	const queue = new Queue({
-		hey: createProgram({
-			id: 'hey',
-			input: z.object({ id: z.string() }),
-			output: z.object({ id: z.string() }),
-		}, async (input) => {
-			return step.run('ya', () => { count++; return input })
+test.describe('memo', () => {
+	test('steps do not re-execute', async (t) => {
+		let count = 0
+		const queue = new Queue({
+			hey: createProgram({
+				id: 'hey',
+				input: z.object({ id: z.string() }),
+				output: z.object({ id: z.string() }),
+			}, async (input) => {
+				return step.run('ya', () => { count++; return input })
+			})
 		})
+		queue.registry.hey.dispatch({ id: 'a' })
+		queue.registry.hey.dispatch({ id: 'a' })
+		queue.registry.hey.dispatch({ id: 'a' })
+		queue.registry.hey.dispatch({ id: 'b' })
+		queue.registry.hey.dispatch({ id: 'b' })
+		const res = await queue.registry.hey.invoke({ id: 'b' })
+		assert.strictEqual(count, 2, 'Step should have been memoized')
+		assert.deepEqual(res, { id: 'b' }, 'Step should have returned the correct value even when not re-invoked')
+		await queue.close()
 	})
-	queue.registry.hey.dispatch({ id: 'a' })
-	queue.registry.hey.dispatch({ id: 'a' })
-	queue.registry.hey.dispatch({ id: 'a' })
-	queue.registry.hey.dispatch({ id: 'b' })
-	queue.registry.hey.dispatch({ id: 'b' })
-	const res = await queue.registry.hey.invoke({ id: 'b' })
-	assert.strictEqual(count, 2, 'Step should have been memoized')
-	assert.deepEqual(res, { id: 'b' }, 'Step should have returned the correct value even when not re-invoked')
-	await queue.close()
+	test('tasks do not re-execute', async (t) => {
+		let count = 0
+		const queue = new Queue({
+			hey: createProgram({
+				id: 'hey',
+				input: z.object({ id: z.string() }),
+				output: z.object({ count: z.number() }),
+			}, async () => {
+				await step.run('ya', () => { count++ })
+				return { count }
+			})
+		})
+		const one = await queue.registry.hey.invoke({ id: 'a' })
+		const two = await queue.registry.hey.invoke({ id: 'a' })
+		assert.deepEqual(one, { count: 1 }, 'Task should have returned the correct the first time')
+		assert.deepEqual(two, { count: 1 }, 'Task should have returned the correct value even when not re-executed')
+		assert.notStrictEqual(one, two, 'Task should have returned a new object each time')
+		await queue.close()
+	})
 })
 
 test.describe('events', () => {

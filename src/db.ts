@@ -93,6 +93,7 @@ export function makeDb(filename?: string) {
 		WHERE
 			program = @program
 			AND key = @key
+			AND status NOT IN ('cancelled', 'error', 'success')
 	`)
 	function settleTask(task: {
 		program: string,
@@ -137,13 +138,7 @@ export function makeDb(filename?: string) {
 		sleepOrIgnoreTaskStatement.run(task)
 	}
 
-	const createTaskStatement = db.prepare(/* sql */`
-		INSERT OR IGNORE
-		INTO tasks (program, key, input, status, priority, timeout_at, debounce_group, throttle_group, concurrency_group, concurrency_limit)
-		VALUES (@program, @key, @input, @status, @priority, unixepoch('subsec') + @timeout_in, @debounce_group, @throttle_group, @concurrency_group, @concurrency_limit)
-	`)
-
-	function createTask(task: {
+	type NewTask = {
 		program: string,
 		key: string,
 		input: string,
@@ -154,8 +149,20 @@ export function makeDb(filename?: string) {
 		throttle_group: string | null,
 		concurrency_group: string | null,
 		concurrency_limit: number | null,
-	}) {
-		createTaskStatement.run(task)
+	}
+
+	const createTaskStatement = db.prepare<
+		NewTask,
+		undefined | 1
+	>(/* sql */`
+		INSERT OR IGNORE
+		INTO tasks (program, key, input, status, priority, timeout_at, debounce_group, throttle_group, concurrency_group, concurrency_limit)
+		VALUES (@program, @key, @input, @status, @priority, unixepoch('subsec') + @timeout_in, @debounce_group, @throttle_group, @concurrency_group, @concurrency_limit)
+		RETURNING 1
+	`)
+
+	function createTask(task: NewTask) {
+		return !!createTaskStatement.get(task)
 	}
 
 

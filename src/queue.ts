@@ -382,7 +382,7 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 					? c.timings.concurrency
 					: c.timings.concurrency.limit ?? 1
 				: 1
-			db.createTask({
+			const inserted = db.createTask({
 				program: c.id,
 				key,
 				input: JSON.stringify(data),
@@ -395,6 +395,20 @@ export function createProgram<In extends Data = Data, Out extends Data = Data, E
 				concurrency_limit,
 			})
 			emitter.emit(SYSTEM_EVENTS.trigger, { id: c.id, in: data })
+			// if the task was already in the db, re-emit terminating events
+			if (!inserted) {
+				const previous = db.getTask({ program: c.id, key })
+				if (!previous) throw new Error('Task disappeared')
+				if (previous.status === 'error') {
+					emitter.emit(events.error, data, previous.data ? hydrateError(previous.data) : null)
+				} else if (previous.status === 'success') {
+					emitter.emit(events.success, data, previous.data ? JSON.parse(previous.data) : null)
+				} else if (previous.status === 'cancelled') {
+					emitter.emit(events.cancel, data)
+					emitter.emit(events.settled, data, null, null)
+					emitter.emit(SYSTEM_EVENTS.cancel, { id: c.id, in: data })
+				}
+			}
 		})
 		emitter.on(events.success, (input: In, out: Out) => {
 			c.onSuccess?.(input, out)

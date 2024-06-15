@@ -292,7 +292,7 @@ export function makeDb(filename?: string) {
 	const insertOrReplaceMemoStatement = db.prepare(/* sql */`
 		INSERT OR REPLACE
 		INTO memo (program, key, step, status, runs, last_run, data)
-		VALUES (@program, @key, @step, @status, @runs, @last_run, @data)
+		VALUES (@program, @key, @step, @status, @runs, unixepoch('subsec'), @data)
 	`)
 
 	function insertOrReplaceMemo(memo: {
@@ -301,7 +301,6 @@ export function makeDb(filename?: string) {
 		step: string
 		status: string
 		runs: number
-		last_run: number
 		data: string
 	}) {
 		insertOrReplaceMemoStatement.run(memo)
@@ -314,12 +313,13 @@ export function makeDb(filename?: string) {
 		program: string
 		key: string
 		step: string
-		status: string
+		status: 'success' | 'error'
 		runs: number
 		last_run: number
+		elapsed: number
 		data: string | null
 	}>(/* sql */`
-		SELECT * FROM memo
+		SELECT *, (unixepoch('subsec') - last_run) as elapsed FROM memo
 		WHERE program = @program
 		AND key = @key
 	`)

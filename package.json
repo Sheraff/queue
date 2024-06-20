@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "tsx --watch src/userland/main.ts",
     "test": "tsx --watch --test",
-    "test:cov": "tsx --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=lcov.info"
+    "test:cov": "tsx --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=lcov.info",
+    "tsc": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",
@@ -20,7 +21,8 @@
     "@types/better-sqlite3": "^7.6.10",
     "@types/node": "^20.14.2",
     "@types/node-cron": "^3.0.11",
-    "tsx": "4.15.4"
+    "tsx": "4.15.4",
+    "typescript": "5.5.2"
   },
   "optionalDependencies": {
     "node-cron": ">=3.0.0"

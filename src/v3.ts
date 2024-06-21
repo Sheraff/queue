@@ -19,14 +19,19 @@ type EventMap<In extends Data, Out extends Data> = {
 	settled: [data: In, result: Out | null, error: unknown | null]
 }
 
-type BatchArray<Batch extends object | undefined, T> = Batch extends object ? T[] : T
+type BatchOptions = {
+	max?: number
+	timeout?: number
+}
+
+type BatchArray<Batch extends BatchOptions | undefined, T> = Batch extends BatchOptions ? T[] : T
 
 const program = Symbol('program')
 class Program<
 	const Id extends string = string,
 	In extends Data = Data,
 	Out extends Data = Data,
-	Batch extends object | undefined = undefined,
+	Batch extends BatchOptions | undefined = undefined,
 > extends EventEmitter<
 	EventMap<In, Out>
 > {
@@ -41,7 +46,8 @@ class Program<
 			input?: Validator<BatchArray<Batch, In>>
 			output?: Validator<BatchArray<Batch, Out>>
 			batch?: Batch
-			triggers?: NoInfer<Array<Pipe<string, Data, In>>>
+			triggers?: NoInfer<Array<Pipe<string, In>>>
+			cron?: string | string[]
 		},
 		fn: (input: BatchArray<Batch, In>) => Promise<BatchArray<Batch, Out>>
 	) {
@@ -65,10 +71,8 @@ const pipe = Symbol('pipe')
 class Pipe<
 	const Id extends string = string,
 	In extends Data = Data,
-	Out extends Data = Data,
 > {
 	readonly in = null as unknown as In
-	readonly out = null as unknown as Out
 	readonly #symbol = pipe
 	constructor(
 		opts: {
@@ -76,30 +80,25 @@ class Pipe<
 		} & (
 				| { in: In, input?: never }
 				| { in?: never, input: Validator<In> }
-			) & (
-				| { out: Out, output?: never }
-				| { out?: never, output: Validator<Out> }
-			),
+			)
 	) { }
 
 	dispatch(data: In): void {
 		return
 	}
-	waitFor(): Promise<Out> {
-		return {} as Promise<Out>
+	waitFor(): Promise<In> {
+		return {} as Promise<In>
 	}
 }
 
 const dada = new Pipe({
 	id: 'dada',
 	input: z.object({ c: z.string() }),
-	out: {} as { d: string },
 })
 
 const titi = new Pipe({
 	id: 'titi',
-	in: {} as { c: string },
-	output: z.object({ a: z.string() }),
+	in: {} as { a: string },
 })
 
 const aaa = new Program({
@@ -118,8 +117,10 @@ const bbb = new Program({
 	const foo = await aaa.invoke({ a: '1' })
 	const [data, result, error] = await aaa.waitFor('settled', { a: '1' })
 	const evData = await dada.waitFor()
+	ccc.dispatch({ c: '1' })
 	return { c: foo.b }
 })
+aaa.on('success', (data, result) => bbb.dispatch(result))
 
 const ccc = new Program({
 	id: 'ccc',

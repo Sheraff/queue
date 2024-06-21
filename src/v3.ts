@@ -24,7 +24,7 @@ type BatchOptions = {
 	timeout?: number
 }
 
-type BatchArray<Batch extends BatchOptions | undefined, T> = Batch extends BatchOptions ? T[] : T
+type BatchArray<Batch extends object | undefined, T> = Batch extends object ? T[] : T
 
 const program = Symbol('program')
 class Program<
@@ -45,7 +45,7 @@ class Program<
 			id: Id
 			input?: Validator<BatchArray<Batch, In>>
 			output?: Validator<BatchArray<Batch, Out>>
-			batch?: Batch
+			batch?: Batch & BatchOptions
 			triggers?: NoInfer<Array<Pipe<string, In>>>
 			cron?: string | string[]
 		},
@@ -72,6 +72,7 @@ class Pipe<
 	const Id extends string = string,
 	In extends Data = Data,
 > {
+	readonly id: Id
 	readonly in = null as unknown as In
 	readonly #symbol = pipe
 	constructor(
@@ -81,7 +82,9 @@ class Pipe<
 				| { in: In, input?: never }
 				| { in?: never, input: Validator<In> }
 			)
-	) { }
+	) {
+		this.id = opts.id
+	}
 
 	dispatch(data: In): void {
 		return
@@ -122,26 +125,31 @@ const bbb = new Program({
 })
 aaa.on('success', (data, result) => bbb.dispatch(result))
 
+
+// TODO: there are issues with the batch options: without `batch` defined, it doesn't seem to accept arrays as input
 const ccc = new Program({
 	id: 'ccc',
 	input: z.array(z.object({ c: z.string() })),
 	output: z.array(z.object({ d: z.string() })),
-	batch: {},
+	batch: {
+		max: 10,
+		timeout: 1000,
+	},
 }, async (inp) => {
 	return [{ d: inp[0]!.c }]
 })
 
-
+type SafeKeys<K extends string> = { [k in K]: { id: k } }
 
 class Queue<
-	const Programs extends { [key in string]: Program<key> } = {},
-	const Pipes extends { [key in string]: Pipe<key> } = {},
+	const Programs extends { [key in string]: Program<key> },
+	const Pipes extends { [key in string]: Pipe<key> },
 > {
 	public readonly programs: Programs
 	public readonly pipes: Pipes
 	constructor(opts: {
-		programs: Programs
-		pipes: Pipes
+		programs: Programs & SafeKeys<keyof Programs & string>,
+		pipes: Pipes & SafeKeys<keyof Pipes & string>
 	}) {
 		this.programs = opts.programs
 		this.pipes = opts.pipes
@@ -150,15 +158,17 @@ class Queue<
 
 const queue = new Queue({
 	programs: {
-		aaa,
+		aab: aaa,
 		bbb,
 		ccc,
 	},
 	pipes: {
-		dada,
+		dada: dodo,
 		titi,
 	}
 })
+
+queue.programs.bbb.invoke({ b: 'oih' })
 
 
 

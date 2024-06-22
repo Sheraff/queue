@@ -10,6 +10,8 @@ export const bar = new Job({
 
 	fooBarPipe.dispatch({ id: 1 })
 
+	const fifoo = await Job.invoke(foo, { id: 1 })
+
 	return 'hello'
 })
 

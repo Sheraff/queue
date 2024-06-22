@@ -14,7 +14,7 @@ export const foo = new Job({
 		return 'abc'
 	})
 
-	const data = await fooBarPipe.waitFor()
+	const data = await Job.waitFor(fooBarPipe)
 
 	await Job.sleep(10)
 

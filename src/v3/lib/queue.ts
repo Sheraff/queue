@@ -73,6 +73,15 @@ export class Queue<
 				},
 				async sleep(ms) {
 					return
+				},
+				async waitFor(instance, event, options) {
+					return {} as any
+				},
+				async invoke(job, data) {
+					return {} as any
+				},
+				dispatch(instance, data) {
+					return
 				}
 			}, () =>
 				registration.run(this.#getStore(), () =>

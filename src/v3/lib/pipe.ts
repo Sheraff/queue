@@ -1,5 +1,5 @@
-import { registration } from "./context"
-import type { Data, DeepPartial, Validator } from "./types"
+import { execution, registration } from "./context"
+import type { Data, Validator } from "./types"
 
 
 
@@ -28,16 +28,11 @@ export class Pipe<
 		// if not resolved, throw error
 		// - from job => look if this pipe is also registered in the same queue
 		// - from event listener on a job => look if this pipe is registered in the same queue
+		const e = execution.getStore()
+		if (e) throw new Error("Cannot call this method inside a job script. Prefer using `Job.dispatch()`, or calling it inside a `Job.run()`.")
 		const store = registration.getStore()
 		if (!store) throw new Error("Cannot call this method outside of the context of a queue.")
 		store.checkRegistration(this)
 		return
-	}
-	waitFor(filter?: DeepPartial<In>): Promise<In> {
-		// if not in job queue context, throw error
-		const store = registration.getStore()
-		if (!store) throw new Error("Cannot call this method outside of the context of a queue.")
-		store.checkRegistration(this)
-		return {} as Promise<In>
 	}
 }

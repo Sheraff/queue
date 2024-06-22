@@ -140,12 +140,16 @@ test.describe('suite', () => {
 			a: number
 			b: {
 				bb: {
-					bbb: string
+					bb1: string
 					bb2: number
 					bb3: boolean
 				}
 			}
 			c: { cc: string }[]
+			d?:
+			| string
+			| { dd: number }
+			| string[]
 		}
 
 		type ObjectSubPath<In, K extends keyof In & string = keyof In & string> = {
@@ -164,14 +168,21 @@ test.describe('suite', () => {
 			return str
 		}
 
-		path<In>('b.bb.bb3') // $ExpectType "b.bb.bb3"
-		path<In>('c[#-1].cc') // $ExpectType "c[#-1].cc"
+		path<In>('') // accepts empty string
+		path<In>('a') // accepts top-level key
+		path<In>('b.bb') // accepts nested key
+		path<In>('b.bb.bb3') // accepts deep nested key
+		path<In>('c[#-1].cc') // accepts array index
+		path<In>('d.dd') // accepts optional key
+		path<In>('d[0]') // accepts optional array index
 		// @ts-expect-error
-		path<In>('c.cc') // $ExpectError
+		path<In>('c.cc') // does not accept non-existant key on array
 		// @ts-expect-error
-		path<In>('b.bb.bb4') // $ExpectError
+		path<In>('b.bb.bb4') // does not accept non-existant key
 		// @ts-expect-error
-		path<In>('b.bb.bb3.') // $ExpectError
+		path<In>('a[0]') // does not accept array index on non-array
+		// @ts-expect-error
+		path<In>('b.bb.bb3.') // does not accept trailing dot
 
 	})
 })

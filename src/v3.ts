@@ -24,7 +24,7 @@ type BatchOptions = {
 	timeout?: number
 }
 
-type BatchArray<Batch extends object | undefined, T> = Batch extends object ? T[] : T
+type BatchArray<Batch extends object | undefined, In> = Batch extends object ? In[] : In
 
 const program = Symbol('program')
 class Program<
@@ -43,13 +43,15 @@ class Program<
 	constructor(
 		opts: {
 			id: Id
-			input?: Validator<BatchArray<Batch, In>>
-			output?: Validator<BatchArray<Batch, Out>>
+			input?: Validator<In>
+			output?: Validator<Out>
 			batch?: Batch & BatchOptions
 			triggers?: NoInfer<Array<Pipe<string, In>>>
 			cron?: string | string[]
 		},
-		fn: (input: BatchArray<Batch, In>) => Promise<BatchArray<Batch, Out>>
+		fn: Batch extends undefined
+			? (input: In) => Promise<Out>
+			: (input: In[]) => Promise<Out[]>
 	) {
 		super()
 		this.id = opts.id
@@ -126,11 +128,11 @@ const bbb = new Program({
 aaa.on('success', (data, result) => bbb.dispatch(result))
 
 
-// TODO: there are issues with the batch options: without `batch` defined, it doesn't seem to accept arrays as input
+// TODO: there are issues with the batch options: with `batch` defined, and without validators, it's impossible to provide a `fn` that the types will accept
 const ccc = new Program({
 	id: 'ccc',
-	input: z.array(z.object({ c: z.string() })),
-	output: z.array(z.object({ d: z.string() })),
+	input: z.object({ c: z.string() }),
+	output: z.object({ d: z.string() }),
 	batch: {
 		max: 10,
 		timeout: 1000,

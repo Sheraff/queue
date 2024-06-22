@@ -11,6 +11,14 @@ type EventMap<In extends Data, Out extends Data> = {
 	settled: [data: In, result: Out | null, error: unknown | null]
 }
 
+export type RunOptions = {
+	id: string
+	// timeout
+	// retries
+	// concurrency
+	// ...
+}
+
 const job = Symbol('job')
 export const fn = Symbol('fn')
 export class Job<
@@ -79,20 +87,19 @@ export class Job<
 	}
 
 	static async run<Out extends Data>(id: string, fn: () => Out | Promise<Out>): Promise<Out>
-	static async run<Out extends Data>(opts: { id: string }, fn: () => Out | Promise<Out>): Promise<Out>
-	static async run<Out extends Data>(optsOrId: string | { id: string }, fn: () => Out | Promise<Out>): Promise<Out> {
-		const id = typeof optsOrId === 'string' ? optsOrId : optsOrId.id
+	static async run<Out extends Data>(opts: RunOptions, fn: () => Out | Promise<Out>): Promise<Out>
+	static async run<Out extends Data>(optsOrId: string | RunOptions, fn: () => Out | Promise<Out>): Promise<Out> {
 		const e = execution.getStore()
 		if (e === null) throw new Error("Nested job steps are not allowed.")
 		if (!e) throw new Error("Cannot call this method outside of a job function.")
-		// TODO: move implementation to `Queue` class, here just call it through the execution context
-		const step = e.steps.find(step => step.step === id)
-		if (step?.data) return JSON.parse(step.data)
-		const result = await execution.run(null, fn)
-		return result
+		const opts: RunOptions = typeof optsOrId === 'string' ? { id: optsOrId } : optsOrId
+		return e.run(opts, fn)
 	}
 
 	static sleep(ms: number): Promise<void> {
-		return {} as Promise<void>
+		const e = execution.getStore()
+		if (e === null) throw new Error("Nested job steps are not allowed.")
+		if (!e) throw new Error("Cannot call this method outside of a job function.")
+		return e.sleep(ms)
 	}
 }

@@ -64,8 +64,17 @@ export class Queue<
 			const [task, steps] = result
 			const job = this.jobs[task.job]
 			if (!job) throw new Error(`Job ${task.job} not registered in queue ${this.id}, but found for this queue in storage.`)
-			// TODO: provide step data
-			execution.run({ steps }, () =>
+			execution.run({
+				async run(options, fn) {
+					const data = steps.find(step => step.step === options.id)
+					if (data && data.status === 'success') return data.data && JSON.parse(data.data)
+					const result = await execution.run(null, fn)
+					return result
+				},
+				async sleep(ms) {
+					return
+				}
+			}, () =>
 				registration.run(this.#getStore(), () =>
 					job[fn](JSON.parse(task.input))
 				)

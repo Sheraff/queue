@@ -1,8 +1,8 @@
 import { AsyncLocalStorage } from "async_hooks"
 import type { Queue } from "./queue"
 import type { Pipe } from "./pipe"
-import type { Job } from "./job"
-import type { Step } from "./storage"
+import type { Job, RunOptions } from "./job"
+import type { Data } from "./types"
 
 export type RegistrationContext = {
 	queue: Queue
@@ -29,7 +29,8 @@ export const registration = new AsyncLocalStorage<RegistrationContext>()
 
 
 export type ExecutionContext = {
-	steps: Step[]
+	run<Out extends Data>(options: RunOptions, fn: () => Out | Promise<Out>): Promise<Out>
+	sleep(ms: number): Promise<void>
 }
 
 /**

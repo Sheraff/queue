@@ -1,6 +1,6 @@
 import BetterSqlite3 from "better-sqlite3"
 
-export type Task = {
+type Task = {
 	queue: string
 	job: string
 	key: string
@@ -11,7 +11,7 @@ export type Task = {
 	data: string | null
 }
 
-export type Step = {
+type Step = {
 	queue: string
 	job: string
 	key: string

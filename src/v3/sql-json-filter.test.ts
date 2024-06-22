@@ -150,6 +150,8 @@ test.describe('suite', () => {
 			| string
 			| { dd: number }
 			| string[]
+			e: null
+			f: undefined
 		}
 
 		type ObjectSubPath<In, K extends keyof In & string = keyof In & string> = {
@@ -175,6 +177,8 @@ test.describe('suite', () => {
 		path<In>('c[#-1].cc') // accepts array index
 		path<In>('d.dd') // accepts optional key
 		path<In>('d[0]') // accepts optional array index
+		path<In>('e') // accepts null
+		path<In>('f') // accepts undefined
 		// @ts-expect-error
 		path<In>('c.cc') // does not accept non-existant key on array
 		// @ts-expect-error

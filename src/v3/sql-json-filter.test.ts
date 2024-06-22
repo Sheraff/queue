@@ -132,6 +132,46 @@ test.describe('suite', () => {
 			getWithFilter({ c: [3, 4, 5, 6] }),
 			[]
 		)
+	})
+
+	test('Object type to JSON path', (t) => {
+
+		type In = {
+			a: number
+			b: {
+				bb: {
+					bbb: string
+					bb2: number
+					bb3: boolean
+				}
+			}
+			c: { cc: string }[]
+		}
+
+		type ObjectSubPath<In, K extends keyof In & string = keyof In & string> = {
+			[k in K]: `${k}${Path<In[k], '.'>}`
+		}[K]
+
+		type Path<In, Prefix extends string = ''> = '' | (
+			In extends Array<infer T>
+			? `[${number | `#-${number}`}]${Path<T, '.'>}`
+			: In extends object
+			? `${Prefix}${ObjectSubPath<In>}`
+			: ''
+		)
+
+		function path<In extends {}>(str: Path<In>) {
+			return str
+		}
+
+		path<In>('b.bb.bb3') // $ExpectType "b.bb.bb3"
+		path<In>('c[#-1].cc') // $ExpectType "c[#-1].cc"
+		// @ts-expect-error
+		path<In>('c.cc') // $ExpectError
+		// @ts-expect-error
+		path<In>('b.bb.bb4') // $ExpectError
+		// @ts-expect-error
+		path<In>('b.bb.bb3.') // $ExpectError
 
 	})
 })

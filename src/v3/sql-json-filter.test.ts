@@ -267,3 +267,22 @@ test.describe('suite', () => {
 		}), 'Does not throw on simple access')
 	})
 })
+
+import { AsyncLocalStorage } from "node:async_hooks"
+import EventEmitter from "node:events"
+test('async local storage through event emitters', () => {
+	const storage = new AsyncLocalStorage<string>()
+
+	const emitter = new EventEmitter<{ test: [number] }>()
+
+	emitter.on('test', (data) => {
+		const store = storage.getStore()
+		console.log('store', store, data)
+	})
+
+	emitter.emit('test', 42)
+
+	storage.run('hello', () => {
+		emitter.emit('test', 42)
+	})
+})

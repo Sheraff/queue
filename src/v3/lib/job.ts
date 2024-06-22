@@ -22,7 +22,7 @@ export type RunOptions = {
 export type WaitForOptions<In extends Data> = {
 	filter?: DeepPartial<In>
 	timeout?: number
-	future?: boolean
+	retroactive?: boolean
 }
 
 const job = Symbol('job')

@@ -187,6 +187,83 @@ test.describe('suite', () => {
 		path<In>('a[0]') // does not accept array index on non-array
 		// @ts-expect-error
 		path<In>('b.bb.bb3.') // does not accept trailing dot
+	})
 
+	test('Proxy generates JSON path', (t) => {
+		type In = {
+			a: number
+			b: {
+				bb: {
+					bb1: string
+					bb2: number
+					bb3: boolean
+				}
+			}
+			c: { cc: string }[]
+			d?:
+			| string
+			| { dd: number }
+			| string[]
+			e: null
+			f: undefined
+		}
+		const token = Symbol('path')
+		const handler: ProxyHandler<{ path: string, loop: boolean }> = {
+			get(target, key) {
+				const current = target.path
+				if (key === token) {
+					return current
+				}
+				if (target.loop || typeof key === 'symbol') {
+					throw new Error('Selectors must not contain logic: (OK) data => data.a, (NOT OK) data => data.a > 0 ? data.b : data.c')
+				}
+				target.loop = true
+				if (!current) {
+					return new Proxy({ path: key }, handler as any)
+				}
+				const asNumber = Number(key)
+				const path = isNaN(asNumber) ? `.${key}` : asNumber < 0 ? `[#-${-key}]` : `[${key}]`
+				return new Proxy({ path: `${current}${path}` }, handler as any)
+			},
+		}
+
+		function path<In extends object>(select: (obj: In) => any) {
+			const proxy = new Proxy<In>({} as In, handler as any)
+			const result = select(proxy)
+			return result[token]
+		}
+
+		// Works for all valid paths
+
+		assert.equal(path<In>(({ a }) => a), 'a')
+		assert.equal(path<In>(data => data.b.bb), 'b.bb')
+		assert.equal(path<In>(data => data.b.bb.bb3), 'b.bb.bb3')
+		assert.equal(path<In>(data => data.c[-1]!.cc), 'c[#-1].cc')
+		assert.equal(path<In>(data => data.e), 'e')
+		assert.equal(path<In>(data => data.f), 'f')
+		// @ts-expect-error -- edge-case: not very handy for when type is a weird union (string | object)
+		assert.equal(path<In>(data => data.d!.dd), 'd.dd')
+		// @ts-expect-error -- edge-case: not very handy for when type is a weird union (string | Array)
+		assert.equal(path<In>(data => data.d![0]), 'd[0]')
+
+		// Issues type errors for invalid paths
+
+		// @ts-expect-error
+		path<In>(data => data.c.cc)
+		// @ts-expect-error
+		path<In>(data => data.b.bb.bb4)
+		// @ts-expect-error
+		path<In>(data => data.a[0])
+
+		// Throws error for selectors with logic
+
+		assert.throws(() => path<In>(data => data.a > 0 ? data.b : data.c), 'Throws on toPrimitive symbol')
+		assert.throws(() => path<In>(data => data.a ? data.b : data.c), 'Throws on multiple accesses to the same object')
+		// some forms of logic cannot be detected (ESLint rule could be used to enforce this)
+		assert.doesNotThrow(() => path<In>(data => {
+			const b = data.b
+			if (b) return b.bb
+			else return (b as any).bb2
+		}), 'Does not throw on simple access')
 	})
 })

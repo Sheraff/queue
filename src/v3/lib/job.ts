@@ -5,11 +5,17 @@ import { execution, registration, type ExecutionContext, type RegistrationContex
 import type { Step, Task } from "./storage"
 import { hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError } from "./utils"
 
+type CancelReason =
+	| { type: 'timeout', ms: number }
+	| { type: 'explicit' }
+	| { type: 'debounce', number: number }
+
 type EventMap<In extends Data, Out extends Data> = {
 	trigger: [data: In]
 	start: [data: In]
 	success: [data: In, result: Out]
 	error: [data: In, error: unknown]
+	cancel: [data: In, reason: CancelReason]
 	settled: [data: In, result: Out | null, error: unknown | null]
 }
 
@@ -71,6 +77,12 @@ export class Job<
 			output?: Validator<Out>
 			triggers?: NoInfer<Array<Pipe<string, In>>>
 			cron?: string | string[]
+			onTrigger?: (data: In) => void
+			onStart?: (data: In) => void
+			onSuccess?: (data: In, result: Out) => void
+			onError?: (data: In, error: unknown) => void
+			onCancel?: (data: In, reason: CancelReason) => void
+			onSettled?: (data: In, result: Out | null, error: unknown | null) => void
 		},
 		fn: (input: In) => Promise<Out>
 	) {
@@ -79,13 +91,52 @@ export class Job<
 		this.input = opts.input ?? null
 		this.output = opts.output ?? null
 
-		this.#emitter.on('trigger', async (data) => {
+		this.#emitter.on('trigger', (data) => {
+			opts.onTrigger?.(data)
 			const executionContext = execution.getStore()
 			if (executionContext) throw new Error("Cannot call this method inside a job script. Prefer using `Job.dispatch()`, or calling it inside a `Job.run()`.")
 			const registrationContext = registration.getStore()
 			if (!registrationContext) throw new Error("Cannot call this method outside of the context of a queue.")
 			registrationContext.checkRegistration(this)
-			registrationContext.addTask(this, data)
+			registrationContext.addTask(this, data, (key, inserted) => {
+				if (inserted) return
+				registrationContext.queue.storage.getTask(registrationContext.queue.id, this.id, key, (task) => {
+					if (!task) throw new Error('Task not found after insert')
+					if (task.status === 'failed') {
+						if (!task.data) throw new Error('Task previously failed, but no error data found')
+						setImmediate(() => this.#emitter.emit('error', data, hydrateError(task.data!)))
+					} else if (task.status === 'completed') {
+						if (!task.data) throw new Error('Task previously completed, but no output data found')
+						setImmediate(() => this.#emitter.emit('success', data, JSON.parse(task.data!)))
+					} else if (task.status === 'cancelled') {
+						if (!task.data) throw new Error('Task previously cancelled, but no reason data found')
+						setImmediate(() => this.#emitter.emit('cancel', data, JSON.parse(task.data!)))
+					}
+				})
+			})
+		})
+
+		if (opts.onStart) this.#emitter.on('start', (data) => {
+			opts.onStart?.(data)
+		})
+
+		this.#emitter.on('success', (data, result) => {
+			opts.onSuccess?.(data, result)
+			setImmediate(() => this.#emitter.emit('settled', data, result, null))
+		})
+
+		this.#emitter.on('error', (data, error) => {
+			opts.onError?.(data, error)
+			setImmediate(() => this.#emitter.emit('settled', data, null, error))
+		})
+
+		this.#emitter.on('cancel', (data) => {
+			opts.onCancel?.(data, { type: 'explicit' })
+			setImmediate(() => this.#emitter.emit('settled', data, null, null))
+		})
+
+		if (opts.onSettled) this.#emitter.on('settled', (data, result, error) => {
+			opts.onSettled?.(data, result, error)
 		})
 	}
 
@@ -153,8 +204,11 @@ export class Job<
 
 	/** @package */
 	[exec](registrationContext: RegistrationContext, task: Task, steps: Step[]): Promise<void> {
-		const promises: Promise<void>[] = []
 		const input = JSON.parse(task.input) as In
+		if (!task.started) {
+			this.#emitter.emit('start', input)
+		}
+		const promises: Promise<void>[] = []
 		const indexes = {
 			system: {} as Record<string, number>,
 			user: {} as Record<string, number>
@@ -186,7 +240,7 @@ export class Job<
 			const onSuccess = (data: Data) => {
 				return syncOrPromise<void>(resolve => {
 					registrationContext.recordStep(
-						this, task, entry,
+						this, task,
 						{ step, status: 'completed', data: JSON.stringify(data) },
 						resolve
 					)
@@ -195,7 +249,7 @@ export class Job<
 			const onError = (error: unknown) => {
 				return syncOrPromise<void>(resolve => {
 					registrationContext.recordStep(
-						this, task, entry,
+						this, task,
 						{ step, status: 'failed', data: JSON.stringify(error) },
 						resolve
 					)
@@ -206,7 +260,7 @@ export class Job<
 				if (isPromise(maybePromise)) {
 					promises.push(new Promise<Data>(resolve =>
 						registrationContext.recordStep(
-							this, task, entry,
+							this, task,
 							{ step, status: 'running', data: null },
 							() => resolve(maybePromise)
 						))

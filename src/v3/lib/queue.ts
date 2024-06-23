@@ -59,9 +59,12 @@ export class Queue<
 			if (instance instanceof Pipe) return console.assert(this.pipes && instance.id in this.pipes, `Pipe ${instance.id} not registered in queue ${this.id}`)
 			throw new Error('Unknown instance type')
 		},
-		addTask: (job, data) => {
+		addTask: (job, data, cb) => {
 			const key = hash(data)
-			this.storage.addTask({ queue: this.id, job: job.id, key, input: JSON.stringify(data) }, () => this.#start())
+			return this.storage.addTask({ queue: this.id, job: job.id, key, input: JSON.stringify(data) }, (inserted: boolean) => {
+				if (inserted) this.#start()
+				return cb(key, inserted)
+			})
 		},
 		resolveTask: (task, status, data, cb) => {
 			const output = status === 'failed' ? serializeError(data) : JSON.stringify(data)
@@ -70,8 +73,8 @@ export class Queue<
 		requeueTask: (task, cb) => {
 			return this.storage.requeueTask(task, cb)
 		},
-		recordStep: (job, task, memo, step, cb) => {
-			return this.storage.recordStep(job.id, task, memo, step, cb)
+		recordStep: (job, task, step, cb) => {
+			return this.storage.recordStep(job.id, task, step, cb)
 		},
 	}
 

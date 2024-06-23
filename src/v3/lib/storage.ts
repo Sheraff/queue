@@ -23,6 +23,7 @@ export type Task = {
 	runs: number
 	created_at: number
 	updated_at: number
+	started: boolean
 	data: string | null
 }
 
@@ -53,12 +54,12 @@ export type Step = {
 
 export interface Storage {
 	close(): void | Promise<void>
-	addTask<T>(task: { queue: string, job: string, key: string, input: string }, cb?: () => T): T | Promise<T>
+	getTask<T>(queue: string, job: string, key: string, cb: (task: Task | undefined) => T): T | Promise<T>
+	addTask<T>(task: { queue: string, job: string, key: string, input: string }, cb?: (inserted: boolean) => T): T | Promise<T>
 	startNextTask<T>(queue: string, cb: (task: [task: Task, steps: Step[], hasNext: boolean] | undefined) => T): T | Promise<T>
 	resolveTask<T>(task: Task, status: 'completed' | 'failed' | 'cancelled', data: string | null, cb?: () => T): T | Promise<T>
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
-	// TODO: shouldn't contain logic like this, just take data in
-	recordStep<T>(job: string, task: Task, memo: Step | undefined, step: Pick<Step, 'step' | 'status' | 'data'>, cb: () => T): T | Promise<T>
+	recordStep<T>(job: string, task: Task, step: Pick<Step, 'step' | 'status' | 'data'>, cb: () => T): T | Promise<T>
 }
 
 export class SQLiteStorage implements Storage {
@@ -100,6 +101,7 @@ export class SQLiteStorage implements Storage {
 				key TEXT NOT NULL,
 				input JSON NOT NULL,
 				status TEXT NOT NULL,
+				started INTEGER NOT NULL DEFAULT FALSE,
 				runs INTEGER NOT NULL DEFAULT 0,
 				created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 				updated_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
@@ -137,6 +139,12 @@ export class SQLiteStorage implements Storage {
 			CREATE INDEX IF NOT EXISTS ${eventsTable}_key ON ${eventsTable} (queue, key);
 		`)
 
+		this.#getTaskStmt = this.#db.prepare<{ queue: string, job: string, key: string }, Task | undefined>(/* sql */ `
+			SELECT *
+			FROM ${tasksTable}
+			WHERE queue = @queue AND job = @job AND key = @key
+		`)
+
 		const getNextTaskStmt = this.#db.prepare<{ queue: string }, Task>(/* sql */ `
 			SELECT *
 			FROM ${tasksTable}
@@ -149,6 +157,7 @@ export class SQLiteStorage implements Storage {
 			UPDATE ${tasksTable}
 			SET
 				status = 'running',
+				started = TRUE,
 				updated_at = unixepoch('subsec')
 			WHERE id = @id
 		`)
@@ -187,9 +196,11 @@ export class SQLiteStorage implements Storage {
 			WHERE queue = @queue AND job = @job AND key = @key
 		`)
 
-		this.#addTaskStmt = this.#db.prepare<Task>(/* sql */ `
-			INSERT INTO ${tasksTable} (queue, job, key, input, status)
+		this.#addTaskStmt = this.#db.prepare<Task, undefined | 1>(/* sql */ `
+			INSERT OR IGNORE
+			INTO ${tasksTable} (queue, job, key, input, status)
 			VALUES (@queue, @job, @key, @input, 'pending')
+			RETURNING 1
 		`)
 
 		// create or update step
@@ -205,15 +216,21 @@ export class SQLiteStorage implements Storage {
 
 	}
 
+	#getTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string }, Task | undefined>
 	#getNextTaskTx: BetterSqlite3.Transaction<(queue: string) => [task: Task, steps: Step[], hasNext: boolean] | undefined>
 	#resolveTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, status: TaskStatus, data: string | null }>
 	#loopTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string }>
-	#addTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, input: string }>
+	#addTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, input: string }, undefined | 1>
 	#recordStepStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, step: string, status: StepStatus, data: string | null }>
 
-	addTask<T>(task: { queue: string, job: string, key: string, input: string }, cb?: () => T): T {
-		this.#addTaskStmt.run(task)
-		return cb?.() as T
+	getTask<T>(queue: string, job: string, key: string, cb: (task: Task | undefined) => T): T {
+		const task = this.#getTaskStmt.get({ queue, job, key })
+		return cb(task)
+	}
+
+	addTask<T>(task: { queue: string, job: string, key: string, input: string }, cb?: (inserted: boolean) => T): T {
+		const inserted = this.#addTaskStmt.get(task)
+		return cb?.(Boolean(inserted)) as T
 	}
 
 	startNextTask<T>(queue: string, cb: (result: [task: Task, steps: Step[], hasNext: boolean] | undefined) => T): T {
@@ -231,7 +248,7 @@ export class SQLiteStorage implements Storage {
 		return cb?.() as T
 	}
 
-	recordStep<T>(job: string, task: Task, memo: Step | undefined, step: Pick<Step, 'step' | 'status' | 'data'>, cb: () => T): T {
+	recordStep<T>(job: string, task: Task, step: Pick<Step, 'step' | 'status' | 'data'>, cb: () => T): T {
 		this.#recordStepStmt.run({
 			queue: task.queue,
 			job,

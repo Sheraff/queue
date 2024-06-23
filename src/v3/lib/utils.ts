@@ -9,6 +9,25 @@ function serialize(obj: Data): string {
 	return `{${keys.map((key) => `"${key}":${serialize(obj[key])}`).join(',')}}`
 }
 
+export function serializeError(error: unknown): string {
+	const e = error instanceof Error
+		? error
+		: new Error(JSON.stringify(error))
+	const cause = e.cause
+	if (cause instanceof Error) {
+		return JSON.stringify({
+			message: cause.message,
+			stack: cause.stack,
+			cause: cause.cause ? serializeError(cause) : undefined,
+
+		})
+	}
+	return JSON.stringify({
+		message: e.message,
+		stack: e.stack,
+	})
+}
+
 function md5(input: string): string {
 	return createHash('md5').update(Buffer.from(input)).digest('hex')
 }
@@ -36,4 +55,13 @@ export class NonRecoverableError extends Error {
 		super(message, options)
 		this.name = 'NonRecoverableError'
 	}
+}
+
+export function hydrateError(serialized: string): Error {
+	const obj = JSON.parse(serialized)
+	const error = new Error(obj.message)
+	error.stack = obj.stack
+	if (obj.cause) error.cause = hydrateError(obj.cause)
+	return error
+
 }

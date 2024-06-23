@@ -1,10 +1,9 @@
 import EventEmitter from "events"
 import type { Data, DeepPartial, Validator } from "./types"
 import { Pipe } from "./pipe"
-import { execution, registration, type ExecutionContext } from "./context"
-import type { Queue } from "./queue"
+import { execution, registration, type ExecutionContext, type RegistrationContext } from "./context"
 import type { Step, Task } from "./storage"
-import { interrupt, isInterrupt, isPromise, NonRecoverableError } from "./utils"
+import { hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError } from "./utils"
 
 type EventMap<In extends Data, Out extends Data> = {
 	trigger: [data: In]
@@ -153,38 +152,84 @@ export class Job<
 	}
 
 	/** @package */
-	[exec](queue: Queue, task: Task, steps: Step[]): Promise<void> {
+	[exec](registrationContext: RegistrationContext, task: Task, steps: Step[]): Promise<void> {
 		const promises: Promise<void>[] = []
-		let index = 0
+		const input = JSON.parse(task.input) as In
+		const indexes = {
+			system: {} as Record<string, number>,
+			user: {} as Record<string, number>
+		} as const
+		const getIndex = (id: string, system: boolean) => {
+			const ind = system ? indexes.system : indexes.user
+			const i = ind[id] ?? 0
+			ind[id] = i + 1
+			return i
+		}
 		const run: ExecutionContext['run'] = async (options, fn) => {
-			const i = index // TODO: would it be better if `index` wasn't "global" to the entire script, but just for each "list of identical steps"?
-			index += 1
-			const entry = steps.find(s => s.step === options.id && s.index === i && (!options[system] || s.system))
-			if (entry && entry.status === 'success') {
-				if (!entry.data) return Promise.resolve()
-				return Promise.resolve(JSON.parse(entry.data))
+			const index = getIndex(options.id, options[system] ?? false)
+			const step = `${options[system] ? 'system' : 'user'}/${options.id}#${index}`
+			const entry = steps.find(s => s.step === step)
+			if (entry) {
+				if (entry.status === 'completed') {
+					if (!entry.data) return
+					return JSON.parse(entry.data)
+				} else if (entry.status === 'failed') {
+					// TODO: handle retries
+					if (!entry.data) throw new Error('Step marked as failed in storage, but no error data found')
+					throw hydrateError(entry.data)
+				}
 			}
 			let delegateToNextTick = true
 			const canRetry = false // TODO
 			let syncResult: Data
 			let syncError: unknown
-			const onSuccess = (data: Data) => { }
-			const onError = (error: unknown) => { }
+			const onSuccess = (data: Data) => {
+				return syncOrPromise<void>(resolve => {
+					registrationContext.recordStep(
+						this, task, entry,
+						{ step, status: 'completed', data: JSON.stringify(data) },
+						resolve
+					)
+				})
+			}
+			const onError = (error: unknown) => {
+				return syncOrPromise<void>(resolve => {
+					registrationContext.recordStep(
+						this, task, entry,
+						{ step, status: 'failed', data: JSON.stringify(error) },
+						resolve
+					)
+				})
+			}
 			try {
 				const maybePromise = execution.run(null, fn)
 				if (isPromise(maybePromise)) {
-					const promise = maybePromise.then(onSuccess).catch(onError)
-					promises.push(promise)
+					promises.push(new Promise<Data>(resolve =>
+						registrationContext.recordStep(
+							this, task, entry,
+							{ step, status: 'running', data: null },
+							() => resolve(maybePromise)
+						))
+						.then(onSuccess)
+						.catch(onError)
+					)
 				} else {
-					const result = maybePromise
-					onSuccess(result)
-					delegateToNextTick = false
-					syncResult = result
+					const successMaybePromise = onSuccess(maybePromise)
+					if (isPromise(successMaybePromise)) {
+						promises.push(successMaybePromise)
+					} else {
+						delegateToNextTick = false
+						syncResult = maybePromise
+					}
 				}
 			} catch (err) {
-				onError(err)
-				delegateToNextTick = canRetry
-				syncError = err
+				const errorMaybePromise = onError(err)
+				if (isPromise(errorMaybePromise)) {
+					promises.push(errorMaybePromise)
+				} else {
+					delegateToNextTick = canRetry
+					syncError = err
+				}
 			}
 			if (delegateToNextTick) {
 				await Promise.resolve() // let parallel tasks resolve too
@@ -213,39 +258,90 @@ export class Job<
 		}
 
 		const promise = execution.run({ run, sleep, waitFor, invoke, dispatch }, async () => {
+			let output: Data
 			try {
-				const input: Data = await run({
-					id: 'start',
-					[system]: true,
-					// retry 0
-				}, () => {
-					try {
-						const input = JSON.parse(task.input)
-						if (!this.input) return input
-						return this.input.parse(input)
-					} catch (cause) {
-						throw new NonRecoverableError('Input parsing failed', { cause })
-					}
-				})
+				let validInput: Data = input
+				if (this.input) {
+					validInput = await run({
+						id: 'parse-input',
+						[system]: true,
+						// retry 0
+					}, () => {
+						try {
+							return this.input!.parse(input)
+						} catch (cause) {
+							throw new NonRecoverableError('Input parsing failed', { cause })
+						}
+					})
+				}
 
-				let output = await this.#fn(input)
-				if (this.output) output = this.output.parse(output)
-				// dispatch 'success' event w/ output
+				output = await this.#fn(input)
+
+				if (this.output) {
+					output = await run({
+						id: 'parse-output',
+						[system]: true,
+						// retry 0
+					}, () => {
+						try {
+							return this.output!.parse(output)
+						} catch (cause) {
+							throw new NonRecoverableError('Output parsing failed', { cause })
+						}
+					})
+				}
 			} catch (err) {
 				if (isInterrupt(err)) {
 					return Promise.allSettled(promises)
 						.then(() => new Promise(setImmediate)) // allow multiple jobs finishing a step on the same tick to continue in priority order
 						.then(() => {
-							// handle canceled task
-							// update task record in storage, either w/ 'ready to continue' or 'sleeping until'
+							// TODO: handle canceled task
 							// dispatch 'queue can handle next task' event
+							syncOrPromise<void>(resolve => {
+								registrationContext.requeueTask(task, resolve)
+							})
 						})
 				} else {
 					// if not cancelled, this is an actual user-land error
+					// TODO: handle cancellation
+					return syncOrPromise<void>(resolve => {
+						registrationContext.resolveTask(task, 'failed', err, resolve)
+					}, () => {
+						this.#emitter.emit('error', input, err)
+					})
 				}
 			}
+			return syncOrPromise<void>(resolve => {
+				registrationContext.resolveTask(task, 'completed', output, resolve)
+			}, () => {
+				this.#emitter.emit('success', input, output as Out)
+			})
 		})
 
 		return promise
 	}
+}
+
+/**
+ * When we run an arbitrary function that takes a callback, and will call it synchronously or asynchronously,
+ * this utility will return a promise in the asynchronous case, and the result in the synchronous case.
+ * 
+ * TODO: there is no error handling
+ */
+function syncOrPromise<T>(
+	fn: (resolver: (arg: T) => void) => void,
+	after?: (arg: T) => void
+) {
+	let sync = false
+	let result: T
+	const promise = new Promise<T>(resolve => {
+		fn((arg) => {
+			sync = true
+			result = arg
+			resolve(arg)
+			after?.(arg)
+		})
+	})
+	if (sync) return result! as T
+	return promise
 }

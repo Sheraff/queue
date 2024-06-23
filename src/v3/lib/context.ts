@@ -3,11 +3,16 @@ import type { Queue } from "./queue"
 import type { Pipe } from "./pipe"
 import type { Job, RunOptions, WaitForOptions } from "./job"
 import type { Data } from "./types"
+import type { Step, Task } from "./storage"
 
 export interface RegistrationContext {
 	queue: Queue
-	checkRegistration: (instance: Job<any, any, any> | Pipe<any, any>) => void | never
-	addTask: (job: Job, data: Data) => void
+	checkRegistration(instance: Job<any, any, any> | Pipe<any, any>): void | never
+	addTask(job: Job, data: Data): void
+	resolveTask<T>(task: Task, status: 'completed' | 'cancelled', data: Data, cb: () => T): T | Promise<T>
+	resolveTask<T>(task: Task, status: 'failed', data: unknown, cb: () => T): T | Promise<T>
+	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
+	recordStep<T>(job: Job, task: Task, memo: Step | undefined, step: Pick<Step, 'step' | 'status' | 'data'>, cb: () => T): T | Promise<T>
 }
 
 /**

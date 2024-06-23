@@ -42,7 +42,7 @@ test('sleep', async (t) => {
 	await queue.close()
 
 	const steps = db.prepare('SELECT * FROM steps').all() as Step[]
-	console.log(steps)
+
 	assert.equal(steps.length, 1)
 	const sleep = steps[0]!
 	assert.equal(sleep.status, 'completed')

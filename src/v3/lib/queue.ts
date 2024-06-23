@@ -18,17 +18,24 @@ export class Queue<
 	public readonly pipes?: Pipes
 	/** @public */
 	public readonly storage: Storage
+	/** @public */
+	public readonly parallel: number
 
 	constructor(opts: {
 		id: string,
 		jobs: Jobs & SafeKeys<keyof Jobs & string>,
 		pipes?: Pipes & SafeKeys<keyof Pipes & string>,
 		storage: Storage
+		/** how many jobs can be started in parallel, defaults to `Infinity` */
+		parallel?: number
 		// TODO: add logger options
 		// TODO: add cron implementation injection
 		// TODO: add polling frequency (for cases where multiple queue workers are writing to the same storage)
 	}) {
 		this.id = opts.id
+		this.parallel = Math.max(1, opts.parallel ?? Infinity)
+		this.storage = opts.storage
+
 		this.jobs = Object.fromEntries(Object.entries(opts.jobs).map(([id, job]) => [
 			id,
 			new Proxy(job, {
@@ -39,6 +46,7 @@ export class Queue<
 				}
 			})
 		])) as Jobs
+
 		this.pipes = opts.pipes && Object.fromEntries(Object.entries(opts.pipes).map(([id, pipe]) => [
 			id,
 			new Proxy(pipe, {
@@ -49,7 +57,7 @@ export class Queue<
 				}
 			})
 		])) as Pipes
-		this.storage = opts.storage
+
 		this.#start()
 	}
 
@@ -83,9 +91,9 @@ export class Queue<
 	#willRun = false
 	#sleepTimeout: NodeJS.Timeout | null = null
 
-	#loopExec(): 'none' | 'done' | Promise<'none' | 'done'> {
+	#drain(): void | Promise<void> {
 		return this.storage.startNextTask(this.id, (result) => {
-			if (!result) return 'none'
+			if (!result) return
 
 			const [task, steps, hasNext] = result
 			const job = this.jobs[task.job]
@@ -99,36 +107,34 @@ export class Queue<
 				this.#start()
 			})
 
-			if (hasNext) return this.#loopExec()
-
-			return 'done'
-		}) as 'none' | 'done' | Promise<'none' | 'done'>
+			if (hasNext && this.#running.size < this.parallel) return this.#drain()
+		}) as void | Promise<void>
 	}
 
 	// TODO: should this be public? Might be useful for cases where multiple queue workers are writing to the same storage, and we don't want to poll and would rather have a manual trigger.
 	#start() {
-		if (this.#willRun) return
+		if (this.#willRun || this.#closed) return
+		if (this.#running.size >= this.parallel) return
 		this.#willRun = true
-		if (this.#closed) return
 		if (this.#sleepTimeout) {
 			clearTimeout(this.#sleepTimeout)
 			this.#sleepTimeout = null
 		}
 		setImmediate(async () => {
 			if (this.#closed) return
-			const status = await this.#loopExec()
+			await this.#drain()
 			this.#willRun = false
-			if (status === 'none') {
+			setImmediate(() => {
+				if (this.#willRun || this.#closed) return
 				this.storage.nextFutureTask(this.id, (result) => {
-					if (this.#willRun) return
-					if (this.#closed) return
+					if (this.#willRun || this.#closed) return
 					if (!result) return // program will exit unless something else (outside of this queue) is keeping it open
 					this.#sleepTimeout = setTimeout(
 						() => this.#start(),
 						Math.ceil(result.seconds * 1000)
 					)
 				})
-			}
+			})
 		})
 	}
 

@@ -26,6 +26,7 @@ export class Queue<
 		storage: Storage
 		// TODO: add logger options
 		// TODO: add cron implementation injection
+		// TODO: add polling frequency (for cases where multiple queue workers are writing to the same storage)
 	}) {
 		this.id = opts.id
 		this.jobs = Object.fromEntries(Object.entries(opts.jobs).map(([id, job]) => [
@@ -80,12 +81,12 @@ export class Queue<
 
 	#running = new Set<Promise<any>>()
 	#willRun = false
+	#sleepTimeout: NodeJS.Timeout | null = null
+
 	#loopExec(): 'none' | 'done' | Promise<'none' | 'done'> {
 		return this.storage.startNextTask(this.id, (result) => {
-			if (!result) {
-				this.#willRun = false
-				return 'none'
-			}
+			if (!result) return 'none'
+
 			const [task, steps, hasNext] = result
 			const job = this.jobs[task.job]
 			if (!job) throw new Error(`Job ${task.job} not registered in queue ${this.id}, but found for this queue in storage.`)
@@ -100,20 +101,33 @@ export class Queue<
 
 			if (hasNext) return this.#loopExec()
 
-			this.#willRun = false
 			return 'done'
 		}) as 'none' | 'done' | Promise<'none' | 'done'>
 	}
 
+	// TODO: should this be public? Might be useful for cases where multiple queue workers are writing to the same storage, and we don't want to poll and would rather have a manual trigger.
 	#start() {
 		if (this.#willRun) return
 		this.#willRun = true
 		if (this.#closed) return
+		if (this.#sleepTimeout) {
+			clearTimeout(this.#sleepTimeout)
+			this.#sleepTimeout = null
+		}
 		setImmediate(async () => {
 			if (this.#closed) return
 			const status = await this.#loopExec()
+			this.#willRun = false
 			if (status === 'none') {
-				// TODO: query storage to know "if nothing changes" when to run again
+				this.storage.nextFutureTask(this.id, (result) => {
+					if (this.#willRun) return
+					if (this.#closed) return
+					if (!result) return // program will exit unless something else (outside of this queue) is keeping it open
+					this.#sleepTimeout = setTimeout(
+						() => this.#start(),
+						Math.ceil(result.seconds * 1000)
+					)
+				})
 			}
 		})
 	}
@@ -135,6 +149,12 @@ export class Queue<
 			return
 		}
 		this.#closed = true
+
+		// kill timeout, we're exiting
+		if (this.#sleepTimeout) {
+			clearTimeout(this.#sleepTimeout)
+			this.#sleepTimeout = null
+		}
 
 		// let all running jobs finish
 		while (this.#running.size) {

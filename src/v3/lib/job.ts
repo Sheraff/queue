@@ -13,6 +13,7 @@ type CancelReason =
 type EventMap<In extends Data, Out extends Data> = {
 	trigger: [data: In]
 	start: [data: In]
+	run: [data: In]
 	success: [data: In, result: Out]
 	error: [data: In, error: unknown]
 	cancel: [data: In, reason: CancelReason]
@@ -207,6 +208,8 @@ export class Job<
 		const input = JSON.parse(task.input) as In
 		if (!task.started) {
 			this.#emitter.emit('start', input)
+		} else {
+			this.#emitter.emit('run', input)
 		}
 		const promises: Promise<void>[] = []
 		const indexes = {
@@ -293,7 +296,41 @@ export class Job<
 			return syncResult
 		}
 		const sleep: ExecutionContext['sleep'] = async (ms) => {
-			return
+			const index = getIndex('sleep', true)
+			const step = `system/sleep#${index}`
+			const entry = steps.find(s => s.step === step)
+			if (entry) {
+				if (entry.status === 'completed') return
+				if (entry.sleep_done === null) throw new Error('Sleep step already created, but no duration found')
+				if (entry.sleep_done) {
+					const maybePromise = syncOrPromise<void>(resolve => {
+						registrationContext.recordStep(
+							this, task,
+							{ step, status: 'completed', data: null, sleep_for: entry.sleep_for },
+							resolve
+						)
+					})
+					if (isPromise(maybePromise)) {
+						promises.push(maybePromise)
+						return maybePromise
+					}
+					return
+				}
+				await Promise.resolve()
+				interrupt()
+			}
+			const maybePromise = syncOrPromise<void>(resolve => {
+				registrationContext.recordStep(
+					this, task,
+					{ step, status: 'running', data: null, sleep_for: ms / 1000 },
+					resolve
+				)
+			})
+			if (isPromise(maybePromise)) {
+				promises.push(maybePromise)
+			}
+			await Promise.resolve()
+			interrupt()
 		}
 		const waitFor: ExecutionContext['waitFor'] = async (instance, event, options) => {
 			return {} as any

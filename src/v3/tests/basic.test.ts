@@ -1,20 +1,10 @@
 import test from "node:test"
-import { Job, Queue, SQLiteStorage } from "./lib"
+import { Job, Queue, SQLiteStorage } from "../lib"
 import { z } from "zod"
 import assert from "assert"
 import Database from "better-sqlite3"
-import type { Step, Task } from "./lib/storage"
-
-function invoke<J extends Job>(job: J, input: J["in"]): Promise<J['out']> {
-	const done = new Promise<J['out']>((resolve, reject) => {
-		job.emitter.on('settled', (input, output, error) => {
-			if (error) return reject(error)
-			resolve(output)
-		})
-	})
-	job.dispatch(input)
-	return done
-}
+import type { Step, Task } from "../lib/storage"
+import { invoke } from "./utils"
 
 test('simple sync job', async (t) => {
 	const aaa = new Job({
@@ -178,7 +168,7 @@ test.describe('events', () => {
 			onSuccess: () => callbacks.push('success'),
 			onTrigger: () => callbacks.push('trigger'),
 		}, async (input) => {
-			const next = await Job.run('add-one', () => input.a + 1)
+			const next = await Job.run('add-one', async () => input.a + 1)
 			return { b: next }
 		})
 
@@ -188,6 +178,7 @@ test.describe('events', () => {
 		aaa.emitter.on('settled', () => events.push('settled'))
 		aaa.emitter.on('cancel', () => events.push('cancel'))
 		aaa.emitter.on('error', () => events.push('error'))
+		aaa.emitter.on('run', () => events.push('run'))
 
 		const queue = new Queue({
 			id: 'basic',
@@ -197,7 +188,7 @@ test.describe('events', () => {
 
 		await invoke(queue.jobs.aaa, { a: 1 })
 
-		assert.deepEqual(events, ['trigger', 'start', 'success', 'settled'])
-		assert.deepEqual(callbacks, ['trigger', 'start', 'success', 'settled'])
+		assert.deepEqual(events, ['trigger', 'start', 'run', 'success', 'settled'], 'Events should have been emitted in order')
+		assert.deepEqual(callbacks, ['trigger', 'start', 'success', 'settled'], 'Callbacks should have been called in order')
 	})
 })

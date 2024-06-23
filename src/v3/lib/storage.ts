@@ -49,6 +49,10 @@ export type Step = {
 	status: StepStatus
 	runs: number
 	created_at: number
+	/** used on write to set a sleep timer */
+	sleep_for?: number | null
+	/** used on read to know if sleep timer expired */
+	sleep_done: boolean | null
 	data: string | null
 }
 
@@ -67,6 +71,19 @@ export interface Storage {
 	 * - retrieve a boolean indicating whether there is another task to run immediately after this one.
 	 */
 	startNextTask<T>(queue: string, cb: (task: [task: Task, steps: Step[], hasNext: boolean] | undefined) => T): T | Promise<T>
+	/**
+	 * How long to wait before there is a task to run
+	 * (assuming state of storage doesn't change in the meantime).
+	 * 
+	 * This query follows the same constraints as `startNextTask`,
+	 * but only looks for the next task that is waiting for a timer.
+	 * (This can include timers for retries, debounce, throttle, sleep, ...)
+	 * 
+	 * This query is only called if `startNextTask` returns `undefined`,
+	 * so it is safe to only look at *future* tasks, and not check if some
+	 * are ready to run immediately.
+	 */
+	nextFutureTask<T>(queue: string, cb: (result: { seconds: number } | undefined) => T): T | Promise<T>
 	/** Final update to a task, sets the status and the corresponding data */
 	resolveTask<T>(task: Task, status: 'completed' | 'failed' | 'cancelled', data: string | null, cb?: () => T): T | Promise<T>
 	/** Set the task back to 'pending' after the step promises it was waiting for resolved. It can be picked up again. */
@@ -128,13 +145,13 @@ export class SQLiteStorage implements Storage {
 				task_id INTEGER NOT NULL,
 				queue TEXT NOT NULL,
 				job TEXT NOT NULL,
-				system INTEGER NOT NULL DEFAULT FALSE,
 				key TEXT NOT NULL,
 				step TEXT NOT NULL,
 				status TEXT NOT NULL,
 				runs INTEGER NOT NULL DEFAULT 0,
 				created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 				updated_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
+				sleep_for INTEGER,
 				data JSON
 			);
 		
@@ -160,10 +177,35 @@ export class SQLiteStorage implements Storage {
 
 		const getNextTaskStmt = this.#db.prepare<{ queue: string }, Task>(/* sql */ `
 			SELECT *
-			FROM ${tasksTable}
-			WHERE queue = @queue AND status = 'pending'
+			FROM ${tasksTable} tasks
+			WHERE
+				queue = @queue
+				AND status = 'pending'
+				AND NOT EXISTS (
+					SELECT 1
+					FROM ${stepsTable}
+					WHERE
+						task_id = tasks.id
+						AND status = 'running'
+						AND sleep_for IS NOT NULL
+						AND (created_at + sleep_for > unixepoch('subsec'))
+					LIMIT 1
+				)
 			ORDER BY created_at ASC
 			LIMIT 2
+		`)
+
+		this.#getNextFutureTaskStmt = this.#db.prepare<{ queue: string }, { seconds: number }>(/* sql */ `
+			SELECT (steps.created_at + steps.sleep_for - unixepoch('subsec')) as seconds
+			FROM ${tasksTable} tasks
+			LEFT JOIN ${stepsTable} steps ON steps.task_id = tasks.id
+			WHERE
+				tasks.queue = @queue
+				AND tasks.status = 'pending'
+				AND steps.status = 'running'
+				AND steps.sleep_for IS NOT NULL
+			ORDER BY seconds ASC
+			LIMIT 1
 		`)
 
 		const reserveTaskStmt = this.#db.prepare<{ id: number }>(/* sql */ `
@@ -176,7 +218,13 @@ export class SQLiteStorage implements Storage {
 		`)
 
 		const getTaskStepDataStmt = this.#db.prepare<{ id: number }, Step>(/* sql */ `
-			SELECT *
+			SELECT
+				*,
+				CASE
+					WHEN sleep_for IS NULL THEN NULL
+					WHEN ((created_at + sleep_for) <= unixepoch('subsec')) THEN TRUE
+					ELSE FALSE
+				END sleep_done
 			FROM ${stepsTable}
 			WHERE
 				task_id = @id
@@ -217,9 +265,18 @@ export class SQLiteStorage implements Storage {
 		`)
 
 		// create or update step
-		this.#recordStepStmt = this.#db.prepare<Step>(/* sql */ `
-			INSERT INTO ${stepsTable} (queue, job, key, step, task_id, status, data)
-			VALUES (@queue, @job, @key, @step, @task_id, @status, @data)
+		this.#recordStepStmt = this.#db.prepare<{ queue: string, job: string, key: string, step: string, task_id: number, status: StepStatus, sleep_for: number | null, data: string | null }>(/* sql */ `
+			INSERT INTO ${stepsTable} (queue, job, key, step, task_id, status, sleep_for, data)
+			VALUES (
+				@queue,
+				@job,
+				@key,
+				@step,
+				@task_id,
+				@status,
+				@sleep_for,
+				@data
+			)
 			ON CONFLICT (queue, job, key, step)
 			DO UPDATE SET
 				status = @status,
@@ -231,10 +288,11 @@ export class SQLiteStorage implements Storage {
 
 	#getTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string }, Task | undefined>
 	#getNextTaskTx: BetterSqlite3.Transaction<(queue: string) => [task: Task, steps: Step[], hasNext: boolean] | undefined>
+	#getNextFutureTaskStmt: BetterSqlite3.Statement<{ queue: string }, { seconds: number } | undefined>
 	#resolveTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, status: TaskStatus, data: string | null }>
 	#loopTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string }>
 	#addTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, input: string }, undefined | 1>
-	#recordStepStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, step: string, status: StepStatus, data: string | null }>
+	#recordStepStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, task_id: number, step: string, status: StepStatus, sleep_for: number | null, data: string | null }>
 
 	getTask<T>(queue: string, job: string, key: string, cb: (task: Task | undefined) => T): T {
 		const task = this.#getTaskStmt.get({ queue, job, key })
@@ -251,6 +309,11 @@ export class SQLiteStorage implements Storage {
 		return cb(result)
 	}
 
+	nextFutureTask<T>(queue: string, cb: (result: { seconds: number } | undefined) => T): T {
+		const result = this.#getNextFutureTaskStmt.get({ queue })
+		return cb(result)
+	}
+
 	resolveTask<T>(task: Task, status: "completed" | "failed" | "cancelled", data: string | null, cb?: () => T): T {
 		this.#resolveTaskStmt.run({ queue: task.queue, job: task.job, key: task.key, status, data })
 		return cb?.() as T
@@ -261,7 +324,7 @@ export class SQLiteStorage implements Storage {
 		return cb?.() as T
 	}
 
-	recordStep<T>(job: string, task: Task, step: Pick<Step, 'step' | 'status' | 'data'>, cb: () => T): T {
+	recordStep<T>(job: string, task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for'>, cb: () => T): T {
 		this.#recordStepStmt.run({
 			queue: task.queue,
 			job,
@@ -270,6 +333,7 @@ export class SQLiteStorage implements Storage {
 			task_id: task.id,
 			data: step.data,
 			status: step.status,
+			sleep_for: step.sleep_for ?? null,
 			step: step.step
 		})
 		return cb()

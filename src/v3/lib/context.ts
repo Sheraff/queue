@@ -12,7 +12,7 @@ export interface RegistrationContext {
 	resolveTask<T>(task: Task, status: 'completed' | 'cancelled', data: Data, cb: () => T): T | Promise<T>
 	resolveTask<T>(task: Task, status: 'failed', data: unknown, cb: () => T): T | Promise<T>
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
-	recordStep<T>(job: Job, task: Task, step: Pick<Step, 'step' | 'status' | 'data'>, cb: () => T): T | Promise<T>
+	recordStep<T>(job: Job, task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for'>, cb: () => T): T | Promise<T>
 }
 
 /**

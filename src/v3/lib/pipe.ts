@@ -1,16 +1,16 @@
 import { execution, registration } from "./context"
 import type { Data, Validator } from "./types"
 
-
-
-const pipe = Symbol('pipe')
 export class Pipe<
 	const Id extends string = string,
 	In extends Data = Data,
 > {
+	/** @public */
 	readonly id: Id
+	/** @package */
 	readonly in = null as unknown as In
-	readonly #symbol = pipe
+	/** @public */
+	readonly type = 'pipe'
 
 	constructor(
 		opts: {
@@ -23,6 +23,7 @@ export class Pipe<
 		this.id = opts.id
 	}
 
+	/** @public */
 	dispatch(data: In): void {
 		// should resolve which queue we're in and dispatch to that queue
 		// if not resolved, throw error

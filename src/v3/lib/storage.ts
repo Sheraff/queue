@@ -1,21 +1,26 @@
 import BetterSqlite3 from "better-sqlite3"
 
-type Task = {
+type TaskStatus = 'pending' | 'running' | 'stalled' | 'completed' | 'failed' | 'cancelled'
+
+export type Task = {
 	queue: string
 	job: string
 	key: string
 	input: string
-	status: string
+	status: TaskStatus
 	runs: number
 	created_at: number
+	updated_at: number
 	data: string | null
 }
 
-type Step = {
+export type Step = {
 	queue: string
 	job: string
+	system: boolean
 	key: string
 	step: string
+	index: number
 	status: string
 	runs: number
 	created_at: number
@@ -24,7 +29,8 @@ type Step = {
 
 export interface Storage {
 	close(): void | Promise<void>
-	startNextTask(queue: string, cb: (task: [task: Task, steps: Step[]] | undefined) => void): void
+	addTask<T>(task: { queue: string, job: string, key: string, input: string }, cb?: () => T): T | Promise<T>
+	startNextTask<T>(queue: string, cb: (task: [task: Task, steps: Step[], hasNext: boolean] | undefined) => T): T | Promise<T>
 }
 
 export class SQLiteStorage implements Storage {
@@ -63,6 +69,7 @@ export class SQLiteStorage implements Storage {
 				status TEXT NOT NULL,
 				runs INTEGER NOT NULL DEFAULT 0,
 				created_at INTEGER NOT NULL DEFAULT unixepoch('subsec'),
+				updated_at INTEGER NOT NULL DEFAULT unixepoch('subsec'),
 				data JSON
 			);
 		
@@ -73,7 +80,9 @@ export class SQLiteStorage implements Storage {
 				task_id INTEGER NOT NULL,
 				queue TEXT NOT NULL,
 				job TEXT NOT NULL,
+				system INTEGER NOT NULL DEFAULT FALSE,
 				key TEXT NOT NULL,
+				index INTEGER NOT NULL DEFAULT 0,
 				step TEXT NOT NULL,
 				status TEXT NOT NULL,
 				runs INTEGER NOT NULL DEFAULT 0,
@@ -102,7 +111,7 @@ export class SQLiteStorage implements Storage {
 				queue = @queue
 				AND status = 'waiting'
 			ORDER BY created_at ASC
-			LIMIT 1
+			LIMIT 2
 		`)
 
 		this.#getTaskStepDataStmt = this.#db.prepare<{ id: number }, Step>(/* sql */ `
@@ -111,25 +120,36 @@ export class SQLiteStorage implements Storage {
 			WHERE
 				task_id = @id
 		`)
+
+		this.#addTaskStmt = this.#db.prepare<Task>(/* sql */ `
+			INSERT INTO ${tasksTable} (queue, job, key, input, status)
+			VALUES (@queue, @job, @key, @input, 'pending')
+		`)
 	}
 
+	#addTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, input: string }>
 	#getNextTaskStmt: BetterSqlite3.Statement<{ queue: string }, Task>
 	#getTaskStepDataStmt: BetterSqlite3.Statement<{ id: number }, Step>
 
-	startNextTask(queue: string, cb: (result: [task: Task, steps: Step[]] | undefined) => void) {
+	addTask<T>(task: { queue: string, job: string, key: string, input: string }, cb?: () => T): T {
+		this.#addTaskStmt.run(task)
+		return cb?.() as T
+	}
+
+	startNextTask<T>(queue: string, cb: (result: [task: Task, steps: Step[], hasNext: boolean] | undefined) => T): T {
 		// TODO: wip
 		const tx = this.#db.transaction(() => {
-			const task = this.#getNextTaskStmt.get({ queue })
+			const [task, next] = this.#getNextTaskStmt.all({ queue })
 			if (!task) return
 			// TODO: update task status to 'running'
 			const steps = this.#getTaskStepDataStmt.all({
 				// @ts-expect-error -- id exists, but not exposed in the type
 				id: task.id
 			})
-			return [task, steps] as [Task, Step[]]
+			return [task, steps, !!next] as [Task, Step[], boolean]
 		})
 		const result = tx.exclusive()
-		cb(result)
+		return cb(result)
 	}
 
 	close() {

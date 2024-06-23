@@ -4,9 +4,10 @@ import type { Pipe } from "./pipe"
 import type { Job, RunOptions, WaitForOptions } from "./job"
 import type { Data } from "./types"
 
-export type RegistrationContext = {
+export interface RegistrationContext {
 	queue: Queue
 	checkRegistration: (instance: Job<any, any, any> | Pipe<any, any>) => void | never
+	addTask: (job: Job, data: Data) => void
 }
 
 /**
@@ -28,7 +29,7 @@ export type RegistrationContext = {
 export const registration = new AsyncLocalStorage<RegistrationContext>()
 
 
-export type ExecutionContext = {
+export interface ExecutionContext {
 	run<Out extends Data>(options: RunOptions, fn: () => Out | Promise<Out>): Promise<Out>
 	sleep(ms: number): Promise<void>
 	waitFor(instance: Job | Pipe, event: string, options?: WaitForOptions<Data>): Promise<Data>

@@ -89,7 +89,7 @@ export interface Storage {
 	/** Set the task back to 'pending' after the step promises it was waiting for resolved. It can be picked up again. */
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
 	/** Insert or update a step based on unique index queue+job+key+step */
-	recordStep<T>(job: string, task: Task, step: Pick<Step, 'step' | 'status' | 'data'>, cb: () => T): T | Promise<T>
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data'>, cb: () => T): T | Promise<T>
 }
 
 export class SQLiteStorage implements Storage {
@@ -324,10 +324,10 @@ export class SQLiteStorage implements Storage {
 		return cb?.() as T
 	}
 
-	recordStep<T>(job: string, task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for'>, cb: () => T): T {
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for'>, cb: () => T): T {
 		this.#recordStepStmt.run({
 			queue: task.queue,
-			job,
+			job: task.job,
 			key: task.key,
 			// @ts-expect-error -- id exists, but not exposed in the type
 			task_id: task.id,

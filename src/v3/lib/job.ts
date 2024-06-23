@@ -243,7 +243,7 @@ export class Job<
 			const onSuccess = (data: Data) => {
 				return syncOrPromise<void>(resolve => {
 					registrationContext.recordStep(
-						this, task,
+						task,
 						{ step, status: 'completed', data: JSON.stringify(data) },
 						resolve
 					)
@@ -252,7 +252,7 @@ export class Job<
 			const onError = (error: unknown) => {
 				return syncOrPromise<void>(resolve => {
 					registrationContext.recordStep(
-						this, task,
+						task,
 						{ step, status: 'failed', data: JSON.stringify(error) },
 						resolve
 					)
@@ -263,7 +263,7 @@ export class Job<
 				if (isPromise(maybePromise)) {
 					promises.push(new Promise<Data>(resolve =>
 						registrationContext.recordStep(
-							this, task,
+							task,
 							{ step, status: 'running', data: null },
 							() => resolve(maybePromise)
 						))
@@ -305,7 +305,7 @@ export class Job<
 				if (entry.sleep_done) {
 					const maybePromise = syncOrPromise<void>(resolve => {
 						registrationContext.recordStep(
-							this, task,
+							task,
 							{ step, status: 'completed', data: null, sleep_for: entry.sleep_for },
 							resolve
 						)
@@ -321,7 +321,7 @@ export class Job<
 			}
 			const maybePromise = syncOrPromise<void>(resolve => {
 				registrationContext.recordStep(
-					this, task,
+					task,
 					{ step, status: 'running', data: null, sleep_for: ms / 1000 },
 					resolve
 				)

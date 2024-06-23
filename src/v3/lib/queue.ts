@@ -82,8 +82,8 @@ export class Queue<
 		requeueTask: (task, cb) => {
 			return this.storage.requeueTask(task, cb)
 		},
-		recordStep: (job, task, step, cb) => {
-			return this.storage.recordStep(job.id, task, step, cb)
+		recordStep: (task, step, cb) => {
+			return this.storage.recordStep(task, step, cb)
 		},
 	}
 

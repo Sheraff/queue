@@ -53,12 +53,25 @@ export type Step = {
 }
 
 export interface Storage {
+	/** Close the database connection if any. This should only close it if the database is not external to the Storage instance */
 	close(): void | Promise<void>
+	/** Simply return the full Task based on unique index queue+job+key */
 	getTask<T>(queue: string, job: string, key: string, cb: (task: Task | undefined) => T): T | Promise<T>
+	/** Create a new Task, initial status is 'pending'. Returns `true` if the task was created, and `false` if it already existed. */
 	addTask<T>(task: { queue: string, job: string, key: string, input: string }, cb?: (inserted: boolean) => T): T | Promise<T>
+	/**
+	 * Exclusive transaction to:
+	 * - retrieve the next task to run immediately, if none, return undefined;
+	 * - update that next task's status to 'running' (to avoid another worker picking up the same one) and set `started` to true (to trigger the start event);
+	 * - retrieve all steps for that task (if any);
+	 * - retrieve a boolean indicating whether there is another task to run immediately after this one.
+	 */
 	startNextTask<T>(queue: string, cb: (task: [task: Task, steps: Step[], hasNext: boolean] | undefined) => T): T | Promise<T>
+	/** Final update to a task, sets the status and the corresponding data */
 	resolveTask<T>(task: Task, status: 'completed' | 'failed' | 'cancelled', data: string | null, cb?: () => T): T | Promise<T>
+	/** Set the task back to 'pending' after the step promises it was waiting for resolved. It can be picked up again. */
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
+	/** Insert or update a step based on unique index queue+job+key+step */
 	recordStep<T>(job: string, task: Task, step: Pick<Step, 'step' | 'status' | 'data'>, cb: () => T): T | Promise<T>
 }
 
@@ -95,7 +108,7 @@ export class SQLiteStorage implements Storage {
 		this.#db.exec(/* sql */ `
 			CREATE TABLE IF NOT EXISTS ${tasksTable} (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				parent_id INTEGER,
+				parent_id INTEGER, -- TODO
 				queue TEXT NOT NULL,
 				job TEXT NOT NULL,
 				key TEXT NOT NULL,

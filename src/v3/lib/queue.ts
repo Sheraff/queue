@@ -34,7 +34,7 @@ export class Queue<
 				get: (target, prop) => {
 					const value = Reflect.get(job, prop, job)
 					if (typeof value !== 'function') return value
-					return (...args: any[]) => registration.run(this.#registrationContext, () => value.bind(target)(...args))
+					return (...args: any[]) => registration.run(this.#registrationContext, value.bind(target, ...args))
 				}
 			})
 		])) as Jobs
@@ -44,7 +44,7 @@ export class Queue<
 				get: (target, prop) => {
 					const value = Reflect.get(pipe, prop, pipe)
 					if (typeof value !== 'function') return value
-					return (...args: any[]) => registration.run(this.#registrationContext, () => value.bind(target)(...args))
+					return (...args: any[]) => registration.run(this.#registrationContext, value.bind(target, ...args))
 				}
 			})
 		])) as Pipes

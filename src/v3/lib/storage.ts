@@ -32,6 +32,8 @@ export type Task = {
 type StepStatus =
 	/** step is a promise, currently resolving */
 	| 'running'
+	/** step ran (at least) once, but needs to re-run */
+	| 'pending'
 	/** step is blocked by a timer (retry, concurrency, sleep) */
 	| 'stalled'
 	/* step is waiting for an event (waitFor, invoke) */
@@ -99,7 +101,7 @@ export interface Storage {
 	/** Set the task back to 'pending' after the step promises it was waiting for resolved. It can be picked up again. */
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
 	/** Insert or update a step based on unique index queue+job+key+step */
-	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data'>, cb: () => T): T | Promise<T>
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'>, cb: () => T): T | Promise<T>
 	/** Append event to table */
 	recordEvent<T>(queue: string, key: string, input: string, data: string, cb?: () => T): T | Promise<T>
 	/** Called with a step in 'waiting' status, should retrieve the 1st event that satisfies the `wait_` conditions */
@@ -334,6 +336,7 @@ export class SQLiteStorage implements Storage {
 			job: string
 			key: string
 			step: string
+			runs: number
 			task_id: number
 			status: StepStatus
 			sleep_for: number | null
@@ -347,6 +350,7 @@ export class SQLiteStorage implements Storage {
 				job,
 				key,
 				step,
+				runs,
 				task_id,
 				status,
 				sleep_for,
@@ -360,6 +364,7 @@ export class SQLiteStorage implements Storage {
 				@job,
 				@key,
 				@step,
+				@runs,
 				@task_id,
 				@status,
 				@sleep_for,
@@ -372,6 +377,7 @@ export class SQLiteStorage implements Storage {
 			DO UPDATE SET
 				status = @status,
 				updated_at = unixepoch('subsec'),
+				runs = @runs,
 				data = @data
 		`)
 
@@ -458,6 +464,7 @@ export class SQLiteStorage implements Storage {
 		key: string
 		task_id: number
 		step: string
+		runs: number
 		status: StepStatus
 		sleep_for: number | null
 		wait_for: string | null
@@ -495,14 +502,15 @@ export class SQLiteStorage implements Storage {
 
 	requeueTask<T>(task: Task, cb: () => T): T {
 		this.#loopTaskStmt.run({ queue: task.queue, job: task.job, key: task.key })
-		return cb?.() as T
+		return cb() as T
 	}
 
-	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for' | 'wait_for' | 'wait_filter' | 'wait_retroactive'>, cb: () => T): T {
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'>, cb: () => T): T {
 		this.#recordStepStmt.run({
 			queue: task.queue,
 			job: task.job,
 			key: task.key,
+			runs: step.runs,
 			task_id: task.id,
 			data: step.data,
 			status: step.status,

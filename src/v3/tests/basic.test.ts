@@ -200,8 +200,8 @@ test('step error', async (t) => {
 		override name = 'CustomError'
 	}
 
-	const aaa = new Job({
-		id: 'aaa',
+	const asyncJob = new Job({
+		id: 'asyncJob',
 		input: z.object({ a: z.number() }),
 	}, async () => {
 		await Job.run('add-one', async () => {
@@ -209,22 +209,46 @@ test('step error', async (t) => {
 		})
 	})
 
+	const syncJob = new Job({
+		id: 'syncJob',
+		input: z.object({ a: z.number() }),
+	}, async () => {
+		await Job.run('add-one', () => {
+			throw new CustomError('Step error')
+		})
+	})
+
 	const queue = new Queue({
 		id: 'basic',
-		jobs: { aaa },
+		jobs: { asyncJob, syncJob },
 		storage: new SQLiteStorage()
 	})
 
 
 	let runs = 1
-	aaa.emitter.on('run', () => runs++)
+	asyncJob.emitter.on('run', () => runs++)
+	syncJob.emitter.on('run', () => runs++)
 
-	await assert.rejects(invoke(queue.jobs.aaa, { a: 1 }), { message: 'Step error', name: 'CustomError' })
+	await assert.rejects(invoke(queue.jobs.asyncJob, { a: 1 }), { message: 'Step error', name: 'CustomError' })
 	t.diagnostic(`Runs to complete the job: ${runs}`)
+	assert.strictEqual(runs, 4, 'Job should have been retried 3 times (+1 because async Job.run needs a loop to resolve)')
+
 	runs = 1
 	// @ts-expect-error -- purposefully testing passing a string
-	await assert.rejects(invoke(queue.jobs.aaa, { a: '1' }), { message: 'Input parsing failed', name: 'NonRecoverableError' })
+	await assert.rejects(invoke(queue.jobs.asyncJob, { a: '1' }), { message: 'Input parsing failed', name: 'NonRecoverableError' })
 	t.diagnostic(`Runs to complete the job: ${runs}`)
+	assert.strictEqual(runs, 1, 'Job should have been retried 0 times')
+
+	runs = 1
+	await assert.rejects(invoke(queue.jobs.syncJob, { a: 1 }), { message: 'Step error', name: 'CustomError' })
+	t.diagnostic(`Runs to complete the job: ${runs}`)
+	assert.strictEqual(runs, 3, 'Job should have been retried 3 times')
+
+	runs = 1
+	// @ts-expect-error -- purposefully testing passing a string
+	await assert.rejects(invoke(queue.jobs.syncJob, { a: '1' }), { message: 'Input parsing failed', name: 'NonRecoverableError' })
+	t.diagnostic(`Runs to complete the job: ${runs}`)
+	assert.strictEqual(runs, 1, 'Job should have been retried 0 times')
 
 	await queue.close()
 })

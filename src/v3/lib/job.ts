@@ -25,8 +25,8 @@ const system = Symbol('system')
 export type RunOptions = {
 	id: string
 	[system]?: boolean
+	retry?: number // TODO: more. Can be a function based on input? backoff duration number, or a function that returns a number based on # of retries and input?
 	// timeout
-	// retries
 	// concurrency
 	// ...
 }
@@ -218,212 +218,25 @@ export class Job<
 	/** @package */
 	[exec](registrationContext: RegistrationContext, task: Task, steps: Step[]): Promise<void> {
 		const input = JSON.parse(task.input) as In
-		if (!task.started) {
-			this.#emitter.emit('start', { input }, { input: task.input })
-		} else {
-			this.#emitter.emit('run', { input }, { input: task.input })
-		}
-		const promises: Promise<any>[] = []
-		const indexes = {
-			system: {} as Record<string, number>,
-			user: {} as Record<string, number>
-		} as const
-		const getIndex = (id: string, system: boolean) => {
-			const ind = system ? indexes.system : indexes.user
-			const i = ind[id] ?? 0
-			ind[id] = i + 1
-			return i
-		}
-		const run: ExecutionContext['run'] = async (options, fn) => {
-			const index = getIndex(options.id, options[system] ?? false)
-			const step = `${options[system] ? 'system' : 'user'}/${options.id}#${index}`
-			const entry = steps.find(s => s.step === step)
-			if (entry) {
-				if (entry.status === 'completed') {
-					if (!entry.data) return
-					return JSON.parse(entry.data)
-				} else if (entry.status === 'failed') {
-					// TODO: handle retries
-					if (!entry.data) throw new Error('Step marked as failed in storage, but no error data found')
-					throw hydrateError(entry.data)
-				}
-			}
-			let delegateToNextTick = true
-			const canRetry = false // TODO
-			let syncResult: Data
-			let syncError: unknown
-			const onSuccess = (data: Data) => {
-				return syncOrPromise<void>(resolve => {
-					registrationContext.recordStep(
-						task,
-						{ step, status: 'completed', data: JSON.stringify(data) },
-						resolve
-					)
-				})
-			}
-			const onError = (error: unknown) => {
-				return syncOrPromise<void>(resolve => {
-					registrationContext.recordStep(
-						task,
-						{ step, status: 'failed', data: serializeError(error) },
-						resolve
-					)
-				})
-			}
-			try {
-				const maybePromise = execution.run(task.id, fn)
-				if (isPromise(maybePromise)) {
-					promises.push(new Promise<Data>(resolve =>
-						registrationContext.recordStep(
-							task,
-							{ step, status: 'running', data: null },
-							() => resolve(maybePromise)
-						))
-						.then(onSuccess)
-						.catch(onError)
-					)
-				} else {
-					const successMaybePromise = onSuccess(maybePromise)
-					if (isPromise(successMaybePromise)) {
-						promises.push(successMaybePromise)
-					} else {
-						delegateToNextTick = false
-						syncResult = maybePromise
-					}
-				}
-			} catch (err) {
-				const errorMaybePromise = onError(err)
-				if (isPromise(errorMaybePromise)) {
-					promises.push(errorMaybePromise)
-				} else {
-					delegateToNextTick = canRetry
-					syncError = err
-				}
-			}
-			if (delegateToNextTick) {
-				await Promise.resolve() // let parallel tasks resolve too
-				throw interrupt
-			}
-			if (syncError) throw syncError
-			return syncResult
-		}
-		const sleep: ExecutionContext['sleep'] = async (ms) => {
-			const index = getIndex('sleep', true)
-			const step = `system/sleep#${index}`
-			const entry = steps.find(s => s.step === step)
-			if (entry) {
-				if (entry.status === 'completed') return
-				if (entry.sleep_done === null) throw new Error('Sleep step already created, but no duration found')
-				if (entry.sleep_done) {
-					const maybePromise = syncOrPromise<void>(resolve => {
-						registrationContext.recordStep(
-							task,
-							{ step, status: 'completed', data: null, sleep_for: entry.sleep_for },
-							resolve
-						)
-					})
-					if (isPromise(maybePromise)) {
-						promises.push(maybePromise)
-						return maybePromise
-					}
-					return
-				}
-				await Promise.resolve()
-				throw interrupt
-			}
-			const status = ms <= 0 ? 'completed' : 'stalled'
-			const maybePromise = syncOrPromise<void>(resolve => {
-				registrationContext.recordStep(
-					task,
-					{ step, status, data: null, sleep_for: ms / 1000 },
-					resolve
-				)
-			})
-			if (isPromise(maybePromise)) {
-				promises.push(maybePromise)
-			}
-			await Promise.resolve()
-			throw interrupt
-		}
-		const waitFor: ExecutionContext['waitFor'] = async (instance, event, options) => {
-			const name = `waitFor::${instance.type}::${instance.id}::${event}`
-			const index = getIndex(name, true)
-			const step = `system/${name}#${index}`
-			const entry = steps.find(s => s.step === step)
 
-			if (entry) {
-				if (entry.status === 'completed') {
-					if (!entry.data) return
-					return JSON.parse(entry.data)
-				} else if (entry.status === 'failed') {
-					// TODO: handle retries
-					if (!entry.data) throw new Error('Step marked as failed in storage, but no error data found')
-					throw hydrateError(entry.data)
-				} else if (entry.status === 'waiting') {
-					const maybePromise = syncOrPromise<string>(resolve => {
-						registrationContext.resolveEvent(entry, resolve)
-					})
-					if (isPromise(maybePromise)) {
-						promises.push(maybePromise)
-						await Promise.resolve()
-						throw interrupt
-					}
-					return JSON.parse(maybePromise as string)
-				} else {
-					throw new Error(`Unexpected waitFor step status ${entry.status}`)
-				}
+		const executionContext = makeExecutionContext(registrationContext, task, steps)
+
+		const promise = execution.run(executionContext, async () => {
+			if (!task.started) {
+				this.#emitter.emit('start', { input }, { input: task.input })
+			} else {
+				this.#emitter.emit('run', { input }, { input: task.input })
 			}
 
-			const key = instance instanceof Job
-				? `job/${instance.id}/${event}`
-				: `pipe/${instance.id}`
-
-			const maybePromise = syncOrPromise<void>(resolve => {
-				registrationContext.recordStep(
-					task,
-					{
-						step,
-						status: 'waiting',
-						data: null,
-						wait_for: key,
-						wait_retroactive: options.retroactive ?? true,
-						wait_filter: options.filter ? JSON.stringify(options.filter) : '{}' // TODO: query might be more performant if we supported the null filter case
-					},
-					resolve
-				)
-			})
-			if (isPromise(maybePromise)) {
-				promises.push(maybePromise)
-			}
-			await Promise.resolve()
-			throw interrupt
-		}
-		const dispatch: ExecutionContext['dispatch'] = (instance, data) => {
-			run({
-				id: `dispatch-${instance.type}-${instance.id}`,
-				[system]: true,
-				// retry 0
-			}, () => {
-				instance.dispatch(data)
-			})
-		}
-		const invoke: ExecutionContext['invoke'] = async (job, input) => {
-			const promise = waitFor(job, 'settled', { filter: input })
-			dispatch(job, input)
-			const { result, error } = (await promise) as { result: Data, error: unknown }
-			if (error) throw error
-			return result
-		}
-
-		const promise = execution.run({ run, sleep, waitFor, invoke, dispatch }, async () => {
 			let output: Data
+
 			try {
 				let validInput: Data = input
 				if (this.input) {
-					validInput = await run({
+					validInput = await executionContext.run({
 						id: 'parse-input',
 						[system]: true,
-						// retry 0
+						retry: 0
 					}, () => {
 						try {
 							return this.input!.parse(input)
@@ -433,13 +246,13 @@ export class Job<
 					})
 				}
 
-				output = await this.#fn(input)
+				output = await this.#fn(validInput)
 
 				if (this.output) {
-					output = await run({
+					output = await executionContext.run({
 						id: 'parse-output',
 						[system]: true,
-						// retry 0
+						retry: 0
 					}, () => {
 						try {
 							return this.output!.parse(output)
@@ -450,7 +263,7 @@ export class Job<
 				}
 			} catch (error) {
 				if (isInterrupt(error)) {
-					return Promise.allSettled(promises)
+					return Promise.allSettled(executionContext.promises)
 						.then(() => new Promise(setImmediate)) // allow multiple jobs finishing a step on the same tick to continue in priority order
 						.then(() => {
 							// TODO: handle canceled task
@@ -477,6 +290,218 @@ export class Job<
 
 		return promise
 	}
+}
+
+function makeExecutionContext(registrationContext: RegistrationContext, task: Task, steps: Step[]): ExecutionContext {
+	const promises: Promise<any>[] = []
+
+	const indexes = {
+		system: {} as Record<string, number>,
+		user: {} as Record<string, number>
+	} as const
+
+	const getIndex = (id: string, system: boolean) => {
+		const ind = system ? indexes.system : indexes.user
+		const i = ind[id] ?? 0
+		ind[id] = i + 1
+		return i
+	}
+
+	const run: ExecutionContext['run'] = async (options, fn) => {
+		const index = getIndex(options.id, options[system] ?? false)
+		const step = `${options[system] ? 'system' : 'user'}/${options.id}#${index}`
+		const entry = steps.find(s => s.step === step)
+		if (entry) {
+			if (entry.status === 'completed') {
+				if (!entry.data) return
+				return JSON.parse(entry.data)
+			} else if (entry.status === 'failed') {
+				if (!entry.data) throw new Error('Step marked as failed in storage, but no error data found')
+				throw hydrateError(entry.data)
+			}
+		}
+
+		const allowedAttempts = options.retry ?? 3
+		const runs = (entry?.runs ?? 0) + 1
+		let delegateToNextTick = true
+		let canRetry = runs < allowedAttempts
+		let syncResult: Data
+		let syncError: unknown
+
+		const onSuccess = (data: Data) => {
+			return syncOrPromise<void>(resolve => {
+				registrationContext.recordStep(
+					task,
+					{ step, status: 'completed', data: JSON.stringify(data), runs },
+					resolve
+				)
+			})
+		}
+		const onError = (error: unknown) => {
+			if (error instanceof NonRecoverableError) canRetry = false
+			return syncOrPromise<void>(resolve => {
+				const status = canRetry ? 'pending' : 'failed'
+				const data = canRetry ? null : serializeError(error)
+				registrationContext.recordStep(
+					task,
+					{ step, status, data, runs },
+					resolve
+				)
+			})
+		}
+
+		try {
+			const maybePromise = execution.run(task.id, fn)
+			if (isPromise(maybePromise)) {
+				promises.push(new Promise<Data>(resolve =>
+					registrationContext.recordStep(
+						task,
+						{ step, status: 'running', data: null, runs },
+						() => resolve(maybePromise)
+					))
+					.then(onSuccess)
+					.catch(onError)
+				)
+			} else {
+				const successMaybePromise = onSuccess(maybePromise)
+				if (isPromise(successMaybePromise)) {
+					promises.push(successMaybePromise)
+				} else {
+					delegateToNextTick = false
+					syncResult = maybePromise
+				}
+			}
+		} catch (err) {
+			const errorMaybePromise = onError(err)
+			if (isPromise(errorMaybePromise)) {
+				promises.push(errorMaybePromise)
+			} else {
+				delegateToNextTick = canRetry
+				syncError = err
+			}
+		}
+
+		if (delegateToNextTick) {
+			await Promise.resolve() // let parallel tasks resolve too
+			throw interrupt
+		}
+		if (syncError) throw syncError
+		return syncResult
+	}
+
+	const sleep: ExecutionContext['sleep'] = async (ms) => {
+		const index = getIndex('sleep', true)
+		const step = `system/sleep#${index}`
+		const entry = steps.find(s => s.step === step)
+		if (entry) {
+			if (entry.status === 'completed') return
+			if (entry.sleep_done === null) throw new Error('Sleep step already created, but no duration found')
+			if (entry.sleep_done) {
+				const maybePromise = syncOrPromise<void>(resolve => {
+					registrationContext.recordStep(
+						task,
+						{ step, status: 'completed', data: null, sleep_for: entry.sleep_for, runs: 0 },
+						resolve
+					)
+				})
+				if (isPromise(maybePromise)) {
+					promises.push(maybePromise)
+					return maybePromise
+				}
+				return
+			}
+			await Promise.resolve()
+			throw interrupt
+		}
+		const status = ms <= 0 ? 'completed' : 'stalled'
+		const maybePromise = syncOrPromise<void>(resolve => {
+			registrationContext.recordStep(
+				task,
+				{ step, status, data: null, sleep_for: ms / 1000, runs: 0 },
+				resolve
+			)
+		})
+		if (isPromise(maybePromise)) {
+			promises.push(maybePromise)
+		}
+		await Promise.resolve()
+		throw interrupt
+	}
+
+	const waitFor: ExecutionContext['waitFor'] = async (instance, event, options) => {
+		const name = `waitFor::${instance.type}::${instance.id}::${event}`
+		const index = getIndex(name, true)
+		const step = `system/${name}#${index}`
+		const entry = steps.find(s => s.step === step)
+
+		if (entry) {
+			if (entry.status === 'completed') {
+				if (!entry.data) return
+				return JSON.parse(entry.data)
+			} else if (entry.status === 'failed') {
+				// TODO: handle retries
+				if (!entry.data) throw new Error('Step marked as failed in storage, but no error data found')
+				throw hydrateError(entry.data)
+			} else if (entry.status === 'waiting') {
+				const maybePromise = syncOrPromise<string>(resolve => {
+					registrationContext.resolveEvent(entry, resolve)
+				})
+				if (isPromise(maybePromise)) {
+					promises.push(maybePromise)
+					await Promise.resolve()
+					throw interrupt
+				}
+				return JSON.parse(maybePromise as string)
+			} else {
+				throw new Error(`Unexpected waitFor step status ${entry.status}`)
+			}
+		}
+
+		const key = instance instanceof Job
+			? `job/${instance.id}/${event}`
+			: `pipe/${instance.id}`
+
+		const maybePromise = syncOrPromise<void>(resolve => {
+			registrationContext.recordStep(
+				task,
+				{
+					step,
+					status: 'waiting',
+					data: null,
+					wait_for: key,
+					wait_retroactive: options.retroactive ?? true,
+					wait_filter: options.filter ? JSON.stringify(options.filter) : '{}', // TODO: query might be more performant if we supported the null filter case
+					runs: 0 // TODO: handle retries??
+				},
+				resolve
+			)
+		})
+		if (isPromise(maybePromise)) {
+			promises.push(maybePromise)
+		}
+		await Promise.resolve()
+		throw interrupt
+	}
+
+	const dispatch: ExecutionContext['dispatch'] = (instance, data) => {
+		run({
+			id: `dispatch-${instance.type}-${instance.id}`,
+			[system]: true,
+			// retry 0
+		}, () => {
+			instance.dispatch(data)
+		})
+	}
+
+	const invoke: ExecutionContext['invoke'] = async (job, input) => {
+		const promise = waitFor(job, 'settled', { filter: input })
+		dispatch(job, input)
+		const { result, error } = (await promise) as { result: Data, error: unknown }
+		if (error) throw error
+		return result
+	}
+
+	return { run, sleep, waitFor, dispatch, invoke, promises }
 }
 
 /**

@@ -12,7 +12,7 @@ export interface RegistrationContext {
 	resolveTask<T>(task: Task, status: 'completed' | 'cancelled', data: Data, cb: () => T): T | Promise<T>
 	resolveTask<T>(task: Task, status: 'failed', data: unknown, cb: () => T): T | Promise<T>
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
-	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for' | 'wait_for' | 'wait_filter' | 'wait_retroactive'>, cb: () => T): T | Promise<T>
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'>, cb: () => T): T | Promise<T>
 	recordEvent(key: string, input: string, data: string): void
 	resolveEvent<T>(step: Step, cb: (data: string) => T): T | Promise<T>
 	triggerJobsFromPipe(pipe: Pipe<string, any>, input: InputData): void
@@ -43,12 +43,13 @@ export interface ExecutionContext {
 	waitFor(instance: Job | Pipe, event: string, options: WaitForOptions<InputData>): Promise<Data>
 	invoke(job: Job, data: InputData): Promise<Data>
 	dispatch(instance: Job | Pipe, data: InputData): void
+	promises: Promise<unknown>[]
 }
 
 /**
  * Context provided to bridge over user code at the root level of a job script
  * - defined in `Job({}, () => { <here> })`
- * - undefined inside `Job.run({}, () => { <here> })`
+ * - number (storage task id) inside `Job.run({}, () => { <here> })`
  * 
  * ```ts
  * new Job({}, async () => {

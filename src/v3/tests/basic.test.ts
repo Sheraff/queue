@@ -213,12 +213,7 @@ test('step error', async (t) => {
 		id: 'syncJob',
 		input: z.object({ a: z.number() }),
 	}, async () => {
-		await Job.run({
-			id: 'add-one', backoff: (attempt) => {
-				console.log('attempt', attempt)
-				return 20
-			}
-		}, () => {
+		await Job.run({ id: 'add-one', backoff: 20 }, () => {
 			throw new CustomError('Step error')
 		})
 	})

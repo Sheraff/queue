@@ -35,7 +35,7 @@ export function serialize(object: Data): string {
 	return `{${values}}`
 };
 
-// TODO: use `serialize-error` package instead
+// TODO: use `serialize-error` package instead?
 export function serializeError(error: unknown): string {
 	const e = error instanceof Error
 		? error
@@ -43,6 +43,7 @@ export function serializeError(error: unknown): string {
 	const cause = e.cause
 	if (cause instanceof Error) {
 		return JSON.stringify({
+			name: cause.name,
 			message: cause.message,
 			stack: cause.stack,
 			cause: cause.cause ? serializeError(cause) : undefined,
@@ -50,6 +51,7 @@ export function serializeError(error: unknown): string {
 		})
 	}
 	return JSON.stringify({
+		name: e.name,
 		message: e.message,
 		stack: e.stack,
 	})
@@ -81,6 +83,7 @@ export class NonRecoverableError extends Error {
 export function hydrateError(serialized: string): Error {
 	const obj = JSON.parse(serialized)
 	const error = new Error(obj.message)
+	error.name = obj.name
 	error.stack = obj.stack
 	if (obj.cause) error.cause = hydrateError(obj.cause)
 	return error

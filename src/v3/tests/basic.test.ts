@@ -194,3 +194,37 @@ test.describe('events', () => {
 		await queue.close()
 	})
 })
+
+test('step error', async (t) => {
+	class CustomError extends Error {
+		override name = 'CustomError'
+	}
+
+	const aaa = new Job({
+		id: 'aaa',
+		input: z.object({ a: z.number() }),
+	}, async () => {
+		await Job.run('add-one', async () => {
+			throw new CustomError('Step error')
+		})
+	})
+
+	const queue = new Queue({
+		id: 'basic',
+		jobs: { aaa },
+		storage: new SQLiteStorage()
+	})
+
+
+	let runs = 1
+	aaa.emitter.on('run', () => runs++)
+
+	await assert.rejects(invoke(queue.jobs.aaa, { a: 1 }), { message: 'Step error', name: 'CustomError' })
+	t.diagnostic(`Runs to complete the job: ${runs}`)
+	runs = 1
+	// @ts-expect-error -- purposefully testing passing a string
+	await assert.rejects(invoke(queue.jobs.aaa, { a: '1' }), { message: 'Input parsing failed', name: 'NonRecoverableError' })
+	t.diagnostic(`Runs to complete the job: ${runs}`)
+
+	await queue.close()
+})

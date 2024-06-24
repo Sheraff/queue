@@ -3,7 +3,7 @@ import type { Data, DeepPartial, InputData, Validator } from "./types"
 import { Pipe, type PipeInto } from "./pipe"
 import { execution, registration, type ExecutionContext, type RegistrationContext } from "./context"
 import type { Step, Task } from "./storage"
-import { hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError, serialize } from "./utils"
+import { hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError, serialize, serializeError } from "./utils"
 import parseMs, { type StringValue as DurationString } from 'ms'
 
 type CancelReason =
@@ -265,7 +265,7 @@ export class Job<
 				return syncOrPromise<void>(resolve => {
 					registrationContext.recordStep(
 						task,
-						{ step, status: 'failed', data: JSON.stringify(error) },
+						{ step, status: 'failed', data: serializeError(error) },
 						resolve
 					)
 				})

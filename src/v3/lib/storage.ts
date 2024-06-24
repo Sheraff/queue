@@ -56,9 +56,12 @@ export type Step = {
 	status: StepStatus
 	runs: number
 	created_at: number
+
 	/** used on write to set a sleep timer */
 	sleep_for?: number | null
-	/** used on read to know if sleep timer expired */
+	/** actual value stored in storage */
+	sleep_until?: number | null
+	/** computed on read to know if sleep timer expired */
 	sleep_done: boolean | null
 
 	wait_for?: string | null // 'job/aaa/settled' | 'pipe/bbb'
@@ -101,7 +104,7 @@ export interface Storage {
 	/** Set the task back to 'pending' after the step promises it was waiting for resolved. It can be picked up again. */
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
 	/** Insert or update a step based on unique index queue+job+key+step */
-	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'>, cb: () => T): T | Promise<T>
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & { sleep_for?: number | null }, cb: () => T): T | Promise<T>
 	/** Append event to table */
 	recordEvent<T>(queue: string, key: string, input: string, data: string, cb?: () => T): T | Promise<T>
 	/** Called with a step in 'waiting' status, should retrieve the 1st event that satisfies the `wait_` conditions */
@@ -167,7 +170,7 @@ export class SQLiteStorage implements Storage {
 				runs INTEGER NOT NULL DEFAULT 0,
 				created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 				updated_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
-				sleep_for INTEGER,
+				sleep_until INTEGER,
 				wait_for TEXT,
 				wait_filter JSON,
 				wait_retroactive BOOLEAN,
@@ -209,8 +212,8 @@ export class SQLiteStorage implements Storage {
 						AND ((
 							-- step is stalled and sleep timer is not expired
 							status = 'stalled'
-							AND sleep_for IS NOT NULL
-							AND (created_at + sleep_for > unixepoch('subsec'))
+							AND sleep_until IS NOT NULL
+							AND (sleep_until > unixepoch('subsec'))
 						) OR (
 							-- step is waiting for an event
 							status = 'waiting'
@@ -264,14 +267,14 @@ export class SQLiteStorage implements Storage {
 		`)
 
 		this.#getNextFutureTaskStmt = this.#db.prepare<{ queue: string }, { seconds: number }>(/* sql */ `
-			SELECT (steps.created_at + steps.sleep_for - unixepoch('subsec')) as seconds
+			SELECT (steps.sleep_until - unixepoch('subsec')) as seconds
 			FROM ${tasksTable} tasks
 			LEFT JOIN ${stepsTable} steps ON steps.task_id = tasks.id
 			WHERE
 				tasks.queue = @queue
 				AND tasks.status = 'pending'
 				AND steps.status = 'stalled'
-				AND steps.sleep_for IS NOT NULL
+				AND steps.sleep_until IS NOT NULL
 			ORDER BY seconds ASC
 			LIMIT 1
 		`)
@@ -289,8 +292,8 @@ export class SQLiteStorage implements Storage {
 			SELECT
 				*,
 				CASE
-					WHEN sleep_for IS NULL THEN NULL
-					WHEN ((created_at + sleep_for) <= unixepoch('subsec')) THEN TRUE
+					WHEN sleep_until IS NULL THEN NULL
+					WHEN ((sleep_until) <= unixepoch('subsec')) THEN TRUE
 					ELSE FALSE
 				END sleep_done
 			FROM ${stepsTable}
@@ -353,7 +356,7 @@ export class SQLiteStorage implements Storage {
 				runs,
 				task_id,
 				status,
-				sleep_for,
+				sleep_until,
 				wait_for,
 				wait_filter,
 				wait_retroactive,
@@ -367,7 +370,7 @@ export class SQLiteStorage implements Storage {
 				@runs,
 				@task_id,
 				@status,
-				@sleep_for,
+				CASE @sleep_for WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @sleep_for) END,
 				@wait_for,
 				@wait_filter,
 				@wait_retroactive,
@@ -378,6 +381,7 @@ export class SQLiteStorage implements Storage {
 				status = @status,
 				updated_at = unixepoch('subsec'),
 				runs = @runs,
+				sleep_until = CASE @sleep_for WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @sleep_for) END,
 				data = @data
 		`)
 
@@ -505,7 +509,7 @@ export class SQLiteStorage implements Storage {
 		return cb() as T
 	}
 
-	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'>, cb: () => T): T {
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & { sleep_for?: number }, cb: () => T): T {
 		this.#recordStepStmt.run({
 			queue: task.queue,
 			job: task.job,

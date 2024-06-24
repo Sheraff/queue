@@ -204,7 +204,7 @@ test('step error', async (t) => {
 		id: 'asyncJob',
 		input: z.object({ a: z.number() }),
 	}, async () => {
-		await Job.run('add-one', async () => {
+		await Job.run({ id: 'add-one', backoff: 20 }, async () => {
 			throw new CustomError('Step error')
 		})
 	})
@@ -213,7 +213,12 @@ test('step error', async (t) => {
 		id: 'syncJob',
 		input: z.object({ a: z.number() }),
 	}, async () => {
-		await Job.run('add-one', () => {
+		await Job.run({
+			id: 'add-one', backoff: (attempt) => {
+				console.log('attempt', attempt)
+				return 20
+			}
+		}, () => {
 			throw new CustomError('Step error')
 		})
 	})
@@ -229,25 +234,39 @@ test('step error', async (t) => {
 	asyncJob.emitter.on('run', () => runs++)
 	syncJob.emitter.on('run', () => runs++)
 
+	performance.mark('before-async')
 	await assert.rejects(invoke(queue.jobs.asyncJob, { a: 1 }), { message: 'Step error', name: 'CustomError' })
-	t.diagnostic(`Runs to complete the job: ${runs}`)
+	performance.mark('after-async')
+	t.diagnostic(`Runs to complete the job: ${runs} (async)`)
+	const asyncDuration = performance.measure('async', 'before-async', 'after-async').duration
+	t.diagnostic(`Duration: ${asyncDuration.toFixed(2)}ms`)
+	assert(asyncDuration > 40, 'Min. 40ms total: 3 retry implies 2 intervals of 20ms')
+	assert(asyncDuration < 60, 'Max. 60ms total: 3 retry implies 2 intervals of 20ms')
+	performance.clearMarks()
 	assert.strictEqual(runs, 4, 'Job should have been retried 3 times (+1 because async Job.run needs a loop to resolve)')
 
 	runs = 1
 	// @ts-expect-error -- purposefully testing passing a string
 	await assert.rejects(invoke(queue.jobs.asyncJob, { a: '1' }), { message: 'Input parsing failed', name: 'NonRecoverableError' })
-	t.diagnostic(`Runs to complete the job: ${runs}`)
+	t.diagnostic(`Runs to complete the job: ${runs} (async, non recoverable)`)
 	assert.strictEqual(runs, 1, 'Job should have been retried 0 times')
 
 	runs = 1
+	performance.mark('before-sync')
 	await assert.rejects(invoke(queue.jobs.syncJob, { a: 1 }), { message: 'Step error', name: 'CustomError' })
-	t.diagnostic(`Runs to complete the job: ${runs}`)
+	performance.mark('after-sync')
+	t.diagnostic(`Runs to complete the job: ${runs} (sync)`)
+	const syncDuration = performance.measure('sync', 'before-sync', 'after-sync').duration
+	t.diagnostic(`Duration: ${syncDuration.toFixed(2)}ms`)
+	assert(syncDuration > 40, 'Min. 40ms total: 3 retry implies 2 intervals of 20ms')
+	assert(syncDuration < 60, 'Max. 60ms total: 3 retry implies 2 intervals of 20ms')
+	performance.clearMarks()
 	assert.strictEqual(runs, 3, 'Job should have been retried 3 times')
 
 	runs = 1
 	// @ts-expect-error -- purposefully testing passing a string
 	await assert.rejects(invoke(queue.jobs.syncJob, { a: '1' }), { message: 'Input parsing failed', name: 'NonRecoverableError' })
-	t.diagnostic(`Runs to complete the job: ${runs}`)
+	t.diagnostic(`Runs to complete the job: ${runs} (sync, non recoverable)`)
 	assert.strictEqual(runs, 1, 'Job should have been retried 0 times')
 
 	await queue.close()

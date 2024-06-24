@@ -25,7 +25,23 @@ const system = Symbol('system')
 export type RunOptions = {
 	id: string
 	[system]?: boolean
-	retry?: number // TODO: more. Can be a function based on input? backoff duration number, or a function that returns a number based on # of retries and input?
+	/**
+	 * Number of attempts, including the 1st one. Any number below 1 is equivalent to 1.
+	 * 
+	 * If it's a function, it will be called with number of times the step has been run already,
+	 * and the error that caused the last one to fail.
+	 * 
+	 * Defaults to 3 attempts.
+	 */
+	retry?: number | ((attempt: number, error: unknown) => boolean)
+	/**
+	 * Delay in milliseconds before next attempt.
+	 * 
+	 * If it's a function, it will be called with number of times the step has been run already.
+	 * 
+	 * Defaults to 100ms.
+	 */
+	backoff?: number | ((attempt: number) => number)
 	// timeout
 	// concurrency
 	// ...
@@ -318,13 +334,18 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 			} else if (entry.status === 'failed') {
 				if (!entry.data) throw new Error('Step marked as failed in storage, but no error data found')
 				throw hydrateError(entry.data)
+			} else if (entry.status === 'stalled') {
+				if (entry.sleep_done === null) throw new Error('Sleep step already created, but no duration found')
+				if (!entry.sleep_done) {
+					await Promise.resolve()
+					throw interrupt
+				}
 			}
 		}
 
-		const allowedAttempts = options.retry ?? 3
 		const runs = (entry?.runs ?? 0) + 1
 		let delegateToNextTick = true
-		let canRetry = runs < allowedAttempts
+		let canRetry = false
 		let syncResult: Data
 		let syncError: unknown
 
@@ -339,12 +360,35 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		}
 		const onError = (error: unknown) => {
 			if (error instanceof NonRecoverableError) canRetry = false
+			else {
+				const retry = options.retry ?? 3
+				if (typeof retry === 'number') canRetry = runs < retry
+				else canRetry = retry(runs, error)
+			}
 			return syncOrPromise<void>(resolve => {
-				const status = canRetry ? 'pending' : 'failed'
-				const data = canRetry ? null : serializeError(error)
+				if (!canRetry) {
+					return registrationContext.recordStep(
+						task,
+						{ step, status: 'failed', data: serializeError(error), runs },
+						resolve
+					)
+				}
+				const delay = Math.max(
+					0,
+					typeof options.backoff === 'function'
+						? options.backoff(runs)
+						: options.backoff ?? 100
+				)
+				if (!delay) {
+					return registrationContext.recordStep(
+						task,
+						{ step, status: 'pending', data: null, runs },
+						resolve
+					)
+				}
 				registrationContext.recordStep(
 					task,
-					{ step, status, data, runs },
+					{ step, status: 'stalled', data: null, runs, sleep_for: delay / 1000 },
 					resolve
 				)
 			})
@@ -439,7 +483,6 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				if (!entry.data) return
 				return JSON.parse(entry.data)
 			} else if (entry.status === 'failed') {
-				// TODO: handle retries
 				if (!entry.data) throw new Error('Step marked as failed in storage, but no error data found')
 				throw hydrateError(entry.data)
 			} else if (entry.status === 'waiting') {
@@ -471,7 +514,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 					wait_for: key,
 					wait_retroactive: options.retroactive ?? true,
 					wait_filter: options.filter ? JSON.stringify(options.filter) : '{}', // TODO: query might be more performant if we supported the null filter case
-					runs: 0 // TODO: handle retries??
+					runs: 0
 				},
 				resolve
 			)

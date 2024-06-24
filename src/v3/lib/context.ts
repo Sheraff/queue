@@ -8,7 +8,7 @@ import type { Step, Task } from "./storage"
 export interface RegistrationContext {
 	queue: Queue
 	checkRegistration(instance: Job<any, any, any> | Pipe<any, any>): void | never
-	addTask<T>(job: Job, data: Data, cb: (key: string, inserted: boolean) => T): T | Promise<T>
+	addTask<T>(job: Job, data: Data, parent: number | undefined, cb: (key: string, inserted: boolean) => T): T | Promise<T>
 	resolveTask<T>(task: Task, status: 'completed' | 'cancelled', data: Data, cb: () => T): T | Promise<T>
 	resolveTask<T>(task: Task, status: 'failed', data: unknown, cb: () => T): T | Promise<T>
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
@@ -67,4 +67,4 @@ export interface ExecutionContext {
  *
  * Defined by `Queue` at the start of execution, used by `Job.[run|sleep|...]`
  */
-export const execution = new AsyncLocalStorage<ExecutionContext | null>()
+export const execution = new AsyncLocalStorage<ExecutionContext | number>()

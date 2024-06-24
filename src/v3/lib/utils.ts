@@ -2,7 +2,7 @@ import { createHash } from "crypto"
 import type { Data } from "./types"
 
 // https://github.com/erdtman/canonicalize/blob/master/lib/canonicalize.js
-function serialize(object: Data): string {
+export function serialize(object: Data): string {
 	if (typeof object === 'number' && isNaN(object)) {
 		throw new Error('NaN is not allowed')
 	}

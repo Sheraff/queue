@@ -15,6 +15,8 @@ type TaskStatus =
 	| 'cancelled'
 
 export type Task = {
+	id: number
+	parent_id: number | null
 	queue: string
 	job: string
 	key: string
@@ -40,6 +42,7 @@ type StepStatus =
 	| 'failed'
 
 export type Step = {
+	id: number
 	queue: string
 	job: string
 	key: string
@@ -69,7 +72,7 @@ export interface Storage {
 	/** Simply return the full Task based on unique index queue+job+key */
 	getTask<T>(queue: string, job: string, key: string, cb: (task: Task | undefined) => T): T | Promise<T>
 	/** Create a new Task, initial status is 'pending'. Returns `true` if the task was created, and `false` if it already existed. */
-	addTask<T>(task: { queue: string, job: string, key: string, input: string }, cb?: (inserted: boolean) => T): T | Promise<T>
+	addTask<T>(task: { queue: string, job: string, key: string, input: string, parent_id: number | null }, cb?: (inserted: boolean) => T): T | Promise<T>
 	/**
 	 * Exclusive transaction to:
 	 * - retrieve the next task to run immediately, if none, return undefined;
@@ -296,9 +299,7 @@ export class SQLiteStorage implements Storage {
 		this.#getNextTaskTx = this.#db.transaction((queue: string) => {
 			const [task, next] = getNextTaskStmt.all({ queue })
 			if (!task) return
-			// @ts-expect-error -- id exists, but not exposed in the type
 			reserveTaskStmt.run(task)
-			// @ts-expect-error -- id exists, but not exposed in the type
 			const steps = getTaskStepDataStmt.all(task)
 			return [task, steps, !!next] as [Task, Step[], boolean]
 		})
@@ -322,8 +323,8 @@ export class SQLiteStorage implements Storage {
 
 		this.#addTaskStmt = this.#db.prepare<Task, undefined | 1>(/* sql */ `
 			INSERT OR IGNORE
-			INTO ${tasksTable} (queue, job, key, input, status)
-			VALUES (@queue, @job, @key, @input, 'pending')
+			INTO ${tasksTable} (queue, job, key, input, parent_id, status)
+			VALUES (@queue, @job, @key, @input, @parent_id, 'pending')
 			RETURNING 1
 		`)
 
@@ -450,7 +451,7 @@ export class SQLiteStorage implements Storage {
 	#getNextFutureTaskStmt: BetterSqlite3.Statement<{ queue: string }, { seconds: number } | undefined>
 	#resolveTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, status: TaskStatus, data: string | null }>
 	#loopTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string }>
-	#addTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, input: string }, undefined | 1>
+	#addTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, input: string, parent_id: number | null }, undefined | 1>
 	#recordStepStmt: BetterSqlite3.Statement<{
 		queue: string
 		job: string
@@ -472,7 +473,7 @@ export class SQLiteStorage implements Storage {
 		return cb(task)
 	}
 
-	addTask<T>(task: { queue: string, job: string, key: string, input: string }, cb?: (inserted: boolean) => T): T {
+	addTask<T>(task: { queue: string, job: string, key: string, input: string, parent_id: number | null }, cb?: (inserted: boolean) => T): T {
 		const inserted = this.#addTaskStmt.get(task)
 		return cb?.(Boolean(inserted)) as T
 	}
@@ -502,7 +503,6 @@ export class SQLiteStorage implements Storage {
 			queue: task.queue,
 			job: task.job,
 			key: task.key,
-			// @ts-expect-error -- id exists, but not exposed in the type
 			task_id: task.id,
 			data: step.data,
 			status: step.status,
@@ -521,7 +521,6 @@ export class SQLiteStorage implements Storage {
 	}
 
 	resolveEvent<T>(step: Step, cb: (data: string | undefined) => T): T {
-		// @ts-expect-error -- id exists, but not exposed in the type
 		const data = this.#resolveStepEventTx.exclusive(step.id)
 		return cb(data)
 	}

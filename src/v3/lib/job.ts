@@ -3,7 +3,7 @@ import type { Data, DeepPartial, InputData, Validator } from "./types"
 import { Pipe, type PipeInto } from "./pipe"
 import { execution, registration, type ExecutionContext, type RegistrationContext } from "./context"
 import type { Step, Task } from "./storage"
-import { hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError } from "./utils"
+import { hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError, serialize } from "./utils"
 
 type CancelReason =
 	| { type: 'timeout', ms: number }
@@ -98,11 +98,12 @@ export class Job<
 
 		this.#emitter.on('trigger', ({ input }, meta) => {
 			opts.onTrigger?.({ input })
-			if (execution.getStore()) throw new Error("Cannot call this method inside a job script. Prefer using `Job.dispatch()`, or calling it inside a `Job.run()`.")
+			const executionContext = execution.getStore()
+			if (typeof executionContext === 'object') throw new Error("Cannot call this method inside a job script. Prefer using `Job.dispatch()`, or calling it inside a `Job.run()`.")
 			const registrationContext = getRegistrationContext()
 			registrationContext.checkRegistration(this)
 			registrationContext.recordEvent(`job/${this.id}/trigger`, meta.input, JSON.stringify({ input }))
-			registrationContext.addTask(this, input, (key, inserted) => {
+			registrationContext.addTask(this, input, executionContext, (key, inserted) => {
 				if (inserted) return
 				registrationContext.queue.storage.getTask(registrationContext.queue.id, this.id, key, (task) => {
 					if (!task) throw new Error('Task not found after insert')
@@ -163,7 +164,7 @@ export class Job<
 	/** @public */
 	dispatch(input: In): void {
 		const _input = input ?? {}
-		this.#emitter.emit('trigger', { input: _input }, { input: JSON.stringify(_input) })
+		this.#emitter.emit('trigger', { input: _input }, { input: serialize(_input) })
 		return
 	}
 
@@ -264,7 +265,7 @@ export class Job<
 				})
 			}
 			try {
-				const maybePromise = execution.run(null, fn)
+				const maybePromise = execution.run(task.id, fn)
 				if (isPromise(maybePromise)) {
 					promises.push(new Promise<Data>(resolve =>
 						registrationContext.recordStep(
@@ -504,7 +505,7 @@ function getRegistrationContext(): RegistrationContext {
 
 function getExecutionContext(): ExecutionContext {
 	const executionContext = execution.getStore()
-	if (executionContext === null) throw new Error("Nested job steps are not allowed.")
+	if (typeof executionContext === 'number') throw new Error("Nested job steps are not allowed.")
 	if (!executionContext) throw new Error("Cannot call this method outside of a job function.")
 	return executionContext
 }

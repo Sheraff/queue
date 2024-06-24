@@ -294,7 +294,7 @@ export class Job<
 			}
 			if (delegateToNextTick) {
 				await Promise.resolve() // let parallel tasks resolve too
-				interrupt()
+				throw interrupt
 			}
 			if (syncError) throw syncError
 			return syncResult
@@ -321,7 +321,7 @@ export class Job<
 					return
 				}
 				await Promise.resolve()
-				interrupt()
+				throw interrupt
 			}
 			const maybePromise = syncOrPromise<void>(resolve => {
 				registrationContext.recordStep(
@@ -334,7 +334,7 @@ export class Job<
 				promises.push(maybePromise)
 			}
 			await Promise.resolve()
-			interrupt()
+			throw interrupt
 		}
 		const waitFor: ExecutionContext['waitFor'] = async (instance, event, options) => {
 			const name = `waitFor::${instance.type}::${instance.id}::${event}`
@@ -357,7 +357,7 @@ export class Job<
 					if (isPromise(maybePromise)) {
 						promises.push(maybePromise)
 						await Promise.resolve()
-						interrupt()
+						throw interrupt
 					}
 					return JSON.parse(maybePromise as string)
 				} else {
@@ -387,7 +387,7 @@ export class Job<
 				promises.push(maybePromise)
 			}
 			await Promise.resolve()
-			interrupt()
+			throw interrupt
 		}
 		const invoke: ExecutionContext['invoke'] = async (job, data) => {
 			return {} as any

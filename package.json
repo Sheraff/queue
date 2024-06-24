@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx --watch src/userland/main.ts",
     "foo": "tsx --watch --test src/v3/tests/**",
-    "bar": "tsx --watch --test src/v3/tests/step.test.ts",
+    "bar": "tsx --watch --test src/v3/tests/triggers.test.ts",
     "test": "tsx --watch --test",
     "test:cov": "tsx --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=lcov.info",
     "tsc": "tsc --noEmit"
@@ -17,6 +17,8 @@
   "license": "ISC",
   "dependencies": {
     "better-sqlite3": "^11.0.0",
+    "ms": "^2.1.3",
+    "serialize-error": "^11.0.3",
     "zod": "3.23.8"
   },
   "devDependencies": {

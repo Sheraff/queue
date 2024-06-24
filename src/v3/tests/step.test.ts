@@ -145,3 +145,34 @@ test('wait for pipe event', async (t) => {
 
 	await queue.close()
 })
+
+test('invoke', async (t) => {
+	let ranA = false
+	const aaa = new Job({
+		id: 'aaa',
+		input: z.object({ in: z.number() }),
+		output: z.object({ foo: z.number() })
+	}, async (input) => {
+		ranA = true
+		return { foo: input.in }
+	})
+
+	const bbb = new Job({
+		id: 'bbb',
+		output: z.object({ bar: z.number() }),
+	}, async () => {
+		const data = await Job.invoke(aaa, { in: 2 })
+		return { bar: data.foo }
+	})
+
+	const queue = new Queue({
+		id: 'invoke',
+		jobs: { aaa, bbb },
+		storage: new SQLiteStorage()
+	})
+
+	const result = await invoke(queue.jobs.bbb, {})
+
+	assert.deepEqual(result, { bar: 2 })
+	assert.equal(ranA, true, 'Job aaa should have ran')
+})

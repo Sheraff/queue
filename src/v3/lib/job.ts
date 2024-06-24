@@ -17,7 +17,7 @@ type EventMap<In extends Data, Out extends Data> = {
 	success: [data: { input: In, result: Out }, meta: { input: string }]
 	error: [data: { input: In, error: unknown }, meta: { input: string }]
 	cancel: [data: { input: In, reason: CancelReason }, meta: { input: string }]
-	settled: [data: { input: In, result: Out | null, error: unknown | null }, meta: { input: string }]
+	settled: [data: { input: In, result: Out | null, error: unknown | null, reason: CancelReason | null }, meta: { input: string }]
 }
 
 const system = Symbol('system')
@@ -86,7 +86,7 @@ export class Job<
 			onSuccess?: (params: { input: In, result: Out }) => void
 			onError?: (params: { input: In, error: unknown }) => void
 			onCancel?: (params: { input: In, reason: CancelReason }) => void
-			onSettled?: (params: { input: In, result: Out | null, error: unknown | null }) => void
+			onSettled?: (params: { input: In, result: Out | null, error: unknown | null, reason: CancelReason | null }) => void
 		},
 		fn: (input: In) => Promise<Out>
 	) {
@@ -130,27 +130,28 @@ export class Job<
 			opts.onSuccess?.({ input, result })
 			const registrationContext = getRegistrationContext()
 			registrationContext.recordEvent(`job/${this.id}/success`, meta.input, JSON.stringify({ input, result }))
-			setImmediate(() => this.#emitter.emit('settled', { input, result, error: null }, meta))
+			setImmediate(() => this.#emitter.emit('settled', { input, result, error: null, reason: null }, meta))
 		})
 
 		this.#emitter.on('error', ({ input, error }, meta) => {
 			opts.onError?.({ input, error })
 			const registrationContext = getRegistrationContext()
 			registrationContext.recordEvent(`job/${this.id}/error`, meta.input, JSON.stringify({ input, error }))
-			setImmediate(() => this.#emitter.emit('settled', { input, result: null, error }, meta))
+			setImmediate(() => this.#emitter.emit('settled', { input, result: null, error, reason: null }, meta))
 		})
 
 		this.#emitter.on('cancel', ({ input }, meta) => {
 			opts.onCancel?.({ input, reason: { type: 'explicit' } })
 			const registrationContext = getRegistrationContext()
-			registrationContext.recordEvent(`job/${this.id}/cancel`, meta.input, JSON.stringify({ input, reason: { type: 'explicit' } }))
-			setImmediate(() => this.#emitter.emit('settled', { input, result: null, error: null }, meta))
+			const reason: CancelReason = { type: 'explicit' } // TODO: add reason
+			registrationContext.recordEvent(`job/${this.id}/cancel`, meta.input, JSON.stringify({ input, reason }))
+			setImmediate(() => this.#emitter.emit('settled', { input, result: null, error: null, reason }, meta))
 		})
 
-		this.#emitter.on('settled', ({ input, result, error }, meta) => {
-			opts.onSettled?.({ input, result, error })
+		this.#emitter.on('settled', ({ input, result, error, reason }, meta) => {
+			opts.onSettled?.({ input, result, error, reason })
 			const registrationContext = getRegistrationContext()
-			registrationContext.recordEvent(`job/${this.id}/settled`, meta.input, JSON.stringify({ input, result, error }))
+			registrationContext.recordEvent(`job/${this.id}/settled`, meta.input, JSON.stringify({ input, result, error, reason }))
 		})
 	}
 
@@ -389,9 +390,6 @@ export class Job<
 			await Promise.resolve()
 			throw interrupt
 		}
-		const invoke: ExecutionContext['invoke'] = async (job, data) => {
-			return {} as any
-		}
 		const dispatch: ExecutionContext['dispatch'] = (instance, data) => {
 			run({
 				id: `dispatch-${instance.type}-${instance.id}`,
@@ -400,6 +398,13 @@ export class Job<
 			}, () => {
 				instance.dispatch(data)
 			})
+		}
+		const invoke: ExecutionContext['invoke'] = async (job, input) => {
+			const promise = waitFor(job, 'settled', { filter: input })
+			dispatch(job, input)
+			const { result, error } = (await promise) as { result: Data, error: unknown }
+			if (error) throw error
+			return result
 		}
 
 		const promise = execution.run({ run, sleep, waitFor, invoke, dispatch }, async () => {
@@ -441,7 +446,6 @@ export class Job<
 						.then(() => new Promise(setImmediate)) // allow multiple jobs finishing a step on the same tick to continue in priority order
 						.then(() => {
 							// TODO: handle canceled task
-							// dispatch 'queue can handle next task' event
 							syncOrPromise<void>(resolve => {
 								registrationContext.requeueTask(task, resolve)
 							})

@@ -41,7 +41,7 @@ export interface ExecutionContext {
 	run<Out extends Data>(options: RunOptions, fn: () => Out | Promise<Out>): Promise<Out>
 	sleep(ms: number): Promise<void>
 	waitFor(instance: Job | Pipe, event: string, options: WaitForOptions<InputData>): Promise<Data>
-	invoke(job: Job, data: Data): Promise<Data>
+	invoke(job: Job, data: InputData): Promise<Data>
 	dispatch(instance: Job | Pipe, data: InputData): void
 }
 

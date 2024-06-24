@@ -58,6 +58,8 @@ export class Job<
 	readonly events = null as unknown as EventMap<In, Out>
 	/** @package */
 	readonly triggers: NoInfer<Array<Pipe<string, InputData> | PipeInto<any, InputData>>> | undefined
+	/** @package */
+	readonly cron: string | string[] | undefined
 
 	readonly #emitter = new EventEmitter<EventMap<In, Out>>()
 	readonly type = 'job'
@@ -80,7 +82,8 @@ export class Job<
 			input?: Validator<In>
 			output?: Validator<Out>
 			triggers?: NoInfer<Array<Pipe<string, In> | PipeInto<any, In>>>
-			cron?: string | string[]
+			/** The job must accept a `{date: '<ISO string>'}` input to use a cron schedule (or no input at all). */
+			cron?: NoInfer<In extends { date: string } ? string | string[] : InputData extends In ? string | string[] : never>
 			onTrigger?: (params: { input: In }) => void
 			onStart?: (params: { input: In }) => void
 			onSuccess?: (params: { input: In, result: Out }) => void
@@ -95,6 +98,7 @@ export class Job<
 		this.input = opts.input ?? null
 		this.output = opts.output ?? null
 		this.triggers = opts.triggers as Array<Pipe<string, InputData> | PipeInto<any, InputData>>
+		this.cron = opts.cron
 
 		this.#emitter.on('trigger', ({ input }, meta) => {
 			opts.onTrigger?.({ input })

@@ -37,3 +37,33 @@ test('pipe trigger', async (t) => {
 
 	await queue.close()
 })
+
+// skipped because it's too long (min duration for a cron is 1s)
+test.skip('cron triggers', async (t) => {
+	let executed = 0
+	const hello = new Job({
+		id: 'hello',
+		input: z.object({ date: z.string().datetime(), foo: z.number().optional() }),
+		cron: ['*/1 * * * * *', '*/1 * * * * *'],
+	}, async () => {
+		await Job.run('a', () => executed++)
+	})
+
+	let triggers = 0
+	hello.emitter.on('trigger', () => triggers++)
+
+	const queue = new Queue({
+		id: 'cron',
+		jobs: { hello },
+		storage: new SQLiteStorage()
+	})
+
+	await new Promise(r => setTimeout(r, 2100))
+
+	t.diagnostic(`Triggered ${triggers} times`)
+	t.diagnostic(`Executed ${executed} times`)
+	assert.strictEqual(executed, 2, 'Step should have been executed once')
+	assert.strictEqual(executed, triggers, 'Step triggers should be debounced')
+
+	await queue.close()
+})

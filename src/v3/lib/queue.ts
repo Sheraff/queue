@@ -6,6 +6,10 @@ import { hash, serializeError } from "./utils"
 
 type SafeKeys<K extends string> = { [k in K]: { id: k } }
 
+interface CronScheduler {
+	(cron: string, cb: (date: Date | string) => void): () => void
+}
+
 export class Queue<
 	const Jobs extends { [key in string]: Job<key> } = { [key in string]: Job<key> },
 	const Pipes extends { [key in string]: Pipe<key, any> } = { [key in string]: Pipe<key> },
@@ -28,8 +32,9 @@ export class Queue<
 		storage: Storage
 		/** how many jobs can be started in parallel, defaults to `Infinity` */
 		parallel?: number
+		/** Any simple cron scheduler can be used, if not provided here, the `node-cron` package will be used instead. */
+		cronScheduler?: CronScheduler
 		// TODO: add logger options
-		// TODO: add cron implementation injection
 		// TODO: add polling frequency (for cases where multiple queue workers are writing to the same storage)
 	}) {
 		this.id = opts.id
@@ -63,6 +68,7 @@ export class Queue<
 		}
 
 		this.#start()
+		this.#cron(opts.cronScheduler)
 	}
 
 	#registrationContext: RegistrationContext = {
@@ -166,6 +172,46 @@ export class Queue<
 		})
 	}
 
+	#cronjobs: Array<() => void> = []
+	async #cron(externalImplementation?: CronScheduler) {
+		const schedule: CronScheduler = externalImplementation
+			|| await import('node-cron')
+				.catch((error: Error) => {
+					throw new Error('To use `cron` triggers on jobs, install "node-cron" or provide a `cronScheduler` to the queue.', { cause: error })
+				})
+				.then(({ schedule }) =>
+					(str: string, cb: (date: Date | string) => void) => {
+						const emitter = schedule(str, cb)
+						return emitter.stop.bind(emitter)
+					}
+				)
+		for (const job of Object.values(this.jobs)) {
+			if (!job.cron) continue
+			if (job.input) {
+				try {
+					job.input.parse({ date: new Date().toISOString() })
+				} catch (error) {
+					throw new Error(`Job ${job.id} has a cron trigger but its input validator does not accept {date: '<ISO string>'} as an input.`)
+				}
+			}
+			const schedules = typeof job.cron === 'string' ? [job.cron] : job.cron
+			let willExec = false
+			for (const string of schedules) {
+				this.#cronjobs.push(schedule(string, (date) => {
+					if (typeof date === 'string') return
+					// in case multiple cron schedules happen to overlap in the same second, we only want to run the job once
+					// for example: every hour '0 * * * *' and every minute '* * * * *' would both run at the same time at the start of the hour
+					if (willExec) return
+					willExec = true
+					setImmediate(() => {
+						willExec = false
+						job.dispatch({ date: date.toISOString() })
+					})
+				}))
+			}
+		}
+	}
+
 	#closed = false
 
 	/**
@@ -188,6 +234,11 @@ export class Queue<
 		if (this.#sleepTimeout) {
 			clearTimeout(this.#sleepTimeout)
 			this.#sleepTimeout = null
+		}
+
+		// stop cron jobs
+		for (const stop of this.#cronjobs) {
+			stop()
 		}
 
 		// let all running jobs finish

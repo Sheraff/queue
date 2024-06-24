@@ -4,6 +4,7 @@ import { Pipe, type PipeInto } from "./pipe"
 import { execution, registration, type ExecutionContext, type RegistrationContext } from "./context"
 import type { Step, Task } from "./storage"
 import { hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError, serialize } from "./utils"
+import parseMs, { type StringValue as DurationString } from 'ms'
 
 type CancelReason =
 	| { type: 'timeout', ms: number }
@@ -182,8 +183,9 @@ export class Job<
 	}
 
 	/** @public */
-	static sleep(ms: number): Promise<void> {
+	static sleep(ms: number | DurationString): Promise<void> {
 		const e = getExecutionContext()
+		if (typeof ms === 'string') ms = parseMs(ms)
 		return e.sleep(ms)
 	}
 

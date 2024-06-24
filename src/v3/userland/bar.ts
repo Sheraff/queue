@@ -6,7 +6,7 @@ export const bar = new Job({
 	id: 'bar',
 }, async (input: { name: string }) => {
 
-	await Job.sleep(10)
+	await Job.sleep("10 ms")
 
 	fooBarPipe.dispatch({ id: 1 })
 

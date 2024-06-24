@@ -22,7 +22,7 @@ export const foo = new Job({
 
 	const data = await Job.waitFor(fooBarPipe)
 
-	await Job.sleep(10)
+	await Job.sleep("1s")
 
 	return a
 })

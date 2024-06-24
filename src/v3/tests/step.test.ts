@@ -11,7 +11,7 @@ test('sleep', async (t) => {
 	const aaa = new Job({
 		id: 'aaa',
 	}, async () => {
-		await Job.sleep(100)
+		await Job.sleep("100 ms")
 	})
 
 	const db = new Database()

@@ -4,6 +4,8 @@ type GenericSerializable = Scalar | undefined | void | GenericSerializable[] | {
 
 export type Data = GenericSerializable
 
+export type InputData = { [key: string]: GenericSerializable } // | undefined
+
 export type Validator<Out = Data> = {
 	parse: (input: any) => Out
 }

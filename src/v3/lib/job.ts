@@ -1,6 +1,6 @@
 import EventEmitter from "events"
-import type { Data, DeepPartial, Validator } from "./types"
-import { Pipe } from "./pipe"
+import type { Data, DeepPartial, InputData, Validator } from "./types"
+import { Pipe, type PipeInto } from "./pipe"
 import { execution, registration, type ExecutionContext, type RegistrationContext } from "./context"
 import type { Step, Task } from "./storage"
 import { hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError } from "./utils"
@@ -30,7 +30,7 @@ export type RunOptions = {
 	// ...
 }
 
-export type WaitForOptions<Filter extends unknown> = {
+export type WaitForOptions<Filter extends InputData> = {
 	filter?: DeepPartial<Filter>
 	timeout?: number
 	/** Should past events be able to satisfy this request? Defaults to `true`. Use `false` to indicate that only events emitted after this step ran can be used. */
@@ -40,7 +40,7 @@ export type WaitForOptions<Filter extends unknown> = {
 export const exec = Symbol('exec')
 export class Job<
 	const Id extends string = string,
-	In extends { [key: string]: Data } = { [key: string]: Data },
+	In extends InputData = InputData,
 	Out extends Data = Data,
 > {
 	/** @public */
@@ -56,6 +56,8 @@ export class Job<
 	readonly output: Validator<Out> | null
 	/** @package */
 	readonly events = null as unknown as EventMap<In, Out>
+	/** @package */
+	readonly triggers: NoInfer<Array<Pipe<string, InputData> | PipeInto<any, InputData>>> | undefined
 
 	readonly #emitter = new EventEmitter<EventMap<In, Out>>()
 	readonly type = 'job'
@@ -77,7 +79,7 @@ export class Job<
 			id: Id
 			input?: Validator<In>
 			output?: Validator<Out>
-			triggers?: NoInfer<Array<Pipe<string, In>>> // TODO: should also accept a pipe that doesn't directly match the input, but with a callback to transform it into the input
+			triggers?: NoInfer<Array<Pipe<string, In> | PipeInto<any, In>>>
 			cron?: string | string[]
 			onTrigger?: (params: { input: In }) => void
 			onStart?: (params: { input: In }) => void
@@ -92,6 +94,7 @@ export class Job<
 		this.#fn = fn as unknown as (input: Data) => Promise<Data>
 		this.input = opts.input ?? null
 		this.output = opts.output ?? null
+		this.triggers = opts.triggers as Array<Pipe<string, InputData> | PipeInto<any, InputData>>
 
 		this.#emitter.on('trigger', ({ input }, meta) => {
 			opts.onTrigger?.({ input })
@@ -180,7 +183,7 @@ export class Job<
 
 	/** @public */
 	static async waitFor<J extends Job, Event extends Exclude<keyof EventMap<J['in'], J['out']>, 'run'>>(job: J, event?: Event, options?: WaitForOptions<J['in']>): Promise<EventMap<J['in'], J['out']>[Event][0]>
-	static async waitFor<P extends Pipe>(pipe: P, options?: WaitForOptions<P['in']>): Promise<P['in']>
+	static async waitFor<P extends Pipe<string, any>>(pipe: P, options?: WaitForOptions<P['in']>): Promise<P['in']>
 	static async waitFor(instance: Job | Pipe, eventOrOptions?: string | Data, jobOptions?: Data): Promise<Data> {
 		const e = getExecutionContext()
 		const options = instance instanceof Pipe ? eventOrOptions : jobOptions
@@ -188,7 +191,7 @@ export class Job<
 		return e.waitFor(
 			instance,
 			(event ?? 'success') as unknown as keyof EventMap<any, any>,
-			(options ?? {}) as unknown as WaitForOptions<Data>
+			(options ?? {}) as unknown as WaitForOptions<InputData>
 		)
 	}
 

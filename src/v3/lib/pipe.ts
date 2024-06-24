@@ -1,9 +1,14 @@
-import { execution, registration } from "./context"
-import type { Data, Validator } from "./types"
+import { registration } from "./context"
+import type { InputData, Validator } from "./types"
+
+export type PipeInto<In extends InputData, Out extends InputData> = [
+	pipe: Pipe<string, In>,
+	transform: (input: In) => Out
+]
 
 export class Pipe<
 	const Id extends string = string,
-	In extends { [key: string]: Data } = { [key: string]: Data },
+	In extends InputData = InputData,
 > {
 	/** @public */
 	readonly id: Id
@@ -23,17 +28,53 @@ export class Pipe<
 		this.id = opts.id
 	}
 
-	/** @public */
-	dispatch(data: In): void {
-		// should resolve which queue we're in and dispatch to that queue
-		// if not resolved, throw error
-		// - from job => look if this pipe is also registered in the same queue
-		// - from event listener on a job => look if this pipe is registered in the same queue
-		const e = execution.getStore()
-		if (e) throw new Error("Cannot call this method inside a job script. Prefer using `Job.dispatch()`, or calling it inside a `Job.run()`.")
-		const store = registration.getStore()
-		if (!store) throw new Error("Cannot call this method outside of the context of a queue.")
-		store.checkRegistration(this)
+	/**
+	 * @public
+	 *
+	 * Dispatches the input data into the pipe.
+	 * 
+	 * Any job that is connected to this pipe will be triggered,
+	 * - either through a `Job.waitFor` step,
+	 * - or through a `triggers: [pipe]` config.
+	 * 
+	 * Dispatch should only be called from within the context of a queue:
+	 * 
+	 * If you're calling this method from within a job, it will already be in the context of a queue:
+	 * ```ts
+	 * Job.run('my-step', () => {
+	 *   myPipe.dispatch({ foo: 'bar' })
+	 * })
+	 * ```
+	 * 
+	 * If you're calling this method from anywhere else, just access the pipe through the queue:
+	 * ```ts
+	 * queue.pipes.myPipe.dispatch({ foo: 'bar' })
+	 * ```
+	 */
+	dispatch(input: In): void {
+		const registrationContext = registration.getStore()
+		if (!registrationContext) throw new Error("Cannot call this method outside of the context of a queue.")
+		registrationContext.checkRegistration(this)
+		const string = JSON.stringify(input)
+		registrationContext.recordEvent(`pipe/${this.id}`, string, string)
+		registrationContext.triggerJobsFromPipe(this, input)
 		return
+	}
+
+	/**
+	 * @public
+	 * 
+	 * When a job is triggered by this pipe, it is possible that the pipe's input data
+	 * does not match the job's input data. This method allows you to transform the data accordingly.
+	 * 
+	 * ```ts
+	 * const myJob = new Job({
+	 *   id: 'myJob',
+	 *   triggers: [myPipe.into((input) => ({ bar: String(input.foo) }))]
+	 * }, ...)
+	 * ```
+	 */
+	into<T extends InputData>(cb: (input: In) => T): PipeInto<In, T> {
+		return [this, cb]
 	}
 }

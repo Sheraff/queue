@@ -1,5 +1,5 @@
 import test from "node:test"
-import { Job, Queue, SQLiteStorage } from "../lib"
+import { Job, Pipe, Queue, SQLiteStorage } from "../lib"
 import { invoke } from "./utils"
 import assert from "node:assert"
 import Database from "better-sqlite3"
@@ -103,4 +103,45 @@ test('wait for job event', async (t) => {
 	assert.equal(bDone, true, 'Job bbb should be done')
 
 	assert.deepEqual(result, { bar: 2 })
+
+	await queue.close()
+})
+
+test('wait for pipe event', async (t) => {
+	const pipe = new Pipe({
+		id: 'pipe',
+		input: z.object({ in: z.number() }),
+	})
+
+	let done = false
+	const aaa = new Job({
+		id: 'aaa',
+		input: z.object({ in: z.string() }),
+		output: z.object({ foo: z.number() })
+	}, async (input) => {
+		const inner = await Job.run('simple', () => Number(input.in))
+		const data = await Job.waitFor(pipe)
+		done = true
+		return { foo: inner + data.in }
+	})
+
+	const queue = new Queue({
+		id: 'wait-for-pipe',
+		jobs: { aaa },
+		pipes: { pipe },
+		storage: new SQLiteStorage()
+	})
+
+	const a = invoke(queue.jobs.aaa, { in: '1' })
+	await new Promise(r => setTimeout(r, 20))
+	assert.equal(done, false, 'Job aaa should not be done yet')
+
+	queue.pipes.pipe.dispatch({ in: 2 })
+
+	const result = await a
+
+	assert.equal(done, true, 'Job aaa should be done')
+	assert.deepEqual(result, { foo: 3 })
+
+	await queue.close()
 })

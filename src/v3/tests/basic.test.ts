@@ -190,5 +190,7 @@ test.describe('events', () => {
 
 		assert.deepEqual(events, ['trigger', 'start', 'run', 'success', 'settled'], 'Events should have been emitted in order')
 		assert.deepEqual(callbacks, ['trigger', 'start', 'success', 'settled'], 'Callbacks should have been called in order')
+
+		await queue.close()
 	})
 })

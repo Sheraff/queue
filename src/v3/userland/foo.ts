@@ -5,8 +5,14 @@ export const fooBarPipe = new Pipe({
 	in: {} as { id: number },
 })
 
+export const otherPipe = new Pipe({
+	id: 'otherPipe',
+	in: {} as { id: string },
+})
+
 export const foo = new Job({
 	id: 'foo',
+	triggers: [otherPipe.into(({ id }) => ({ id: Number(id) }))],
 }, async (input: { id: number }) => {
 
 	const a = await Job.run('a', async () => {

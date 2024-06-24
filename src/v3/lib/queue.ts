@@ -8,14 +8,14 @@ type SafeKeys<K extends string> = { [k in K]: { id: k } }
 
 export class Queue<
 	const Jobs extends { [key in string]: Job<key> } = { [key in string]: Job<key> },
-	const Pipes extends { [key in string]: Pipe<key> } = { [key in string]: Pipe<key> },
+	const Pipes extends { [key in string]: Pipe<key, any> } = { [key in string]: Pipe<key> },
 > {
 	/** @public */
 	public readonly id: string
 	/** @public */
 	public readonly jobs: Jobs
 	/** @public */
-	public readonly pipes?: Pipes
+	public readonly pipes: Pipes
 	/** @public */
 	public readonly storage: Storage
 	/** @public */
@@ -47,16 +47,20 @@ export class Queue<
 			})
 		])) as Jobs
 
-		this.pipes = opts.pipes && Object.fromEntries(Object.entries(opts.pipes).map(([id, pipe]) => [
-			id,
-			new Proxy(pipe, {
-				get: (target, prop) => {
-					const value = Reflect.get(pipe, prop, pipe)
-					if (typeof value !== 'function') return value
-					return (...args: any[]) => registration.run(this.#registrationContext, value.bind(target, ...args))
-				}
-			})
-		])) as Pipes
+		if (!opts.pipes) {
+			this.pipes = {} as Pipes
+		} else {
+			this.pipes = Object.fromEntries(Object.entries(opts.pipes).map(([id, pipe]) => [
+				id,
+				new Proxy(pipe, {
+					get: (target, prop) => {
+						const value = Reflect.get(pipe, prop, pipe)
+						if (typeof value !== 'function') return value
+						return (...args: any[]) => registration.run(this.#registrationContext, value.bind(target, ...args))
+					}
+				})
+			])) as Pipes
+		}
 
 		this.#start()
 	}
@@ -94,6 +98,21 @@ export class Queue<
 				return cb(data)
 			})
 		},
+		triggerJobsFromPipe: (pipe, input) => {
+			for (const job of Object.values(this.jobs)) {
+				if (!job.triggers) continue
+				for (const trigger of job.triggers) {
+					if (trigger instanceof Pipe) {
+						if (trigger !== pipe) continue
+						job.dispatch(input)
+					} else {
+						const [p, transform] = trigger
+						if (p !== pipe) continue
+						job.dispatch(transform(input))
+					}
+				}
+			}
+		}
 	}
 
 	#running = new Set<Promise<any>>()

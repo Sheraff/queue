@@ -270,14 +270,14 @@ test.describe('suite', () => {
 
 import { AsyncLocalStorage } from "node:async_hooks"
 import EventEmitter from "node:events"
-test('async local storage through event emitters', () => {
+test('async local storage through event emitters', (t) => {
 	const storage = new AsyncLocalStorage<string>()
 
 	const emitter = new EventEmitter<{ test: [number] }>()
 
 	emitter.on('test', (data) => {
 		const store = storage.getStore()
-		console.log('store', store, data)
+		t.diagnostic(`Store: ${store} => ${data}`)
 	})
 
 	emitter.emit('test', 42)

@@ -331,10 +331,11 @@ export class Job<
 				await Promise.resolve()
 				throw interrupt
 			}
+			const status = ms <= 0 ? 'completed' : 'stalled'
 			const maybePromise = syncOrPromise<void>(resolve => {
 				registrationContext.recordStep(
 					task,
-					{ step, status: 'stalled', data: null, sleep_for: ms / 1000 },
+					{ step, status, data: null, sleep_for: ms / 1000 },
 					resolve
 				)
 			})

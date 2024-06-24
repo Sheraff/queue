@@ -12,7 +12,9 @@ export interface RegistrationContext {
 	resolveTask<T>(task: Task, status: 'completed' | 'cancelled', data: Data, cb: () => T): T | Promise<T>
 	resolveTask<T>(task: Task, status: 'failed', data: unknown, cb: () => T): T | Promise<T>
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
-	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for'>, cb: () => T): T | Promise<T>
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for' | 'wait_for' | 'wait_filter' | 'wait_retroactive'>, cb: () => T): T | Promise<T>
+	recordEvent(key: string, input: string, data: string): void
+	resolveEvent<T>(step: Step, cb: (data: string) => T): T | Promise<T>
 }
 
 /**
@@ -37,9 +39,9 @@ export const registration = new AsyncLocalStorage<RegistrationContext>()
 export interface ExecutionContext {
 	run<Out extends Data>(options: RunOptions, fn: () => Out | Promise<Out>): Promise<Out>
 	sleep(ms: number): Promise<void>
-	waitFor(instance: Job | Pipe, event: string, options?: WaitForOptions<Data>): Promise<Data>
+	waitFor(instance: Job | Pipe, event: string, options: WaitForOptions<Data>): Promise<Data>
 	invoke(job: Job, data: Data): Promise<Data>
-	dispatch(instance: Job | Pipe, data: Data): void
+	dispatch(instance: Job | Pipe, data: { [key: string]: Data }): void
 }
 
 /**

@@ -4,6 +4,7 @@ import { invoke } from "./utils"
 import assert from "node:assert"
 import Database from "better-sqlite3"
 import type { Step } from "../lib/storage"
+import { z } from "zod"
 
 test('sleep', async (t) => {
 
@@ -51,4 +52,55 @@ test('sleep', async (t) => {
 	assert.notEqual(sleep.created_at, sleep.updated_at)
 
 	db.close()
+})
+
+
+test('wait for job event', async (t) => {
+	const aaa = new Job({
+		id: 'aaa',
+		input: z.object({ in: z.number() }),
+		output: z.object({ foo: z.number() })
+	}, async (input) => {
+		const foo = await Job.run('simple', () => input.in)
+		return { foo }
+	})
+
+	let bDone = false
+	const bbb = new Job({
+		id: 'bbb',
+		output: z.object({ bar: z.number() }),
+	}, async () => {
+		const data = await Job.waitFor(aaa, 'success', { filter: { in: 2 } })
+		bDone = true
+		return { bar: data.result.foo }
+	})
+
+	const queue = new Queue({
+		id: 'wait-for',
+		jobs: { aaa, bbb },
+		storage: new SQLiteStorage()
+	})
+
+	let runs = 1
+	queue.jobs.bbb.emitter.on('run', () => runs++)
+
+	const b = invoke(queue.jobs.bbb, {})
+
+	// Even when giving it some time, the job should not be done yet because it's waiting for an event in aaa
+	await new Promise(r => setTimeout(r, 20))
+	assert.equal(bDone, false, 'Job bbb should not be done yet')
+
+	// Even when giving it some time, the job should not be done yet because the event from aaa does not match the filter
+	await invoke(queue.jobs.aaa, { in: 1 })
+	await new Promise(r => setTimeout(r, 20))
+	assert.equal(bDone, false, 'Job bbb should not be done yet')
+
+	await invoke(queue.jobs.aaa, { in: 2 })
+	const result = await b
+
+	t.diagnostic(`Runs to complete the job: ${runs}`)
+	assert.equal(runs, 2, 'Job bbb should have been re-run only once')
+	assert.equal(bDone, true, 'Job bbb should be done')
+
+	assert.deepEqual(result, { bar: 2 })
 })

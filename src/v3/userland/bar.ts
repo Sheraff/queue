@@ -15,4 +15,4 @@ export const bar = new Job({
 	return 'hello'
 })
 
-foo.emitter.on('start', (data) => bar.dispatch({ name: String(data.id) }))
+foo.emitter.on('start', ({ input }) => bar.dispatch({ name: String(input.id) }))

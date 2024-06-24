@@ -3,7 +3,7 @@ import type { Data, Validator } from "./types"
 
 export class Pipe<
 	const Id extends string = string,
-	In extends Data = Data,
+	In extends { [key: string]: Data } = { [key: string]: Data },
 > {
 	/** @public */
 	readonly id: Id

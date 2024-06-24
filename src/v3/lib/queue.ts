@@ -85,6 +85,15 @@ export class Queue<
 		recordStep: (task, step, cb) => {
 			return this.storage.recordStep(task, step, cb)
 		},
+		recordEvent: (key, input, data) => {
+			return this.storage.recordEvent(this.id, key, input, data, () => this.#start())
+		},
+		resolveEvent: (step, cb) => {
+			return this.storage.resolveEvent(step, (data) => {
+				if (typeof data === 'undefined') throw new Error(`Event ${step.step} was not resolved before calling resolveEvent()`)
+				return cb(data)
+			})
+		},
 	}
 
 	#running = new Set<Promise<any>>()

@@ -8,6 +8,8 @@ export type Validator<Out = Data> = {
 	parse: (input: any) => Out
 }
 
-export type DeepPartial<T> = T extends object ? {
-	[P in keyof T]?: DeepPartial<T[P]>
+type Increment<A extends number[]> = [...A, 0]
+
+export type DeepPartial<T, CurrentDepth extends number[] = []> = T extends object ? CurrentDepth["length"] extends 8 ? T : {
+	[P in keyof T]?: DeepPartial<T[P], Increment<CurrentDepth>>
 } : T

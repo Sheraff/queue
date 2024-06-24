@@ -30,8 +30,10 @@ export type Task = {
 type StepStatus =
 	/** step is a promise, currently resolving */
 	| 'running'
-	/** step is blocked by a timer (retry, concurrency, sleep) or event (waitFor, invoke) */
+	/** step is blocked by a timer (retry, concurrency, sleep) */
 	| 'stalled'
+	/* step is waiting for an event (waitFor, invoke) */
+	| 'waiting'
 	/** step finished, data is the result */
 	| 'completed'
 	/** step failed, data is the error */
@@ -53,6 +55,11 @@ export type Step = {
 	sleep_for?: number | null
 	/** used on read to know if sleep timer expired */
 	sleep_done: boolean | null
+
+	wait_for?: string | null // 'job/aaa/settled' | 'pipe/bbb'
+	wait_filter?: string | null // '{"input":{},"error":null}'
+	wait_retroactive?: boolean | null
+
 	data: string | null
 }
 
@@ -90,6 +97,10 @@ export interface Storage {
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
 	/** Insert or update a step based on unique index queue+job+key+step */
 	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data'>, cb: () => T): T | Promise<T>
+	/** Append event to table */
+	recordEvent<T>(queue: string, key: string, input: string, data: string, cb?: () => T): T | Promise<T>
+	/** Called with a step in 'waiting' status, should retrieve the 1st event that satisfies the `wait_` conditions */
+	resolveEvent<T>(step: Step, cb: (data: string | undefined) => T): T | Promise<T>
 }
 
 export class SQLiteStorage implements Storage {
@@ -152,6 +163,9 @@ export class SQLiteStorage implements Storage {
 				created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 				updated_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 				sleep_for INTEGER,
+				wait_for TEXT,
+				wait_filter JSON,
+				wait_retroactive BOOLEAN,
 				data JSON
 			);
 		
@@ -163,7 +177,8 @@ export class SQLiteStorage implements Storage {
 				queue TEXT NOT NULL,
 				key TEXT NOT NULL,
 				created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
-				input JSON
+				input JSON,
+				data JSON
 			);
 		
 			CREATE INDEX IF NOT EXISTS ${eventsTable}_key ON ${eventsTable} (queue, key);
@@ -177,18 +192,66 @@ export class SQLiteStorage implements Storage {
 
 		const getNextTaskStmt = this.#db.prepare<{ queue: string }, Task>(/* sql */ `
 			SELECT *
-			FROM ${tasksTable} tasks
+			FROM ${tasksTable} task
 			WHERE
 				queue = @queue
 				AND status = 'pending'
 				AND NOT EXISTS (
 					SELECT 1
-					FROM ${stepsTable}
+					FROM ${stepsTable} step
 					WHERE
-						task_id = tasks.id
-						AND status = 'running'
-						AND sleep_for IS NOT NULL
-						AND (created_at + sleep_for > unixepoch('subsec'))
+						task_id = task.id
+						AND ((
+							-- step is stalled and sleep timer is not expired
+							status = 'stalled'
+							AND sleep_for IS NOT NULL
+							AND (created_at + sleep_for > unixepoch('subsec'))
+						) OR (
+							-- step is waiting for an event
+							status = 'waiting'
+							AND wait_for IS NOT NULL
+							AND wait_filter IS NOT NULL
+							AND NOT EXISTS (
+								WITH filter AS ( -- parse the filter JSON into a table
+									SELECT *
+									FROM json_tree(wait_filter)
+									WHERE type != 'null'
+								)
+								SELECT 1 FROM ${eventsTable} event
+								WHERE event.queue = step.queue
+								AND event.key = step.wait_for
+								AND (
+									CASE step.wait_retroactive
+									WHEN TRUE THEN 1
+									ELSE event.created_at >= step.created_at
+									END
+								)
+								AND NOT EXISTS ( -- check if all filter conditions are met (reverse checking: if a single mismatch, then it's not a match)
+									SELECT 1
+									FROM filter
+									WHERE (
+										filter.type = 'object'
+										AND (
+											json_extract(event.input, filter.fullKey) IS NULL
+											OR json_type(json_extract(event.input, filter.fullKey)) != 'object'
+										)
+									) OR (
+										filter.type = 'array'
+										AND (
+											json_extract(event.input, filter.fullKey) IS NULL
+											OR json_type(json_extract(event.input, filter.fullKey)) != 'array'
+										)
+									) OR (
+										filter.type NOT IN ('object', 'array')
+										AND (
+											json_extract(event.input, filter.fullKey) IS NULL
+											OR json_extract(event.input, filter.fullKey) != filter.value
+										)
+									)
+									LIMIT 1
+								)
+							)
+						))
 					LIMIT 1
 				)
 			ORDER BY created_at ASC
@@ -202,7 +265,7 @@ export class SQLiteStorage implements Storage {
 			WHERE
 				tasks.queue = @queue
 				AND tasks.status = 'pending'
-				AND steps.status = 'running'
+				AND steps.status = 'stalled'
 				AND steps.sleep_for IS NOT NULL
 			ORDER BY seconds ASC
 			LIMIT 1
@@ -265,8 +328,32 @@ export class SQLiteStorage implements Storage {
 		`)
 
 		// create or update step
-		this.#recordStepStmt = this.#db.prepare<{ queue: string, job: string, key: string, step: string, task_id: number, status: StepStatus, sleep_for: number | null, data: string | null }>(/* sql */ `
-			INSERT INTO ${stepsTable} (queue, job, key, step, task_id, status, sleep_for, data)
+		this.#recordStepStmt = this.#db.prepare<{
+			queue: string
+			job: string
+			key: string
+			step: string
+			task_id: number
+			status: StepStatus
+			sleep_for: number | null
+			wait_for: string | null
+			wait_filter: string | null
+			wait_retroactive: number | null
+			data: string | null
+		}>(/* sql */ `
+			INSERT INTO ${stepsTable} (
+				queue,
+				job,
+				key,
+				step,
+				task_id,
+				status,
+				sleep_for,
+				wait_for,
+				wait_filter,
+				wait_retroactive,
+				data
+			)
 			VALUES (
 				@queue,
 				@job,
@@ -275,6 +362,9 @@ export class SQLiteStorage implements Storage {
 				@task_id,
 				@status,
 				@sleep_for,
+				@wait_for,
+				@wait_filter,
+				@wait_retroactive,
 				@data
 			)
 			ON CONFLICT (queue, job, key, step)
@@ -284,6 +374,75 @@ export class SQLiteStorage implements Storage {
 				data = @data
 		`)
 
+		this.#recordEventStmt = this.#db.prepare<{ queue: string, key: string, input: string, data: string }>(/* sql */ `
+			INSERT INTO ${eventsTable} (queue, key, input, data)
+			VALUES (@queue, @key, @input, @data)
+		`)
+
+		const matchStepEventStmt = this.#db.prepare<{ step_id: number }, { data: string } | undefined>(/* sql */ `
+			WITH step AS (
+				SELECT *
+				FROM ${stepsTable}
+				WHERE id = @step_id
+			),
+			filter AS ( -- parse the filter JSON into a table
+				SELECT *
+				FROM json_tree(wait_filter)
+				WHERE type != 'null'
+			)
+			SELECT
+				event.data data,
+				abs(event.created_at - step.created_at) time_distance
+			FROM ${eventsTable} event
+			LEFT JOIN step ON event.queue = step.queue AND event.key = step.wait_for
+			WHERE (
+				CASE step.wait_retroactive
+				WHEN TRUE THEN 1
+				ELSE event.created_at >= step.created_at
+				END
+			)
+			AND NOT EXISTS ( -- check if all filter conditions are met (reverse checking: if a single mismatch, then it's not a match)
+				SELECT 1
+				FROM filter
+				WHERE (
+					filter.type = 'object'
+					AND (
+						json_extract(event.input, filter.fullKey) IS NULL
+						OR json_type(json_extract(event.input, filter.fullKey)) != 'object'
+					)
+				) OR (
+					filter.type = 'array'
+					AND (
+						json_extract(event.input, filter.fullKey) IS NULL
+						OR json_type(json_extract(event.input, filter.fullKey)) != 'array'
+					)
+				) OR (
+					filter.type NOT IN ('object', 'array')
+					AND (
+						json_extract(event.input, filter.fullKey) IS NULL
+						OR json_extract(event.input, filter.fullKey) != filter.value
+					)
+				)
+				LIMIT 1
+			)
+			ORDER BY time_distance ASC
+			LIMIT 1
+		`)
+		const resolveStepEventStmt = this.#db.prepare<{ step_id: number, data: string }>(/* sql */ `
+			UPDATE ${stepsTable}
+			SET
+				status = 'completed',
+				updated_at = unixepoch('subsec'),
+				data = @data
+			WHERE id = @step_id
+		`)
+
+		this.#resolveStepEventTx = this.#db.transaction((step_id: number) => {
+			const event = matchStepEventStmt.get({ step_id })
+			if (!event) return
+			resolveStepEventStmt.run({ step_id, data: event.data })
+			return event.data
+		})
 	}
 
 	#getTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string }, Task | undefined>
@@ -292,7 +451,21 @@ export class SQLiteStorage implements Storage {
 	#resolveTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, status: TaskStatus, data: string | null }>
 	#loopTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string }>
 	#addTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, input: string }, undefined | 1>
-	#recordStepStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, task_id: number, step: string, status: StepStatus, sleep_for: number | null, data: string | null }>
+	#recordStepStmt: BetterSqlite3.Statement<{
+		queue: string
+		job: string
+		key: string
+		task_id: number
+		step: string
+		status: StepStatus
+		sleep_for: number | null
+		wait_for: string | null
+		wait_filter: string | null
+		wait_retroactive: number | null
+		data: string | null
+	}>
+	#recordEventStmt: BetterSqlite3.Statement<{ queue: string, key: string, input: string, data: string }>
+	#resolveStepEventTx: BetterSqlite3.Transaction<(step_id: number) => string | undefined>
 
 	getTask<T>(queue: string, job: string, key: string, cb: (task: Task | undefined) => T): T {
 		const task = this.#getTaskStmt.get({ queue, job, key })
@@ -324,7 +497,7 @@ export class SQLiteStorage implements Storage {
 		return cb?.() as T
 	}
 
-	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for'>, cb: () => T): T {
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'sleep_for' | 'wait_for' | 'wait_filter' | 'wait_retroactive'>, cb: () => T): T {
 		this.#recordStepStmt.run({
 			queue: task.queue,
 			job: task.job,
@@ -334,9 +507,23 @@ export class SQLiteStorage implements Storage {
 			data: step.data,
 			status: step.status,
 			sleep_for: step.sleep_for ?? null,
+			wait_for: step.wait_for ?? null,
+			wait_filter: step.wait_filter ?? null,
+			wait_retroactive: Number(step.wait_retroactive) ?? null,
 			step: step.step
 		})
 		return cb()
+	}
+
+	recordEvent<T>(queue: string, key: string, input: string, data: string, cb?: () => T): T {
+		this.#recordEventStmt.run({ queue, key, input, data })
+		return cb?.() as T
+	}
+
+	resolveEvent<T>(step: Step, cb: (data: string | undefined) => T): T {
+		// @ts-expect-error -- id exists, but not exposed in the type
+		const data = this.#resolveStepEventTx.exclusive(step.id)
+		return cb(data)
 	}
 
 	close() {

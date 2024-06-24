@@ -11,13 +11,13 @@ type CancelReason =
 	| { type: 'debounce', number: number }
 
 type EventMap<In extends Data, Out extends Data> = {
-	trigger: [data: In]
-	start: [data: In]
-	run: [data: In]
-	success: [data: In, result: Out]
-	error: [data: In, error: unknown]
-	cancel: [data: In, reason: CancelReason]
-	settled: [data: In, result: Out | null, error: unknown | null]
+	trigger: [data: { input: In }, meta: { input: string }]
+	start: [data: { input: In }, meta: { input: string }]
+	run: [data: { input: In }, meta: { input: string }]
+	success: [data: { input: In, result: Out }, meta: { input: string }]
+	error: [data: { input: In, error: unknown }, meta: { input: string }]
+	cancel: [data: { input: In, reason: CancelReason }, meta: { input: string }]
+	settled: [data: { input: In, result: Out | null, error: unknown | null }, meta: { input: string }]
 }
 
 const system = Symbol('system')
@@ -30,16 +30,17 @@ export type RunOptions = {
 	// ...
 }
 
-export type WaitForOptions<In extends Data> = {
-	filter?: DeepPartial<In>
+export type WaitForOptions<Filter extends unknown> = {
+	filter?: DeepPartial<Filter>
 	timeout?: number
+	/** Should past events be able to satisfy this request? Defaults to `true`. Use `false` to indicate that only events emitted after this step ran can be used. */
 	retroactive?: boolean
 }
 
 export const exec = Symbol('exec')
 export class Job<
 	const Id extends string = string,
-	In extends Data = Data,
+	In extends { [key: string]: Data } = { [key: string]: Data },
 	Out extends Data = Data,
 > {
 	/** @public */
@@ -76,14 +77,14 @@ export class Job<
 			id: Id
 			input?: Validator<In>
 			output?: Validator<Out>
-			triggers?: NoInfer<Array<Pipe<string, In>>>
+			triggers?: NoInfer<Array<Pipe<string, In>>> // TODO: should also accept a pipe that doesn't directly match the input, but with a callback to transform it into the input
 			cron?: string | string[]
-			onTrigger?: (data: In) => void
-			onStart?: (data: In) => void
-			onSuccess?: (data: In, result: Out) => void
-			onError?: (data: In, error: unknown) => void
-			onCancel?: (data: In, reason: CancelReason) => void
-			onSettled?: (data: In, result: Out | null, error: unknown | null) => void
+			onTrigger?: (params: { input: In }) => void
+			onStart?: (params: { input: In }) => void
+			onSuccess?: (params: { input: In, result: Out }) => void
+			onError?: (params: { input: In, error: unknown }) => void
+			onCancel?: (params: { input: In, reason: CancelReason }) => void
+			onSettled?: (params: { input: In, result: Out | null, error: unknown | null }) => void
 		},
 		fn: (input: In) => Promise<Out>
 	) {
@@ -92,52 +93,61 @@ export class Job<
 		this.input = opts.input ?? null
 		this.output = opts.output ?? null
 
-		this.#emitter.on('trigger', (data) => {
-			opts.onTrigger?.(data)
-			const executionContext = execution.getStore()
-			if (executionContext) throw new Error("Cannot call this method inside a job script. Prefer using `Job.dispatch()`, or calling it inside a `Job.run()`.")
-			const registrationContext = registration.getStore()
-			if (!registrationContext) throw new Error("Cannot call this method outside of the context of a queue.")
+		this.#emitter.on('trigger', ({ input }, meta) => {
+			opts.onTrigger?.({ input })
+			if (execution.getStore()) throw new Error("Cannot call this method inside a job script. Prefer using `Job.dispatch()`, or calling it inside a `Job.run()`.")
+			const registrationContext = getRegistrationContext()
 			registrationContext.checkRegistration(this)
-			registrationContext.addTask(this, data, (key, inserted) => {
+			registrationContext.recordEvent(`job/${this.id}/trigger`, meta.input, JSON.stringify({ input }))
+			registrationContext.addTask(this, input, (key, inserted) => {
 				if (inserted) return
 				registrationContext.queue.storage.getTask(registrationContext.queue.id, this.id, key, (task) => {
 					if (!task) throw new Error('Task not found after insert')
 					if (task.status === 'failed') {
 						if (!task.data) throw new Error('Task previously failed, but no error data found')
-						setImmediate(() => this.#emitter.emit('error', data, hydrateError(task.data!)))
+						setImmediate(() => this.#emitter.emit('error', { input, error: hydrateError(task.data!) }, meta))
 					} else if (task.status === 'completed') {
 						if (!task.data) throw new Error('Task previously completed, but no output data found')
-						setImmediate(() => this.#emitter.emit('success', data, JSON.parse(task.data!)))
+						setImmediate(() => this.#emitter.emit('success', { input, result: JSON.parse(task.data!) }, meta))
 					} else if (task.status === 'cancelled') {
 						if (!task.data) throw new Error('Task previously cancelled, but no reason data found')
-						setImmediate(() => this.#emitter.emit('cancel', data, JSON.parse(task.data!)))
+						setImmediate(() => this.#emitter.emit('cancel', { input, reason: JSON.parse(task.data!) }, meta))
 					}
 				})
 			})
 		})
 
-		if (opts.onStart) this.#emitter.on('start', (data) => {
-			opts.onStart?.(data)
+		this.#emitter.on('start', (input, meta) => {
+			opts.onStart?.(input)
+			const registrationContext = getRegistrationContext()
+			registrationContext.recordEvent(`job/${this.id}/start`, meta.input, JSON.stringify({ input }))
 		})
 
-		this.#emitter.on('success', (data, result) => {
-			opts.onSuccess?.(data, result)
-			setImmediate(() => this.#emitter.emit('settled', data, result, null))
+		this.#emitter.on('success', ({ input, result }, meta) => {
+			opts.onSuccess?.({ input, result })
+			const registrationContext = getRegistrationContext()
+			registrationContext.recordEvent(`job/${this.id}/success`, meta.input, JSON.stringify({ input, result }))
+			setImmediate(() => this.#emitter.emit('settled', { input, result, error: null }, meta))
 		})
 
-		this.#emitter.on('error', (data, error) => {
-			opts.onError?.(data, error)
-			setImmediate(() => this.#emitter.emit('settled', data, null, error))
+		this.#emitter.on('error', ({ input, error }, meta) => {
+			opts.onError?.({ input, error })
+			const registrationContext = getRegistrationContext()
+			registrationContext.recordEvent(`job/${this.id}/error`, meta.input, JSON.stringify({ input, error }))
+			setImmediate(() => this.#emitter.emit('settled', { input, result: null, error }, meta))
 		})
 
-		this.#emitter.on('cancel', (data) => {
-			opts.onCancel?.(data, { type: 'explicit' })
-			setImmediate(() => this.#emitter.emit('settled', data, null, null))
+		this.#emitter.on('cancel', ({ input }, meta) => {
+			opts.onCancel?.({ input, reason: { type: 'explicit' } })
+			const registrationContext = getRegistrationContext()
+			registrationContext.recordEvent(`job/${this.id}/cancel`, meta.input, JSON.stringify({ input, reason: { type: 'explicit' } }))
+			setImmediate(() => this.#emitter.emit('settled', { input, result: null, error: null }, meta))
 		})
 
-		if (opts.onSettled) this.#emitter.on('settled', (data, result, error) => {
-			opts.onSettled?.(data, result, error)
+		this.#emitter.on('settled', ({ input, result, error }, meta) => {
+			opts.onSettled?.({ input, result, error })
+			const registrationContext = getRegistrationContext()
+			registrationContext.recordEvent(`job/${this.id}/settled`, meta.input, JSON.stringify({ input, result, error }))
 		})
 	}
 
@@ -147,8 +157,9 @@ export class Job<
 	}
 
 	/** @public */
-	dispatch(data: In): void {
-		this.#emitter.emit('trigger', data)
+	dispatch(input: In): void {
+		const _input = input ?? {}
+		this.#emitter.emit('trigger', { input: _input }, { input: JSON.stringify(_input) })
 		return
 	}
 
@@ -156,50 +167,40 @@ export class Job<
 	static async run<Out extends Data>(id: string, fn: () => Out | Promise<Out>): Promise<Out>
 	static async run<Out extends Data>(opts: RunOptions, fn: () => Out | Promise<Out>): Promise<Out>
 	static async run<Out extends Data>(optsOrId: string | RunOptions, fn: () => Out | Promise<Out>): Promise<Out> {
-		const e = execution.getStore()
-		if (e === null) throw new Error("Nested job steps are not allowed.")
-		if (!e) throw new Error("Cannot call this method outside of a job function.")
+		const e = getExecutionContext()
 		const opts: RunOptions = typeof optsOrId === 'string' ? { id: optsOrId } : optsOrId
 		return e.run(opts, fn)
 	}
 
 	/** @public */
 	static sleep(ms: number): Promise<void> {
-		const e = execution.getStore()
-		if (e === null) throw new Error("Nested job steps are not allowed.")
-		if (!e) throw new Error("Cannot call this method outside of a job function.")
+		const e = getExecutionContext()
 		return e.sleep(ms)
 	}
 
 	/** @public */
-	static async waitFor<J extends Job, Event extends keyof EventMap<J['in'], J['out']>>(job: J, event?: Event, options?: WaitForOptions<J['in']>): Promise<EventMap<J['in'], J['out']>[Event]>
+	static async waitFor<J extends Job, Event extends Exclude<keyof EventMap<J['in'], J['out']>, 'run'>>(job: J, event?: Event, options?: WaitForOptions<J['in']>): Promise<EventMap<J['in'], J['out']>[Event][0]>
 	static async waitFor<P extends Pipe>(pipe: P, options?: WaitForOptions<P['in']>): Promise<P['in']>
 	static async waitFor(instance: Job | Pipe, eventOrOptions?: string | Data, jobOptions?: Data): Promise<Data> {
-		const e = execution.getStore()
-		if (e === null) throw new Error("Nested job steps are not allowed.")
-		if (!e) throw new Error("Cannot call this method outside of a job function.")
+		const e = getExecutionContext()
 		const options = instance instanceof Pipe ? eventOrOptions : jobOptions
-		const event = instance instanceof Pipe ? 'success' : eventOrOptions ?? 'success'
+		const event = instance instanceof Pipe ? 'success' : eventOrOptions
 		return e.waitFor(
 			instance,
-			event as unknown as keyof EventMap<any, any>,
-			options as unknown as WaitForOptions<Data>
+			(event ?? 'success') as unknown as keyof EventMap<any, any>,
+			(options ?? {}) as unknown as WaitForOptions<Data>
 		)
 	}
 
 	/** @public */
 	static async invoke<J extends Job>(job: J, data: J['in']): Promise<J['out']> {
-		const e = execution.getStore()
-		if (e === null) throw new Error("Nested job steps are not allowed.")
-		if (!e) throw new Error("Cannot call this method outside of a job function.")
+		const e = getExecutionContext()
 		return e.invoke(job, data)
 	}
 
 	/** @public */
 	static dispatch<I extends Job | Pipe>(instance: I, data: I['in']): void {
-		const e = execution.getStore()
-		if (e === null) throw new Error("Nested job steps are not allowed.")
-		if (!e) throw new Error("Cannot call this method outside of a job function.")
+		const e = getExecutionContext()
 		return e.dispatch(instance, data)
 	}
 
@@ -207,11 +208,11 @@ export class Job<
 	[exec](registrationContext: RegistrationContext, task: Task, steps: Step[]): Promise<void> {
 		const input = JSON.parse(task.input) as In
 		if (!task.started) {
-			this.#emitter.emit('start', input)
+			this.#emitter.emit('start', { input }, { input: task.input })
 		} else {
-			this.#emitter.emit('run', input)
+			this.#emitter.emit('run', { input }, { input: task.input })
 		}
-		const promises: Promise<void>[] = []
+		const promises: Promise<any>[] = []
 		const indexes = {
 			system: {} as Record<string, number>,
 			user: {} as Record<string, number>
@@ -322,7 +323,7 @@ export class Job<
 			const maybePromise = syncOrPromise<void>(resolve => {
 				registrationContext.recordStep(
 					task,
-					{ step, status: 'running', data: null, sleep_for: ms / 1000 },
+					{ step, status: 'stalled', data: null, sleep_for: ms / 1000 },
 					resolve
 				)
 			})
@@ -333,7 +334,57 @@ export class Job<
 			interrupt()
 		}
 		const waitFor: ExecutionContext['waitFor'] = async (instance, event, options) => {
-			return {} as any
+			const name = `waitFor::${instance.type}::${instance.id}::${event}`
+			const index = getIndex(name, true)
+			const step = `system/${name}#${index}`
+			const entry = steps.find(s => s.step === step)
+
+			if (entry) {
+				if (entry.status === 'completed') {
+					if (!entry.data) return
+					return JSON.parse(entry.data)
+				} else if (entry.status === 'failed') {
+					// TODO: handle retries
+					if (!entry.data) throw new Error('Step marked as failed in storage, but no error data found')
+					throw hydrateError(entry.data)
+				} else if (entry.status === 'waiting') {
+					const maybePromise = syncOrPromise<string>(resolve => {
+						registrationContext.resolveEvent(entry, resolve)
+					})
+					if (isPromise(maybePromise)) {
+						promises.push(maybePromise)
+						await Promise.resolve()
+						interrupt()
+					}
+					return JSON.parse(maybePromise as string)
+				} else {
+					throw new Error(`Unexpected waitFor step status ${entry.status}`)
+				}
+			}
+
+			const key = instance instanceof Job
+				? `job/${instance.id}/${event}`
+				: `pipe/${instance.id}`
+
+			const maybePromise = syncOrPromise<void>(resolve => {
+				registrationContext.recordStep(
+					task,
+					{
+						step,
+						status: 'waiting',
+						data: null,
+						wait_for: key,
+						wait_retroactive: options.retroactive ?? true,
+						wait_filter: options.filter ? JSON.stringify(options.filter) : '{}' // TODO: query might be more performant if we supported the null filter case
+					},
+					resolve
+				)
+			})
+			if (isPromise(maybePromise)) {
+				promises.push(maybePromise)
+			}
+			await Promise.resolve()
+			interrupt()
 		}
 		const invoke: ExecutionContext['invoke'] = async (job, data) => {
 			return {} as any
@@ -381,8 +432,8 @@ export class Job<
 						}
 					})
 				}
-			} catch (err) {
-				if (isInterrupt(err)) {
+			} catch (error) {
+				if (isInterrupt(error)) {
 					return Promise.allSettled(promises)
 						.then(() => new Promise(setImmediate)) // allow multiple jobs finishing a step on the same tick to continue in priority order
 						.then(() => {
@@ -396,16 +447,16 @@ export class Job<
 					// if not cancelled, this is an actual user-land error
 					// TODO: handle cancellation
 					return syncOrPromise<void>(resolve => {
-						registrationContext.resolveTask(task, 'failed', err, resolve)
+						registrationContext.resolveTask(task, 'failed', error, resolve)
 					}, () => {
-						this.#emitter.emit('error', input, err)
+						this.#emitter.emit('error', { input, error }, { input: task.input })
 					})
 				}
 			}
 			return syncOrPromise<void>(resolve => {
 				registrationContext.resolveTask(task, 'completed', output, resolve)
 			}, () => {
-				this.#emitter.emit('success', input, output as Out)
+				this.#emitter.emit('success', { input, result: output as Out }, { input: task.input })
 			})
 		})
 
@@ -435,4 +486,18 @@ function syncOrPromise<T>(
 	})
 	if (sync) return result! as T
 	return promise
+}
+
+
+function getRegistrationContext(): RegistrationContext {
+	const context = registration.getStore()
+	if (!context) throw new Error("Cannot call this method outside of the context of a queue.")
+	return context
+}
+
+function getExecutionContext(): ExecutionContext {
+	const executionContext = execution.getStore()
+	if (executionContext === null) throw new Error("Nested job steps are not allowed.")
+	if (!executionContext) throw new Error("Cannot call this method outside of a job function.")
+	return executionContext
 }

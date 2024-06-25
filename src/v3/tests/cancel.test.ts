@@ -7,7 +7,7 @@ import Database from "better-sqlite3"
 
 type Step = { step: string, status: string }
 
-test('cancel during Job.run', async (t) => {
+test('cancel during Job.run', { timeout: 500 }, async (t) => {
 	const db = new Database()
 	db.pragma('journal_mode = WAL')
 
@@ -55,7 +55,7 @@ test('cancel during Job.run', async (t) => {
 	db.close()
 })
 
-test('cancel before Job.run', async (t) => {
+test('cancel before Job.run', { timeout: 500 }, async (t) => {
 	const db = new Database()
 	db.pragma('journal_mode = WAL')
 
@@ -91,7 +91,7 @@ test('cancel before Job.run', async (t) => {
 })
 
 
-test('cancel during Job.sleep', async (t) => {
+test('cancel during Job.sleep', { timeout: 500 }, async (t) => {
 	const db = new Database()
 	db.pragma('journal_mode = WAL')
 
@@ -129,7 +129,7 @@ test('cancel during Job.sleep', async (t) => {
 	db.close()
 })
 
-test('cancel during Job.waitFor', async (t) => {
+test('cancel during Job.waitFor', { timeout: 500 }, async (t) => {
 	const db = new Database()
 	db.pragma('journal_mode = WAL')
 

@@ -6,7 +6,7 @@ import Database from "better-sqlite3"
 import type { Step, Task } from "../lib/storage"
 import { invoke } from "./utils"
 
-test('simple sync job', async (t) => {
+test('simple sync job', { timeout: 500 }, async (t) => {
 	const aaa = new Job({
 		id: 'aaa',
 		input: z.object({ a: z.number() }),
@@ -49,7 +49,7 @@ test('simple sync job', async (t) => {
 	db.close()
 })
 
-test('simple async job', async (t) => {
+test('simple async job', { timeout: 500 }, async (t) => {
 	const aaa = new Job({
 		id: 'aaa',
 		input: z.object({ a: z.number() }),
@@ -92,7 +92,7 @@ test('simple async job', async (t) => {
 	db.close()
 })
 
-test.describe('memo', () => {
+test.describe('memo', { timeout: 500 }, () => {
 	test('steps do not re-execute', async (t) => {
 		let count = 0
 		const aaa = new Job({
@@ -153,7 +153,7 @@ test.describe('memo', () => {
 	})
 })
 
-test.describe('events', () => {
+test.describe('events', { timeout: 500 }, () => {
 	test('success events', async (t) => {
 		const events: string[] = []
 		const callbacks: string[] = []
@@ -195,7 +195,7 @@ test.describe('events', () => {
 	})
 })
 
-test('step error', async (t) => {
+test('step error', { timeout: 500 }, async (t) => {
 	class CustomError extends Error {
 		override name = 'CustomError'
 	}

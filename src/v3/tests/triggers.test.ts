@@ -3,7 +3,7 @@ import { Job, Pipe, Queue, SQLiteStorage } from "../lib"
 import { z } from "zod"
 import assert from "node:assert"
 
-test('pipe trigger', async (t) => {
+test('pipe trigger', { timeout: 500 }, async (t) => {
 	const pipe = new Pipe({
 		id: 'pipe',
 		input: z.object({ in: z.string() }),
@@ -39,7 +39,7 @@ test('pipe trigger', async (t) => {
 })
 
 // skipped because it's too long (min duration for a cron is 1s)
-test.skip('cron triggers', async (t) => {
+test.skip('cron triggers', { timeout: 3000 }, async (t) => {
 	let executed = 0
 	const hello = new Job({
 		id: 'hello',

@@ -6,7 +6,7 @@ import Database from "better-sqlite3"
 import type { Step } from "../lib/storage"
 import { z } from "zod"
 
-test('sleep', async (t) => {
+test('sleep', { timeout: 500 }, async (t) => {
 
 	const aaa = new Job({
 		id: 'aaa',
@@ -55,7 +55,7 @@ test('sleep', async (t) => {
 })
 
 
-test('wait for job event', async (t) => {
+test('wait for job event', { timeout: 500 }, async (t) => {
 	const aaa = new Job({
 		id: 'aaa',
 		input: z.object({ in: z.number() }),
@@ -107,7 +107,7 @@ test('wait for job event', async (t) => {
 	await queue.close()
 })
 
-test('wait for pipe event', async (t) => {
+test('wait for pipe event', { timeout: 500 }, async (t) => {
 	const pipe = new Pipe({
 		id: 'pipe',
 		input: z.object({ in: z.number() }),
@@ -146,7 +146,7 @@ test('wait for pipe event', async (t) => {
 	await queue.close()
 })
 
-test('invoke', async (t) => {
+test('invoke', { timeout: 500 }, async (t) => {
 	let ranA = false
 	const aaa = new Job({
 		id: 'aaa',
@@ -177,7 +177,7 @@ test('invoke', async (t) => {
 	assert.equal(ranA, true, 'Job aaa should have ran')
 })
 
-test('cancel', async (t) => {
+test('cancel', { timeout: 500 }, async (t) => {
 	let done = false
 	const aaa = new Job({
 		id: 'aaa',

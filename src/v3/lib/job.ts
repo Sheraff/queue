@@ -105,6 +105,7 @@ export class Job<
 			output?: Validator<Out>
 			triggers?: NoInfer<Array<Pipe<string, In> | PipeInto<any, In>>>
 			/** The job must accept a `{date: '<ISO string>'}` input to use a cron schedule (or no input at all). */
+			// TODO: priority
 			cron?: NoInfer<In extends { date: string } ? string | string[] : InputData extends In ? string | string[] : never>
 			onTrigger?: (params: { input: In }) => void
 			onStart?: (params: { input: In }) => void

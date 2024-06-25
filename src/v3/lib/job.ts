@@ -1,9 +1,9 @@
 import EventEmitter from "events"
 import type { Data, DeepPartial, InputData, Validator } from "./types"
 import { Pipe, type PipeInto } from "./pipe"
-import { execution, registration, type ExecutionContext, type RegistrationContext } from "./context"
+import { execution, type ExecutionContext, type RegistrationContext } from "./context"
 import type { Step, Task } from "./storage"
-import { hash, hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError, serialize, serializeError } from "./utils"
+import { getRegistrationContext, hash, hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError, serialize, serializeError } from "./utils"
 import parseMs, { type StringValue } from 'ms'
 
 export type CancelReason =
@@ -11,7 +11,7 @@ export type CancelReason =
 	| { type: 'explicit' }
 	| { type: 'debounce', number: number }
 
-type EventMeta = { input: string, key: string }
+type EventMeta = { input: string, key: string, queue: string }
 
 type EventMap<In extends Data, Out extends Data> = {
 	trigger: [data: { input: In }, meta: EventMeta]
@@ -132,8 +132,7 @@ export class Job<
 				opts.onTrigger?.({ input })
 				const executionContext = execution.getStore()
 				if (typeof executionContext === 'object') throw new Error("Cannot call this method inside a job script. Prefer using `Job.dispatch()`, or calling it inside a `Job.run()`.")
-				const registrationContext = getRegistrationContext()
-				registrationContext.checkRegistration(this)
+				const registrationContext = getRegistrationContext(this)
 				registrationContext.recordEvent(`job/${this.id}/trigger`, meta.input, JSON.stringify({ input }))
 				registrationContext.addTask(this, input, meta.key, executionContext, (inserted) => {
 					if (inserted) return
@@ -155,27 +154,27 @@ export class Job<
 
 			this.#emitter.on('start', (input, meta) => {
 				opts.onStart?.(input)
-				const registrationContext = getRegistrationContext()
+				const registrationContext = getRegistrationContext(this)
 				registrationContext.recordEvent(`job/${this.id}/start`, meta.input, JSON.stringify({ input }))
 			})
 
 			this.#emitter.on('success', ({ input, result }, meta) => {
 				opts.onSuccess?.({ input, result })
-				const registrationContext = getRegistrationContext()
+				const registrationContext = getRegistrationContext(this)
 				registrationContext.recordEvent(`job/${this.id}/success`, meta.input, JSON.stringify({ input, result }))
 				setImmediate(() => this.#emitter.emit('settled', { input, result, error: null, reason: null }, meta))
 			})
 
 			this.#emitter.on('error', ({ input, error }, meta) => {
 				opts.onError?.({ input, error })
-				const registrationContext = getRegistrationContext()
+				const registrationContext = getRegistrationContext(this)
 				registrationContext.recordEvent(`job/${this.id}/error`, meta.input, JSON.stringify({ input, error }))
 				setImmediate(() => this.#emitter.emit('settled', { input, result: null, error, reason: null }, meta))
 			})
 
 			this.#emitter.on('cancel', ({ input, reason }, meta) => {
 				opts.onCancel?.({ input, reason: { type: 'explicit' } })
-				const registrationContext = getRegistrationContext()
+				const registrationContext = getRegistrationContext(this)
 				registrationContext.recordEvent(`job/${this.id}/cancel`, meta.input, JSON.stringify({ input, reason }))
 				// TODO: Update steps too? (to avoid leaving them in a state that would block stuff like concurrency)
 				registrationContext.resolveTask({
@@ -189,7 +188,7 @@ export class Job<
 
 			this.#emitter.on('settled', ({ input, result, error, reason }, meta) => {
 				opts.onSettled?.({ input, result, error, reason })
-				const registrationContext = getRegistrationContext()
+				const registrationContext = getRegistrationContext(this)
 				registrationContext.recordEvent(`job/${this.id}/settled`, meta.input, JSON.stringify({ input, result, error, reason }))
 			})
 		}
@@ -205,23 +204,42 @@ export class Job<
 		this.#emitter.removeAllListeners()
 	}
 
-	/** @public */
-	dispatch(input: In): void {
-		const _input = input ?? {}
-		const serialized = serialize(_input)
-		this.#emitter.emit('trigger', { input: _input }, { input: serialized, key: hash(serialized) })
-		return
+	/**
+	 * @public
+	 * 
+	 * Getter for the parent `queue` in the current context.
+	 * 
+	 * ```ts
+	 * myQueue.jobs.myJob.queue === myQueue
+	 * ```
+	 * 
+	 * @throws {Error} Will throw an error if called outside of a queue context.
+	 */
+	get queue() {
+		return getRegistrationContext(this).queue
 	}
 
 	/** @public */
-	cancel(input: In, reason: CancelReason): void {
+	dispatch(input: In): string {
+		const _input = input ?? {}
+		const serialized = serialize(_input)
+		const key = hash(serialized)
+		const registrationContext = getRegistrationContext(this)
+		this.#emitter.emit('trigger', { input: _input }, { input: serialized, key, queue: registrationContext.queue.id })
+		return key
+	}
+
+	/** @public */
+	cancel(input: In, reason: CancelReason): string {
 		// TODO: it feels weird to let the user set a reason, since user-land cancellation should be 'explicit' by definition
 		// but also, it's handy to be able to call this internally with a reason
 		// Technically we could `emit` directly internally? (And make the same change for `dispatch` too)
 		const _input = input ?? {}
 		const serialized = serialize(_input)
-		this.#emitter.emit('cancel', { input: _input, reason }, { input: serialized, key: hash(serialized) })
-		return
+		const key = hash(serialized)
+		const registrationContext = getRegistrationContext(this)
+		this.#emitter.emit('cancel', { input: _input, reason }, { input: serialized, key, queue: registrationContext.queue.id })
+		return key
 	}
 
 	/** @public */
@@ -286,9 +304,9 @@ export class Job<
 
 		const promise = execution.run(executionContext, async () => {
 			if (!task.started) {
-				this.#emitter.emit('start', { input }, { input: task.input, key: task.key })
+				this.#emitter.emit('start', { input }, { input: task.input, key: task.key, queue: registrationContext.queue.id })
 			} else {
-				this.#emitter.emit('run', { input }, { input: task.input, key: task.key })
+				this.#emitter.emit('run', { input }, { input: task.input, key: task.key, queue: registrationContext.queue.id })
 			}
 
 			let output: Data
@@ -341,7 +359,7 @@ export class Job<
 					return syncOrPromise<void>(resolve => {
 						registrationContext.resolveTask(task, 'failed', error, resolve)
 					}, () => {
-						this.#emitter.emit('error', { input, error }, { input: task.input, key: task.key })
+						this.#emitter.emit('error', { input, error }, { input: task.input, key: task.key, queue: registrationContext.queue.id })
 					})
 				}
 			}
@@ -350,7 +368,7 @@ export class Job<
 			return syncOrPromise<void>(resolve => {
 				registrationContext.resolveTask(task, 'completed', output, resolve)
 			}, () => {
-				this.#emitter.emit('success', { input, result: output as Out }, { input: task.input, key: task.key })
+				this.#emitter.emit('success', { input, result: output as Out }, { input: task.input, key: task.key, queue: registrationContext.queue.id })
 			})
 		})
 
@@ -643,13 +661,6 @@ function syncOrPromise<T>(
 	})
 	if (sync) return result! as T
 	return promise
-}
-
-
-function getRegistrationContext(): RegistrationContext {
-	const context = registration.getStore()
-	if (!context) throw new Error("Cannot call this method outside of the context of a queue.")
-	return context
 }
 
 function getExecutionContext(): ExecutionContext {

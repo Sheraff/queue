@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx --watch src/userland/main.ts",
     "foo": "tsx --watch --test src/v3/tests/**",
-    "bar": "tsx --watch --test src/v3/tests/basic.test.ts",
+    "bar": "tsx --watch --test src/v3/tests/resumable.test.ts",
     "test": "tsx --watch --test",
     "test:cov": "tsx --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=lcov.info",
     "tsc": "tsc --noEmit"

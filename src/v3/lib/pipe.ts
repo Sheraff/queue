@@ -1,5 +1,6 @@
 import { registration } from "./context"
 import type { InputData, Validator } from "./types"
+import { getRegistrationContext } from "./utils"
 
 export type PipeInto<In extends InputData, Out extends InputData> = [
 	pipe: Pipe<string, In>,
@@ -30,6 +31,21 @@ export class Pipe<
 
 	/**
 	 * @public
+	 * 
+	 * Getter for the parent `queue` in the current context.
+	 * 
+	 * ```ts
+	 * myQueue.pipes.myPipe.queue === myQueue
+	 * ```
+	 * 
+	 * @throws {Error} Will throw an error if called outside of a queue context.
+	 */
+	get queue() {
+		return getRegistrationContext(this).queue
+	}
+
+	/**
+	 * @public
 	 *
 	 * Dispatches the input data into the pipe.
 	 * 
@@ -52,9 +68,7 @@ export class Pipe<
 	 * ```
 	 */
 	dispatch(input: In): void {
-		const registrationContext = registration.getStore()
-		if (!registrationContext) throw new Error("Cannot call this method outside of the context of a queue.")
-		registrationContext.checkRegistration(this)
+		const registrationContext = getRegistrationContext(this)
 		const string = JSON.stringify(input)
 		registrationContext.recordEvent(`pipe/${this.id}`, string, string)
 		registrationContext.triggerJobsFromPipe(this, input)

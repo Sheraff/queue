@@ -1,5 +1,8 @@
 import { createHash } from "crypto"
 import type { Data } from "./types"
+import { registration, type RegistrationContext } from "./context"
+import type { Job } from "./job"
+import type { Pipe } from "./pipe"
 
 // https://github.com/erdtman/canonicalize/blob/master/lib/canonicalize.js
 export function serialize(object: Data): string {
@@ -88,4 +91,11 @@ export function hydrateError(serialized: string): Error {
 	if (obj.cause) error.cause = hydrateError(obj.cause)
 	return error
 
+}
+
+export function getRegistrationContext(job: Job | Pipe<string, any>): RegistrationContext {
+	const context = registration.getStore()
+	if (!context) throw new Error("Cannot call this method outside of the context of a queue.")
+	context.checkRegistration(job)
+	return context
 }

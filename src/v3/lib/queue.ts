@@ -45,6 +45,7 @@ export class Queue<
 			id,
 			new Proxy(job, {
 				get: (target, prop) => {
+					if (prop === 'queue') return this
 					const value = Reflect.get(job, prop, job)
 					if (typeof value !== 'function') return value
 					return (...args: any[]) => registration.run(this.#registrationContext, value.bind(target, ...args))
@@ -59,6 +60,7 @@ export class Queue<
 				id,
 				new Proxy(pipe, {
 					get: (target, prop) => {
+						if (prop === 'queue') return this
 						const value = Reflect.get(pipe, prop, pipe)
 						if (typeof value !== 'function') return value
 						return (...args: any[]) => registration.run(this.#registrationContext, value.bind(target, ...args))

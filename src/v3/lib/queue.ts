@@ -67,7 +67,10 @@ export class Queue<
 			])) as Pipes
 		}
 
-		this.#start()
+		for (const job of Object.values(this.jobs)) {
+			job.start()
+		}
+		this.#loop()
 		this.#cron(opts.cronScheduler)
 	}
 
@@ -80,7 +83,7 @@ export class Queue<
 		},
 		addTask: (job, data, key, parent, cb) => {
 			return this.storage.addTask({ queue: this.id, job: job.id, key, input: JSON.stringify(data), parent_id: parent ?? null }, (inserted: boolean) => {
-				if (inserted) this.#start()
+				if (inserted) this.#loop()
 				return cb(inserted)
 			})
 		},
@@ -95,7 +98,7 @@ export class Queue<
 			return this.storage.recordStep(task, step, cb)
 		},
 		recordEvent: (key, input, data) => {
-			return this.storage.recordEvent(this.id, key, input, data, () => this.#start())
+			return this.storage.recordEvent(this.id, key, input, data, () => this.#loop())
 		},
 		triggerJobsFromPipe: (pipe, input) => {
 			for (const job of Object.values(this.jobs)) {
@@ -131,7 +134,7 @@ export class Queue<
 			this.#running.add(promise)
 			promise.finally(() => {
 				this.#running.delete(promise)
-				this.#start()
+				this.#loop()
 			})
 
 			if (hasNext && this.#running.size < this.parallel) return this.#drain()
@@ -139,7 +142,7 @@ export class Queue<
 	}
 
 	// TODO: should this be public? Might be useful for cases where multiple queue workers are writing to the same storage, and we don't want to poll and would rather have a manual trigger.
-	#start() {
+	#loop() {
 		if (this.#willRun || this.#closed) return
 		if (this.#running.size >= this.parallel) return
 		this.#willRun = true
@@ -157,7 +160,7 @@ export class Queue<
 					if (this.#willRun || this.#closed) return
 					if (!result) return // program will exit unless something else (outside of this queue) is keeping it open
 					this.#sleepTimeout = setTimeout(
-						() => this.#start(),
+						() => this.#loop(),
 						Math.ceil(result.seconds * 1000)
 					)
 				})

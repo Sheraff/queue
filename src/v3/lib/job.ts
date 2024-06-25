@@ -122,74 +122,86 @@ export class Job<
 		this.triggers = opts.triggers as Array<Pipe<string, InputData> | PipeInto<any, InputData>>
 		this.cron = opts.cron
 
-		this.#emitter.on('trigger', ({ input }, meta) => {
-			opts.onTrigger?.({ input })
-			const executionContext = execution.getStore()
-			if (typeof executionContext === 'object') throw new Error("Cannot call this method inside a job script. Prefer using `Job.dispatch()`, or calling it inside a `Job.run()`.")
-			const registrationContext = getRegistrationContext()
-			registrationContext.checkRegistration(this)
-			registrationContext.recordEvent(`job/${this.id}/trigger`, meta.input, JSON.stringify({ input }))
-			registrationContext.addTask(this, input, meta.key, executionContext, (inserted) => {
-				if (inserted) return
-				registrationContext.queue.storage.getTask(registrationContext.queue.id, this.id, meta.key, (task) => {
-					if (!task) throw new Error('Task not found after insert')
-					if (task.status === 'failed') {
-						if (!task.data) throw new Error('Task previously failed, but no error data found')
-						setImmediate(() => this.#emitter.emit('error', { input, error: hydrateError(task.data!) }, meta))
-					} else if (task.status === 'completed') {
-						if (!task.data) throw new Error('Task previously completed, but no output data found')
-						setImmediate(() => this.#emitter.emit('success', { input, result: JSON.parse(task.data!) }, meta))
-					} else if (task.status === 'cancelled') {
-						if (!task.data) throw new Error('Task previously cancelled, but no reason data found')
-						setImmediate(() => this.#emitter.emit('cancel', { input, reason: JSON.parse(task.data!) }, meta))
-					}
+		this.start = () => {
+			if (this.#started) {
+				this.#started++
+				return
+			}
+			this.#started = 1
+			this.#emitter.on('trigger', ({ input }, meta) => {
+				opts.onTrigger?.({ input })
+				const executionContext = execution.getStore()
+				if (typeof executionContext === 'object') throw new Error("Cannot call this method inside a job script. Prefer using `Job.dispatch()`, or calling it inside a `Job.run()`.")
+				const registrationContext = getRegistrationContext()
+				registrationContext.checkRegistration(this)
+				registrationContext.recordEvent(`job/${this.id}/trigger`, meta.input, JSON.stringify({ input }))
+				registrationContext.addTask(this, input, meta.key, executionContext, (inserted) => {
+					if (inserted) return
+					registrationContext.queue.storage.getTask(registrationContext.queue.id, this.id, meta.key, (task) => {
+						if (!task) throw new Error('Task not found after insert')
+						if (task.status === 'failed') {
+							if (!task.data) throw new Error('Task previously failed, but no error data found')
+							setImmediate(() => this.#emitter.emit('error', { input, error: hydrateError(task.data!) }, meta))
+						} else if (task.status === 'completed') {
+							if (!task.data) throw new Error('Task previously completed, but no output data found')
+							setImmediate(() => this.#emitter.emit('success', { input, result: JSON.parse(task.data!) }, meta))
+						} else if (task.status === 'cancelled') {
+							if (!task.data) throw new Error('Task previously cancelled, but no reason data found')
+							setImmediate(() => this.#emitter.emit('cancel', { input, reason: JSON.parse(task.data!) }, meta))
+						}
+					})
 				})
 			})
-		})
 
-		this.#emitter.on('start', (input, meta) => {
-			opts.onStart?.(input)
-			const registrationContext = getRegistrationContext()
-			registrationContext.recordEvent(`job/${this.id}/start`, meta.input, JSON.stringify({ input }))
-		})
-
-		this.#emitter.on('success', ({ input, result }, meta) => {
-			opts.onSuccess?.({ input, result })
-			const registrationContext = getRegistrationContext()
-			registrationContext.recordEvent(`job/${this.id}/success`, meta.input, JSON.stringify({ input, result }))
-			setImmediate(() => this.#emitter.emit('settled', { input, result, error: null, reason: null }, meta))
-		})
-
-		this.#emitter.on('error', ({ input, error }, meta) => {
-			opts.onError?.({ input, error })
-			const registrationContext = getRegistrationContext()
-			registrationContext.recordEvent(`job/${this.id}/error`, meta.input, JSON.stringify({ input, error }))
-			setImmediate(() => this.#emitter.emit('settled', { input, result: null, error, reason: null }, meta))
-		})
-
-		this.#emitter.on('cancel', ({ input, reason }, meta) => {
-			opts.onCancel?.({ input, reason: { type: 'explicit' } })
-			const registrationContext = getRegistrationContext()
-			registrationContext.recordEvent(`job/${this.id}/cancel`, meta.input, JSON.stringify({ input, reason }))
-			// TODO: Update steps too? (to avoid leaving them in a state that would block stuff like concurrency)
-			registrationContext.resolveTask({
-				queue: registrationContext.queue.id,
-				job: this.id,
-				key: meta.key,
-			}, 'cancelled', JSON.stringify(reason), () => {
-				setImmediate(() => this.#emitter.emit('settled', { input, result: null, error: null, reason }, meta))
+			this.#emitter.on('start', (input, meta) => {
+				opts.onStart?.(input)
+				const registrationContext = getRegistrationContext()
+				registrationContext.recordEvent(`job/${this.id}/start`, meta.input, JSON.stringify({ input }))
 			})
-		})
 
-		this.#emitter.on('settled', ({ input, result, error, reason }, meta) => {
-			opts.onSettled?.({ input, result, error, reason })
-			const registrationContext = getRegistrationContext()
-			registrationContext.recordEvent(`job/${this.id}/settled`, meta.input, JSON.stringify({ input, result, error, reason }))
-		})
+			this.#emitter.on('success', ({ input, result }, meta) => {
+				opts.onSuccess?.({ input, result })
+				const registrationContext = getRegistrationContext()
+				registrationContext.recordEvent(`job/${this.id}/success`, meta.input, JSON.stringify({ input, result }))
+				setImmediate(() => this.#emitter.emit('settled', { input, result, error: null, reason: null }, meta))
+			})
+
+			this.#emitter.on('error', ({ input, error }, meta) => {
+				opts.onError?.({ input, error })
+				const registrationContext = getRegistrationContext()
+				registrationContext.recordEvent(`job/${this.id}/error`, meta.input, JSON.stringify({ input, error }))
+				setImmediate(() => this.#emitter.emit('settled', { input, result: null, error, reason: null }, meta))
+			})
+
+			this.#emitter.on('cancel', ({ input, reason }, meta) => {
+				opts.onCancel?.({ input, reason: { type: 'explicit' } })
+				const registrationContext = getRegistrationContext()
+				registrationContext.recordEvent(`job/${this.id}/cancel`, meta.input, JSON.stringify({ input, reason }))
+				// TODO: Update steps too? (to avoid leaving them in a state that would block stuff like concurrency)
+				registrationContext.resolveTask({
+					queue: registrationContext.queue.id,
+					job: this.id,
+					key: meta.key,
+				}, 'cancelled', JSON.stringify(reason), () => {
+					setImmediate(() => this.#emitter.emit('settled', { input, result: null, error: null, reason }, meta))
+				})
+			})
+
+			this.#emitter.on('settled', ({ input, result, error, reason }, meta) => {
+				opts.onSettled?.({ input, result, error, reason })
+				const registrationContext = getRegistrationContext()
+				registrationContext.recordEvent(`job/${this.id}/settled`, meta.input, JSON.stringify({ input, result, error, reason }))
+			})
+		}
 	}
 
+	#started = 0
+	/** @package */
+	start: () => void
 	/** @package */
 	close(): void {
+		this.#started--
+		if (this.#started > 0) return
 		this.#emitter.removeAllListeners()
 	}
 

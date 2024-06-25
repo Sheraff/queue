@@ -125,6 +125,11 @@ test.describe('memo', { timeout: 500 }, () => {
 
 		await queue.close()
 	})
+
+	test.todo('failed steps do not re-execute', async (t) => {
+
+	})
+
 	test('tasks do not re-execute', async (t) => {
 		let count = 0
 		const aaa = new Job({
@@ -150,6 +155,14 @@ test.describe('memo', { timeout: 500 }, () => {
 		assert.deepEqual(a, b, 'Task should have been memoized')
 
 		await queue.close()
+	})
+
+	test.todo('failed tasks do not re-execute', async (t) => {
+
+	})
+
+	test.todo('cancelled tasks do not re-execute', async (t) => {
+
 	})
 })
 
@@ -265,4 +278,12 @@ test('step error', { timeout: 500 }, async (t) => {
 	assert.strictEqual(runs, 1, 'Job should have been retried 0 times')
 
 	await queue.close()
+})
+
+test.todo('step error without backoff delay / with custom `retry` fn', async (t) => {
+
+})
+
+test.todo('parsing error (input / output)', async (t) => {
+
 })

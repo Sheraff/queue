@@ -4,7 +4,7 @@ import { Pipe, type PipeInto } from "./pipe"
 import { execution, registration, type ExecutionContext, type RegistrationContext } from "./context"
 import type { Step, Task } from "./storage"
 import { hash, hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError, serialize, serializeError } from "./utils"
-import parseMs, { type StringValue as DurationString } from 'ms'
+import parseMs, { type StringValue } from 'ms'
 
 export type CancelReason =
 	| { type: 'timeout', ms: number }
@@ -41,11 +41,12 @@ export type RunOptions = {
 	/**
 	 * Delay in milliseconds before next attempt.
 	 * 
-	 * If it's a function, it will be called with number of times the step has been run already.
+	 * - If it's a function, it will be called with number of times the step has been run already.
+	 * - If it's an array, it will be used as a table of delays (using the attempt number as lookup index), with the last one repeating indefinitely.
 	 * 
-	 * Defaults to 100ms.
+	 * Defaults to a list of delays that increase with each attempt: `"100ms", "30s", "2m", "10m", "30m", "1h", "2h", "12h", "1d"`
 	 */
-	backoff?: number | ((attempt: number) => number)
+	backoff?: number | StringValue | ((attempt: number) => number | StringValue) | number[] | StringValue[]
 	// timeout
 	// concurrency
 	// ...
@@ -221,7 +222,7 @@ export class Job<
 	}
 
 	/** @public */
-	static sleep(ms: number | DurationString): Promise<void> {
+	static sleep(ms: number | StringValue): Promise<void> {
 		const e = getExecutionContext()
 		if (typeof ms === 'string') ms = parseMs(ms)
 		return e.sleep(ms)
@@ -417,12 +418,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 						resolve
 					)
 				}
-				const delay = Math.max(
-					0,
-					typeof options.backoff === 'function'
-						? options.backoff(runs)
-						: options.backoff ?? 100
-				)
+				const delay = resolveBackoff(options.backoff, runs)
 				if (!delay) {
 					return registrationContext.recordStep(
 						task,
@@ -650,3 +646,23 @@ function getExecutionContext(): ExecutionContext {
 	if (!executionContext) throw new Error("Cannot call this method outside of a job function.")
 	return executionContext
 }
+
+function resolveBackoff(backoff: RunOptions['backoff'], runs: number) {
+	const called = typeof backoff === 'function' ? backoff(runs) : backoff ?? RETRY_TABLE
+	const item = Array.isArray(called) ? (called[runs - 1] ?? called.at(-1) ?? 100) : called
+	const value = typeof item === 'string' ? parseMs(item) : item
+	const delay = Math.max(0, value)
+	return delay
+}
+
+const RETRY_TABLE: StringValue[] = [
+	"100ms",
+	"30s",
+	"2m",
+	"10m",
+	"30m",
+	"1h",
+	"2h",
+	"12h",
+	"1d",
+]

@@ -176,3 +176,33 @@ test('invoke', async (t) => {
 	assert.deepEqual(result, { bar: 2 })
 	assert.equal(ranA, true, 'Job aaa should have ran')
 })
+
+test('cancel', async (t) => {
+	let done = false
+	const aaa = new Job({
+		id: 'aaa',
+	}, async () => {
+		await Job.sleep("100 ms")
+		done = true
+	})
+
+	const bbb = new Job({
+		id: 'bbb',
+	}, async () => {
+		await Job.cancel(aaa, {}, { type: 'explicit' })
+	})
+
+	const queue = new Queue({
+		id: 'cancel',
+		jobs: { aaa, bbb },
+		storage: new SQLiteStorage()
+	})
+
+	const promise = invoke(queue.jobs.aaa, {})
+	await new Promise(r => setTimeout(r, 10))
+	await invoke(queue.jobs.bbb, {})
+	await promise
+
+	assert.strictEqual(done, false)
+
+})

@@ -1,16 +1,16 @@
 import { AsyncLocalStorage } from "async_hooks"
 import type { Queue } from "./queue"
 import type { Pipe } from "./pipe"
-import type { Job, RunOptions, WaitForOptions } from "./job"
+import type { CancelReason, Job, RunOptions, WaitForOptions } from "./job"
 import type { Data, InputData } from "./types"
 import type { Step, Task } from "./storage"
 
 export interface RegistrationContext {
 	queue: Queue
 	checkRegistration(instance: Job<any, any, any> | Pipe<any, any>): void | never
-	addTask<T>(job: Job, data: Data, parent: number | undefined, cb: (key: string, inserted: boolean) => T): T | Promise<T>
-	resolveTask<T>(task: Task, status: 'completed' | 'cancelled', data: Data, cb: () => T): T | Promise<T>
-	resolveTask<T>(task: Task, status: 'failed', data: unknown, cb: () => T): T | Promise<T>
+	addTask<T>(job: Job, data: Data, key: string, parent: number | undefined, cb: (inserted: boolean) => T): T | Promise<T>
+	resolveTask<T>(task: { queue: string, job: string, key: string }, status: 'completed' | 'cancelled', data: Data, cb: () => T): T | Promise<T>
+	resolveTask<T>(task: { queue: string, job: string, key: string }, status: 'failed', data: unknown, cb: () => T): T | Promise<T>
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
 	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & { sleep_for?: number | null }, cb: () => T): T | Promise<T>
 	recordEvent(key: string, input: string, data: string): void
@@ -42,8 +42,10 @@ export interface ExecutionContext {
 	sleep(ms: number): Promise<void>
 	waitFor(instance: Job | Pipe, event: string, options: WaitForOptions<InputData>): Promise<Data>
 	invoke(job: Job, data: InputData): Promise<Data>
-	dispatch(instance: Job | Pipe, data: InputData): void
+	dispatch(instance: Job | Pipe, data: InputData): Promise<void>
+	cancel(instance: Job, input: InputData, reason: CancelReason): Promise<void>
 	promises: Promise<unknown>[]
+	cancelled: boolean
 }
 
 /**

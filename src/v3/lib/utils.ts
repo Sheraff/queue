@@ -62,7 +62,7 @@ function md5(input: string): string {
 }
 
 export function hash(input: Data) {
-	const string = serialize(input)
+	const string = typeof input === "string" ? input : serialize(input)
 	if (string.length < 40) return string
 	return md5(string)
 }

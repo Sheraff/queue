@@ -3,23 +3,27 @@ import type { Data, DeepPartial, InputData, Validator } from "./types"
 import { Pipe, type PipeInto } from "./pipe"
 import { execution, registration, type ExecutionContext, type RegistrationContext } from "./context"
 import type { Step, Task } from "./storage"
-import { hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError, serialize, serializeError } from "./utils"
+import { hash, hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError, serialize, serializeError } from "./utils"
 import parseMs, { type StringValue as DurationString } from 'ms'
 
-type CancelReason =
+export type CancelReason =
 	| { type: 'timeout', ms: number }
 	| { type: 'explicit' }
 	| { type: 'debounce', number: number }
 
+type EventMeta = { input: string, key: string }
+
 type EventMap<In extends Data, Out extends Data> = {
-	trigger: [data: { input: In }, meta: { input: string }]
-	start: [data: { input: In }, meta: { input: string }]
-	run: [data: { input: In }, meta: { input: string }]
-	success: [data: { input: In, result: Out }, meta: { input: string }]
-	error: [data: { input: In, error: unknown }, meta: { input: string }]
-	cancel: [data: { input: In, reason: CancelReason }, meta: { input: string }]
-	settled: [data: { input: In, result: Out | null, error: unknown | null, reason: CancelReason | null }, meta: { input: string }]
+	trigger: [data: { input: In }, meta: EventMeta]
+	start: [data: { input: In }, meta: EventMeta]
+	run: [data: { input: In }, meta: EventMeta]
+	success: [data: { input: In, result: Out }, meta: EventMeta]
+	error: [data: { input: In, error: unknown }, meta: EventMeta]
+	cancel: [data: { input: In, reason: CancelReason }, meta: EventMeta]
+	settled: [data: { input: In, result: Out | null, error: unknown | null, reason: CancelReason | null }, meta: EventMeta]
 }
+
+type Listener<In extends Data, Out extends Data, Event extends keyof EventMap<In, Out>> = (...args: EventMap<In, Out>[Event]) => void
 
 const system = Symbol('system')
 export type RunOptions = {
@@ -124,9 +128,9 @@ export class Job<
 			const registrationContext = getRegistrationContext()
 			registrationContext.checkRegistration(this)
 			registrationContext.recordEvent(`job/${this.id}/trigger`, meta.input, JSON.stringify({ input }))
-			registrationContext.addTask(this, input, executionContext, (key, inserted) => {
+			registrationContext.addTask(this, input, meta.key, executionContext, (inserted) => {
 				if (inserted) return
-				registrationContext.queue.storage.getTask(registrationContext.queue.id, this.id, key, (task) => {
+				registrationContext.queue.storage.getTask(registrationContext.queue.id, this.id, meta.key, (task) => {
 					if (!task) throw new Error('Task not found after insert')
 					if (task.status === 'failed') {
 						if (!task.data) throw new Error('Task previously failed, but no error data found')
@@ -162,12 +166,18 @@ export class Job<
 			setImmediate(() => this.#emitter.emit('settled', { input, result: null, error, reason: null }, meta))
 		})
 
-		this.#emitter.on('cancel', ({ input }, meta) => {
+		this.#emitter.on('cancel', ({ input, reason }, meta) => {
 			opts.onCancel?.({ input, reason: { type: 'explicit' } })
 			const registrationContext = getRegistrationContext()
-			const reason: CancelReason = { type: 'explicit' } // TODO: add reason
 			registrationContext.recordEvent(`job/${this.id}/cancel`, meta.input, JSON.stringify({ input, reason }))
-			setImmediate(() => this.#emitter.emit('settled', { input, result: null, error: null, reason }, meta))
+			// TODO: Update steps too? (to avoid leaving them in a state that would block stuff like concurrency)
+			registrationContext.resolveTask({
+				queue: registrationContext.queue.id,
+				job: this.id,
+				key: meta.key,
+			}, 'cancelled', JSON.stringify(reason), () => {
+				setImmediate(() => this.#emitter.emit('settled', { input, result: null, error: null, reason }, meta))
+			})
 		})
 
 		this.#emitter.on('settled', ({ input, result, error, reason }, meta) => {
@@ -185,7 +195,19 @@ export class Job<
 	/** @public */
 	dispatch(input: In): void {
 		const _input = input ?? {}
-		this.#emitter.emit('trigger', { input: _input }, { input: serialize(_input) })
+		const serialized = serialize(_input)
+		this.#emitter.emit('trigger', { input: _input }, { input: serialized, key: hash(serialized) })
+		return
+	}
+
+	/** @public */
+	cancel(input: In, reason: CancelReason): void {
+		// TODO: it feels weird to let the user set a reason, since user-land cancellation should be 'explicit' by definition
+		// but also, it's handy to be able to call this internally with a reason
+		// Technically we could `emit` directly internally? (And make the same change for `dispatch` too)
+		const _input = input ?? {}
+		const serialized = serialize(_input)
+		this.#emitter.emit('cancel', { input: _input, reason }, { input: serialized, key: hash(serialized) })
 		return
 	}
 
@@ -226,9 +248,15 @@ export class Job<
 	}
 
 	/** @public */
-	static dispatch<I extends Job | Pipe>(instance: I, data: I['in']): void {
+	static dispatch<I extends Job | Pipe>(instance: I, data: I['in']): Promise<void> {
 		const e = getExecutionContext()
 		return e.dispatch(instance, data)
+	}
+
+	/** @public */
+	static cancel<I extends Job>(instance: I, data: I['in'], reason: CancelReason): Promise<void> {
+		const e = getExecutionContext()
+		return e.cancel(instance, data, reason)
 	}
 
 	/** @package */
@@ -237,11 +265,17 @@ export class Job<
 
 		const executionContext = makeExecutionContext(registrationContext, task, steps)
 
+		const onCancel: Listener<In, Out, 'cancel'> = (_, { key }) => {
+			if (task.key !== key) return
+			executionContext.cancelled = true
+		}
+		this.#emitter.prependListener('cancel', onCancel)
+
 		const promise = execution.run(executionContext, async () => {
 			if (!task.started) {
-				this.#emitter.emit('start', { input }, { input: task.input })
+				this.#emitter.emit('start', { input }, { input: task.input, key: task.key })
 			} else {
-				this.#emitter.emit('run', { input }, { input: task.input })
+				this.#emitter.emit('run', { input }, { input: task.input, key: task.key })
 			}
 
 			let output: Data
@@ -282,25 +316,28 @@ export class Job<
 					return Promise.allSettled(executionContext.promises)
 						.then(() => new Promise(setImmediate)) // allow multiple jobs finishing a step on the same tick to continue in priority order
 						.then(() => {
-							// TODO: handle canceled task
+							this.#emitter.off('cancel', onCancel)
+							if (executionContext.cancelled) return
 							syncOrPromise<void>(resolve => {
 								registrationContext.requeueTask(task, resolve)
 							})
 						})
 				} else {
-					// if not cancelled, this is an actual user-land error
-					// TODO: handle cancellation
+					this.#emitter.off('cancel', onCancel)
+					if (executionContext.cancelled) return
 					return syncOrPromise<void>(resolve => {
 						registrationContext.resolveTask(task, 'failed', error, resolve)
 					}, () => {
-						this.#emitter.emit('error', { input, error }, { input: task.input })
+						this.#emitter.emit('error', { input, error }, { input: task.input, key: task.key })
 					})
 				}
 			}
+			this.#emitter.off('cancel', onCancel)
+			if (executionContext.cancelled) return
 			return syncOrPromise<void>(resolve => {
 				registrationContext.resolveTask(task, 'completed', output, resolve)
 			}, () => {
-				this.#emitter.emit('success', { input, result: output as Out }, { input: task.input })
+				this.#emitter.emit('success', { input, result: output as Out }, { input: task.input, key: task.key })
 			})
 		})
 
@@ -309,6 +346,8 @@ export class Job<
 }
 
 function makeExecutionContext(registrationContext: RegistrationContext, task: Task, steps: Step[]): ExecutionContext {
+	let cancelled = false
+
 	const promises: Promise<any>[] = []
 
 	const indexes = {
@@ -324,6 +363,10 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 	}
 
 	const run: ExecutionContext['run'] = async (options, fn) => {
+		if (cancelled) {
+			await Promise.resolve()
+			throw interrupt
+		}
 		const index = getIndex(options.id, options[system] ?? false)
 		const step = `${options[system] ? 'system' : 'user'}/${options.id}#${index}`
 		const entry = steps.find(s => s.step === step)
@@ -359,7 +402,8 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 			})
 		}
 		const onError = (error: unknown) => {
-			if (error instanceof NonRecoverableError) canRetry = false
+			if (cancelled) canRetry = false
+			else if (error instanceof NonRecoverableError) canRetry = false
 			else {
 				const retry = options.retry ?? 3
 				if (typeof retry === 'number') canRetry = runs < retry
@@ -434,6 +478,10 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 	}
 
 	const sleep: ExecutionContext['sleep'] = async (ms) => {
+		if (cancelled) {
+			await Promise.resolve()
+			throw interrupt
+		}
 		const index = getIndex('sleep', true)
 		const step = `system/sleep#${index}`
 		const entry = steps.find(s => s.step === step)
@@ -473,6 +521,10 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 	}
 
 	const waitFor: ExecutionContext['waitFor'] = async (instance, event, options) => {
+		if (cancelled) {
+			await Promise.resolve()
+			throw interrupt
+		}
 		const name = `waitFor::${instance.type}::${instance.id}::${event}`
 		const index = getIndex(name, true)
 		const step = `system/${name}#${index}`
@@ -526,25 +578,57 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		throw interrupt
 	}
 
-	const dispatch: ExecutionContext['dispatch'] = (instance, data) => {
+	const dispatch: ExecutionContext['dispatch'] = async (instance, data) => {
+		if (cancelled) {
+			await Promise.resolve()
+			throw interrupt
+		}
 		run({
 			id: `dispatch-${instance.type}-${instance.id}`,
 			[system]: true,
-			// retry 0
+			retry: 0,
 		}, () => {
 			instance.dispatch(data)
 		})
 	}
 
 	const invoke: ExecutionContext['invoke'] = async (job, input) => {
+		if (cancelled) {
+			await Promise.resolve()
+			throw interrupt
+		}
 		const promise = waitFor(job, 'settled', { filter: input })
-		dispatch(job, input)
+		await dispatch(job, input)
 		const { result, error } = (await promise) as { result: Data, error: unknown }
 		if (error) throw error
 		return result
 	}
 
-	return { run, sleep, waitFor, dispatch, invoke, promises }
+	const cancel: ExecutionContext['cancel'] = async (instance, data, reason) => {
+		if (cancelled) {
+			await Promise.resolve()
+			throw interrupt
+		}
+		run({
+			id: `cancel-${instance.type}-${instance.id}`,
+			[system]: true,
+			retry: 0
+		}, () => {
+			instance.cancel(data, reason)
+		})
+	}
+
+	return {
+		run,
+		sleep,
+		waitFor,
+		dispatch,
+		invoke,
+		cancel,
+		promises,
+		get cancelled() { return cancelled },
+		set cancelled(value) { cancelled = value },
+	}
 }
 
 /**

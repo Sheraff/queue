@@ -100,7 +100,7 @@ export interface Storage {
 	 */
 	nextFutureTask<T>(queue: string, cb: (result: { seconds: number } | undefined) => T): T | Promise<T>
 	/** Final update to a task, sets the status and the corresponding data */
-	resolveTask<T>(task: Task, status: 'completed' | 'failed' | 'cancelled', data: string | null, cb?: () => T): T | Promise<T>
+	resolveTask<T>(task: { queue: string, job: string, key: string }, status: 'completed' | 'failed' | 'cancelled', data: string | null, cb?: () => T): T | Promise<T>
 	/** Set the task back to 'pending' after the step promises it was waiting for resolved. It can be picked up again. */
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
 	/** Insert or update a step based on unique index queue+job+key+step */
@@ -171,6 +171,13 @@ export class SQLiteStorage implements Storage {
 				created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 				updated_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 				sleep_until INTEGER,
+				-- sleep_done INTEGER GENERATED ALWAYS AS (
+				-- 	CASE
+				-- 		WHEN sleep_until IS NULL THEN NULL
+				-- 		WHEN ((sleep_until) <= unixepoch('subsec')) THEN TRUE
+				-- 		ELSE FALSE
+				-- 	END
+				-- ) VIRTUAL,
 				wait_for TEXT,
 				wait_filter JSON,
 				wait_retroactive BOOLEAN,
@@ -499,7 +506,7 @@ export class SQLiteStorage implements Storage {
 		return cb(result)
 	}
 
-	resolveTask<T>(task: Task, status: "completed" | "failed" | "cancelled", data: string | null, cb?: () => T): T {
+	resolveTask<T>(task: { queue: string, job: string, key: string }, status: "completed" | "failed" | "cancelled", data: string | null, cb?: () => T): T {
 		this.#resolveTaskStmt.run({ queue: task.queue, job: task.job, key: task.key, status, data })
 		return cb?.() as T
 	}

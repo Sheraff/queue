@@ -45,6 +45,7 @@ type StepStatus =
 
 export type Step = {
 	id: number
+	task_id: number
 	queue: string
 	job: string
 	key: string
@@ -54,6 +55,7 @@ export type Step = {
 	 */
 	step: string
 	status: StepStatus
+	next_status?: StepStatus | null
 	runs: number
 	created_at: number
 
@@ -83,6 +85,7 @@ export interface Storage {
 	 * - retrieve the next task to run immediately, if none, return undefined;
 	 * - update that next task's status to 'running' (to avoid another worker picking up the same one) and set `started` to true (to trigger the start event);
 	 * - retrieve all steps for that task (if any);
+	 * - for every retrieved step that needs to update its status (stalled, waiting), update it to the next_status if available;
 	 * - retrieve a boolean indicating whether there is another task to run immediately after this one.
 	 */
 	startNextTask<T>(queue: string, cb: (task: [task: Task, steps: Step[], hasNext: boolean] | undefined) => T): T | Promise<T>
@@ -107,8 +110,6 @@ export interface Storage {
 	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & { sleep_for?: number | null }, cb: () => T): T | Promise<T>
 	/** Append event to table */
 	recordEvent<T>(queue: string, key: string, input: string, data: string, cb?: () => T): T | Promise<T>
-	/** Called with a step in 'waiting' status, should retrieve the 1st event that satisfies the `wait_` conditions */
-	resolveEvent<T>(step: Step, cb: (data: string | undefined) => T): T | Promise<T>
 }
 
 export class SQLiteStorage implements Storage {
@@ -167,17 +168,11 @@ export class SQLiteStorage implements Storage {
 				key TEXT NOT NULL,
 				step TEXT NOT NULL,
 				status TEXT NOT NULL,
+				next_status TEXT,
 				runs INTEGER NOT NULL DEFAULT 0,
 				created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 				updated_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 				sleep_until INTEGER,
-				-- sleep_done INTEGER GENERATED ALWAYS AS (
-				-- 	CASE
-				-- 		WHEN sleep_until IS NULL THEN NULL
-				-- 		WHEN ((sleep_until) <= unixepoch('subsec')) THEN TRUE
-				-- 		ELSE FALSE
-				-- 	END
-				-- ) VIRTUAL,
 				wait_for TEXT,
 				wait_filter JSON,
 				wait_retroactive BOOLEAN,
@@ -313,6 +308,28 @@ export class SQLiteStorage implements Storage {
 			if (!task) return
 			reserveTaskStmt.run(task)
 			const steps = getTaskStepDataStmt.all(task)
+			for (let i = 0; i < steps.length; i++) {
+				const step = steps[i]!
+				if (step.status === 'waiting') {
+					const event = matchStepEventStmt.get({ step_id: step.id })
+					if (!event) continue
+					// @ts-ignore -- TODO: the types of Step in, Step out are a mess
+					steps[i] = this.#recordStepStmt.get({
+						...step,
+						sleep_for: null,
+						status: 'completed',
+						data: event.data,
+					})
+				} else if (step.status === 'stalled' && step.sleep_done) {
+					if (!step.next_status) continue
+					// @ts-ignore -- TODO: the types of Step in, Step out are a mess
+					steps[i] = this.#recordStepStmt.get({
+						...step,
+						sleep_for: null,
+						status: step.next_status,
+					})
+				}
+			}
 			return [task, steps, !!next] as [Task, Step[], boolean]
 		})
 
@@ -349,6 +366,7 @@ export class SQLiteStorage implements Storage {
 			runs: number
 			task_id: number
 			status: StepStatus
+			next_status: StepStatus | null
 			sleep_for: number | null
 			wait_for: string | null
 			wait_filter: string | null
@@ -363,6 +381,7 @@ export class SQLiteStorage implements Storage {
 				runs,
 				task_id,
 				status,
+				next_status,
 				sleep_until,
 				wait_for,
 				wait_filter,
@@ -377,6 +396,7 @@ export class SQLiteStorage implements Storage {
 				@runs,
 				@task_id,
 				@status,
+				@next_status,
 				CASE @sleep_for WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @sleep_for) END,
 				@wait_for,
 				@wait_filter,
@@ -386,10 +406,12 @@ export class SQLiteStorage implements Storage {
 			ON CONFLICT (queue, job, key, step)
 			DO UPDATE SET
 				status = @status,
+				next_status = @next_status,
 				updated_at = unixepoch('subsec'),
 				runs = @runs,
 				sleep_until = CASE @sleep_for WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @sleep_for) END,
 				data = @data
+			RETURNING *
 		`)
 
 		this.#recordEventStmt = this.#db.prepare<{ queue: string, key: string, input: string, data: string }>(/* sql */ `
@@ -446,21 +468,6 @@ export class SQLiteStorage implements Storage {
 			ORDER BY time_distance ASC
 			LIMIT 1
 		`)
-		const resolveStepEventStmt = this.#db.prepare<{ step_id: number, data: string }>(/* sql */ `
-			UPDATE ${stepsTable}
-			SET
-				status = 'completed',
-				updated_at = unixepoch('subsec'),
-				data = @data
-			WHERE id = @step_id
-		`)
-
-		this.#resolveStepEventTx = this.#db.transaction((step_id: number) => {
-			const event = matchStepEventStmt.get({ step_id })
-			if (!event) return
-			resolveStepEventStmt.run({ step_id, data: event.data })
-			return event.data
-		})
 	}
 
 	#getTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string }, Task | undefined>
@@ -477,6 +484,7 @@ export class SQLiteStorage implements Storage {
 		step: string
 		runs: number
 		status: StepStatus
+		next_status: StepStatus | null
 		sleep_for: number | null
 		wait_for: string | null
 		wait_filter: string | null
@@ -484,7 +492,6 @@ export class SQLiteStorage implements Storage {
 		data: string | null
 	}>
 	#recordEventStmt: BetterSqlite3.Statement<{ queue: string, key: string, input: string, data: string }>
-	#resolveStepEventTx: BetterSqlite3.Transaction<(step_id: number) => string | undefined>
 
 	getTask<T>(queue: string, job: string, key: string, cb: (task: Task | undefined) => T): T {
 		const task = this.#getTaskStmt.get({ queue, job, key })
@@ -516,7 +523,7 @@ export class SQLiteStorage implements Storage {
 		return cb() as T
 	}
 
-	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & { sleep_for?: number }, cb: () => T): T {
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'next_status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & { sleep_for?: number }, cb: () => T): T {
 		this.#recordStepStmt.run({
 			queue: task.queue,
 			job: task.job,
@@ -525,6 +532,7 @@ export class SQLiteStorage implements Storage {
 			task_id: task.id,
 			data: step.data,
 			status: step.status,
+			next_status: step.next_status ?? null,
 			sleep_for: step.sleep_for ?? null,
 			wait_for: step.wait_for ?? null,
 			wait_filter: step.wait_filter ?? null,
@@ -537,11 +545,6 @@ export class SQLiteStorage implements Storage {
 	recordEvent<T>(queue: string, key: string, input: string, data: string, cb?: () => T): T {
 		this.#recordEventStmt.run({ queue, key, input, data })
 		return cb?.() as T
-	}
-
-	resolveEvent<T>(step: Step, cb: (data: string | undefined) => T): T {
-		const data = this.#resolveStepEventTx.exclusive(step.id)
-		return cb(data)
 	}
 
 	close() {

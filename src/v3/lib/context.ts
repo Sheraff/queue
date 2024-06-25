@@ -12,9 +12,8 @@ export interface RegistrationContext {
 	resolveTask<T>(task: { queue: string, job: string, key: string }, status: 'completed' | 'cancelled', data: Data, cb: () => T): T | Promise<T>
 	resolveTask<T>(task: { queue: string, job: string, key: string }, status: 'failed', data: unknown, cb: () => T): T | Promise<T>
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
-	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & { sleep_for?: number | null }, cb: () => T): T | Promise<T>
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'next_status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & { sleep_for?: number | null }, cb: () => T): T | Promise<T>
 	recordEvent(key: string, input: string, data: string): void
-	resolveEvent<T>(step: Step, cb: (data: string) => T): T | Promise<T>
 	triggerJobsFromPipe(pipe: Pipe<string, any>, input: InputData): void
 }
 

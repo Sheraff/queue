@@ -432,7 +432,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				}
 				registrationContext.recordStep(
 					task,
-					{ step, status: 'stalled', data: null, runs, sleep_for: delay / 1000 },
+					{ step, status: 'stalled', data: null, runs, sleep_for: delay / 1000, next_status: 'pending' },
 					resolve
 				)
 			})
@@ -488,28 +488,17 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		if (entry) {
 			if (entry.status === 'completed') return
 			if (entry.sleep_done === null) throw new Error('Sleep step already created, but no duration found')
-			if (entry.sleep_done) {
-				const maybePromise = syncOrPromise<void>(resolve => {
-					registrationContext.recordStep(
-						task,
-						{ step, status: 'completed', data: null, sleep_for: entry.sleep_for, runs: 0 },
-						resolve
-					)
-				})
-				if (isPromise(maybePromise)) {
-					promises.push(maybePromise)
-					return maybePromise
-				}
-				return
+			if (entry.sleep_done) throw new Error('Sleep step already completed')
+			if (!entry.sleep_done) {
+				await Promise.resolve()
+				throw interrupt
 			}
-			await Promise.resolve()
-			throw interrupt
 		}
 		const status = ms <= 0 ? 'completed' : 'stalled'
 		const maybePromise = syncOrPromise<void>(resolve => {
 			registrationContext.recordStep(
 				task,
-				{ step, status, data: null, sleep_for: ms / 1000, runs: 0 },
+				{ step, status, data: null, sleep_for: ms / 1000, runs: 0, next_status: 'completed' },
 				resolve
 			)
 		})
@@ -538,15 +527,8 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				if (!entry.data) throw new Error('Step marked as failed in storage, but no error data found')
 				throw hydrateError(entry.data)
 			} else if (entry.status === 'waiting') {
-				const maybePromise = syncOrPromise<string>(resolve => {
-					registrationContext.resolveEvent(entry, resolve)
-				})
-				if (isPromise(maybePromise)) {
-					promises.push(maybePromise)
-					await Promise.resolve()
-					throw interrupt
-				}
-				return JSON.parse(maybePromise as string)
+				await Promise.resolve()
+				throw interrupt
 			} else {
 				throw new Error(`Unexpected waitFor step status ${entry.status}`)
 			}

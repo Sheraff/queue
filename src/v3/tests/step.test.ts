@@ -204,5 +204,38 @@ test('cancel', { timeout: 500 }, async (t) => {
 	await promise
 
 	assert.strictEqual(done, false)
+})
 
+test('dispatch', async (t) => {
+	const aaa = new Job({
+		id: 'aaa',
+		input: z.object({ in: z.number() }),
+		output: z.object({ foo: z.number() })
+	}, async (input) => {
+		const foo = await Job.run('simple', () => input.in)
+		return { foo }
+	})
+
+	const bbb = new Job({
+		id: 'bbb',
+	}, async () => {
+		await Job.dispatch(aaa, { in: 1 })
+	})
+
+	const queue = new Queue({
+		id: 'dispatch',
+		jobs: { aaa, bbb },
+		storage: new SQLiteStorage()
+	})
+
+	const promise = new Promise(r => {
+		queue.jobs.aaa.emitter.once('success', ({ result }) => r(result))
+	})
+
+	await invoke(queue.jobs.bbb, {})
+
+	const result = await promise
+	assert.deepEqual(result, { foo: 1 })
+
+	await queue.close()
 })

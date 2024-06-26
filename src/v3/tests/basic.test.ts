@@ -1,4 +1,4 @@
-import test from "node:test"
+import test, { mock } from "node:test"
 import { Job, Queue, SQLiteStorage } from "../lib"
 import { z } from "zod"
 import assert from "assert"
@@ -126,8 +126,37 @@ test.describe('memo', { timeout: 500 }, () => {
 		await queue.close()
 	})
 
-	test.todo('failed steps do not re-execute', async (t) => {
+	test('failed steps do not re-execute', async (t) => {
+		let count = 0
+		const aaa = new Job({
+			id: 'aaa',
+			input: z.object({ a: z.number() }),
+			output: z.object({ b: z.number() }),
+		}, async (input) => {
+			let next = input.a
+			next = await Job.run({ id: 'add-one', retry: 1 }, async () => {
+				count++
+				throw new Error('Step error')
+			})
+			return { b: next }
+		})
 
+		const queue = new Queue({
+			id: 'basic',
+			jobs: { aaa },
+			storage: new SQLiteStorage()
+		})
+
+		queue.jobs.aaa.dispatch({ a: 1 })
+		queue.jobs.aaa.dispatch({ a: 1 })
+		queue.jobs.aaa.dispatch({ a: 1 })
+		queue.jobs.aaa.dispatch({ a: 2 })
+		queue.jobs.aaa.dispatch({ a: 2 })
+		await invoke(queue.jobs.aaa, { a: 2 }).catch(() => { })
+
+		assert.strictEqual(count, 2, 'Step should have been memoized')
+
+		await queue.close()
 	})
 
 	test('tasks do not re-execute', async (t) => {
@@ -157,12 +186,35 @@ test.describe('memo', { timeout: 500 }, () => {
 		await queue.close()
 	})
 
-	test.todo('failed tasks do not re-execute', async (t) => {
+	test('failed tasks do not re-execute', async (t) => {
+		let count = 0
+		const aaa = new Job({
+			id: 'aaa',
+			output: z.object({ b: z.number() }),
+		}, async () => {
+			count++
+			const next = await Job.run({ id: 'add-one', retry: 1 }, async () => {
+				throw new Error('Step error')
+			})
+			return { b: next }
+		})
 
+		const queue = new Queue({
+			id: 'basic',
+			jobs: { aaa },
+			storage: new SQLiteStorage()
+		})
+
+		await invoke(queue.jobs.aaa, { a: 1 }).catch(() => { })
+		const afterFirst = count
+		await invoke(queue.jobs.aaa, { a: 1 }).catch(() => { })
+		assert.strictEqual(count, afterFirst, 'Task should have been memoized')
+
+		await queue.close()
 	})
 
 	test.todo('cancelled tasks do not re-execute', async (t) => {
-
+		// Or should they re-execute?
 	})
 })
 
@@ -280,10 +332,113 @@ test('step error', { timeout: 500 }, async (t) => {
 	await queue.close()
 })
 
-test.todo('step error without backoff delay / with custom `retry` fn', async (t) => {
+test('step error without backoff delay / with custom `retry` fn', { timeout: 500 }, async (t) => {
+	let count = 0
+	const aaa = new Job({
+		id: 'aaa',
+		onStart(params) {
+			performance.mark(`start`)
+		},
+		onError(params) {
+			performance.mark(`error`)
+		},
+	}, async () => Job.run({
+		id: 'add-one',
+		backoff: 0,
+		retry(attempt, error) {
+			return attempt < 3
+		},
+	}, async () => {
+		count++
+		throw new Error('Step error')
+	})
+	)
 
+	const db = new Database()
+	db.pragma('journal_mode = WAL')
+
+	const queue = new Queue({
+		id: 'basic',
+		jobs: { aaa },
+		storage: new SQLiteStorage({ db })
+	})
+
+	await invoke(queue.jobs.aaa, { a: 1 }).catch(() => { })
+	t.diagnostic(`Runs to complete the job: ${count}`)
+
+	const steps = db.prepare('SELECT * FROM steps').all() as Step[]
+	assert.equal(steps.length, 1)
+	assert.equal(steps[0]!.status, 'failed')
+	assert.equal(steps[0]!.runs, 3)
+	assert.equal(count, 3)
+
+	const duration = performance.measure('test', 'start', 'error').duration
+	t.diagnostic(`Duration: ${duration.toFixed(2)}ms`)
+	assert(duration < 1, 'Duration should be less than 1ms')
+
+	await queue.close()
+	db.close()
+	performance.clearMarks()
 })
 
-test.todo('parsing error (input / output)', async (t) => {
+test('parsing error (input / output)', { timeout: 500 }, async (t) => {
+	const aaa = new Job({
+		id: 'aaa',
+		input: z.object({ a: z.union([z.number(), z.string()]) }),
+		output: z.object({ b: z.number() }),
+	}, async (input) => {
+		return { b: input.a }
+	})
 
+	const db = new Database()
+	db.pragma('journal_mode = WAL')
+
+	const queue = new Queue({
+		id: 'basic',
+		jobs: { aaa },
+		storage: new SQLiteStorage({ db })
+	})
+
+	normal: {
+		const fn = mock.fn()
+		await invoke(queue.jobs.aaa, { a: 1 }).catch(fn)
+		assert.equal(fn.mock.calls.length, 0)
+
+		const [input, output, ...rest] = db.prepare('SELECT * FROM steps').all() as Step[]
+		assert.equal(input!.status, 'completed')
+		assert.equal(input!.step, 'system/parse-input#0')
+		assert.equal(output!.status, 'completed')
+		assert.equal(output!.step, 'system/parse-output#0')
+		assert.equal(rest.length, 0)
+		db.exec('DELETE FROM steps')
+	}
+	input: {
+		const fn = mock.fn()
+		// @ts-expect-error -- purposefully testing passing an invalid input
+		await invoke(queue.jobs.aaa, { a: true }).catch(fn)
+		assert.equal(fn.mock.calls.length, 1)
+
+		const [input, output, ...rest] = db.prepare('SELECT * FROM steps').all() as Step[]
+		assert.equal(input!.status, 'failed')
+		assert.equal(input!.step, 'system/parse-input#0')
+		assert.equal(output, undefined)
+		assert.equal(rest.length, 0)
+		db.exec('DELETE FROM steps')
+	}
+	output: {
+		const fn = mock.fn()
+		await invoke(queue.jobs.aaa, { a: '1' }).catch(fn)
+		assert.equal(fn.mock.calls.length, 1)
+
+		const [input, output, ...rest] = db.prepare('SELECT * FROM steps').all() as Step[]
+		assert.equal(input!.status, 'completed')
+		assert.equal(input!.step, 'system/parse-input#0')
+		assert.equal(output!.status, 'failed')
+		assert.equal(output!.step, 'system/parse-output#0')
+		assert.equal(rest.length, 0)
+		db.exec('DELETE FROM steps')
+	}
+
+	await queue.close()
+	db.close()
 })

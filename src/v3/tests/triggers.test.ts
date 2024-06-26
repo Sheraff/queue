@@ -57,7 +57,10 @@ test('pipe trigger (w/ & w/o `into` transform)', { timeout: 500 }, async (t) => 
 })
 
 // skipped because it's too long (min duration for a cron is 1s)
-test.skip('cron triggers', { timeout: 3000 }, async (t) => {
+test('cron triggers', {
+	timeout: 3000,
+	skip: !process.env.CI
+}, async (t) => {
 	let executed = 0
 	const hello = new Job({
 		id: 'hello',

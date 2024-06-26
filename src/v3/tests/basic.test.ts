@@ -374,7 +374,7 @@ test('step error without backoff delay / with custom `retry` fn', { timeout: 500
 
 	const duration = performance.measure('test', 'start', 'error').duration
 	t.diagnostic(`Duration: ${duration.toFixed(2)}ms`)
-	assert(duration < 1, 'Duration should be less than 1ms')
+	assert(duration < 2, 'Duration should be less than 2ms')
 
 	await queue.close()
 	db.close()

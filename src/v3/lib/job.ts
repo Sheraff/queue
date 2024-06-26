@@ -105,7 +105,7 @@ export class Job<
 			output?: Validator<Out>
 			triggers?: NoInfer<Array<Pipe<string, In> | PipeInto<any, In>>>
 			/** The job must accept a `{date: '<ISO string>'}` input to use a cron schedule (or no input at all). */
-			// TODO: priority
+			priority?: number | ((input: NoInfer<In>) => number)
 			cron?: NoInfer<In extends { date: string } ? string | string[] : InputData extends In ? string | string[] : never>
 			onTrigger?: (params: { input: In }) => void
 			onStart?: (params: { input: In }) => void
@@ -143,7 +143,8 @@ export class Job<
 				if (typeof executionContext === 'object') throw new Error("Cannot call this method inside a job script. Prefer using `Job.dispatch()`, or calling it inside a `Job.run()`.")
 				const registrationContext = getRegistrationContext(this)
 				registrationContext.recordEvent(`job/${this.id}/trigger`, meta.input, JSON.stringify({ input }))
-				registrationContext.addTask(this, input, meta.key, executionContext, (inserted) => {
+				const priority = typeof opts.priority === 'function' ? opts.priority(input) : opts.priority ?? 0
+				registrationContext.addTask(this, input, meta.key, executionContext, priority, (inserted) => {
 					if (inserted) return
 					registrationContext.queue.storage.getTask(registrationContext.queue.id, this.id, meta.key, (task) => {
 						if (!task) throw new Error('Task not found after insert')

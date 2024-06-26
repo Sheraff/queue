@@ -8,7 +8,7 @@ import type { Step, Task } from "./storage"
 export interface RegistrationContext {
 	queue: Queue
 	checkRegistration(instance: Job<any, any, any> | Pipe<any, any>): void | never
-	addTask<T>(job: Job, data: Data, key: string, parent: number | undefined, cb: (inserted: boolean) => T): T | Promise<T>
+	addTask<T>(job: Job, data: Data, key: string, parent: number | undefined, priority: number, cb: (inserted: boolean) => T): T | Promise<T>
 	resolveTask<T>(task: { queue: string, job: string, key: string }, status: 'completed' | 'cancelled', data: Data, cb: () => T): T | Promise<T>
 	resolveTask<T>(task: { queue: string, job: string, key: string }, status: 'failed', data: unknown, cb: () => T): T | Promise<T>
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>

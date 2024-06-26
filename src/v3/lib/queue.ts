@@ -83,8 +83,8 @@ export class Queue<
 			if (instance instanceof Pipe) return console.assert(this.pipes && instance.id in this.pipes, `Pipe ${instance.id} not registered in queue ${this.id}`)
 			throw new Error('Unknown instance type')
 		},
-		addTask: (job, data, key, parent, cb) => {
-			return this.storage.addTask({ queue: this.id, job: job.id, key, input: JSON.stringify(data), parent_id: parent ?? null }, (inserted: boolean) => {
+		addTask: (job, data, key, parent, priority, cb) => {
+			return this.storage.addTask({ queue: this.id, job: job.id, key, input: JSON.stringify(data), parent_id: parent ?? null, priority }, (inserted: boolean) => {
 				if (inserted) this.#loop()
 				return cb(inserted)
 			})

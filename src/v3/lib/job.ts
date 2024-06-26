@@ -123,6 +123,14 @@ export class Job<
 		this.triggers = opts.triggers as Array<Pipe<string, InputData> | PipeInto<any, InputData>>
 		this.cron = opts.cron
 
+		if (this.cron && this.input) {
+			try {
+				this.input.parse({ date: new Date().toISOString() })
+			} catch (error) {
+				throw new TypeError(`Job ${this.id} has a cron trigger but its input validator does not accept {date: '<ISO string>'} as an input.`)
+			}
+		}
+
 		this.start = () => {
 			if (this.#started) {
 				this.#started++
@@ -214,7 +222,7 @@ export class Job<
 	 * myQueue.jobs.myJob.queue === myQueue
 	 * ```
 	 * 
-	 * @throws {Error} Will throw an error if called outside of a queue context.
+	 * @throws {ReferenceError} Will throw an error if called outside of a queue context.
 	 */
 	get queue() {
 		return getRegistrationContext(this).queue

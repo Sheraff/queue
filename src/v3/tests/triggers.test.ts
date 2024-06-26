@@ -3,17 +3,25 @@ import { Job, Pipe, Queue, SQLiteStorage } from "../lib"
 import { z } from "zod"
 import assert from "node:assert"
 
-test('pipe trigger with `into` transform', { timeout: 500 }, async (t) => {
+test('pipe trigger (w/ & w/o `into` transform)', { timeout: 500 }, async (t) => {
 	const pipe = new Pipe({
 		id: 'pipe',
 		input: z.object({ in: z.string() }),
+	})
+
+	const other = new Pipe({
+		id: 'other',
+		input: z.object({ in: z.number() }),
 	})
 
 	const aaa = new Job({
 		id: 'aaa',
 		input: z.object({ in: z.number() }),
 		output: z.object({ foo: z.number() }),
-		triggers: [pipe.into((input) => ({ in: Number(input.in) }))]
+		triggers: [
+			pipe.into((input) => ({ in: Number(input.in) })),
+			other,
+		]
 	}, async (input) => {
 		return { foo: input.in }
 	})
@@ -21,25 +29,31 @@ test('pipe trigger with `into` transform', { timeout: 500 }, async (t) => {
 	const queue = new Queue({
 		id: 'wait-for-pipe',
 		jobs: { aaa },
-		pipes: { pipe },
+		pipes: { pipe, other },
 		storage: new SQLiteStorage()
 	})
 
-	const done = new Promise((resolve) => {
-		aaa.emitter.once('success', ({ result }) => resolve(result))
-	})
+	into: {
+		const done = new Promise((resolve) => {
+			aaa.emitter.once('success', ({ result }) => resolve(result))
+		})
+		queue.pipes.pipe.dispatch({ in: '2' })
+		const result = await done
 
-	queue.pipes.pipe.dispatch({ in: '2' })
+		assert.deepEqual(result, { foo: 2 })
+	}
 
-	const result = await done
+	raw: {
+		const done = new Promise((resolve) => {
+			aaa.emitter.once('success', ({ result }) => resolve(result))
+		})
+		queue.pipes.other.dispatch({ in: 3 })
+		const result = await done
 
-	assert.deepEqual(result, { foo: 2 })
+		assert.deepEqual(result, { foo: 3 })
+	}
 
 	await queue.close()
-})
-
-test.todo('pipe trigger (raw)', { timeout: 500 }, async (t) => {
-
 })
 
 // skipped because it's too long (min duration for a cron is 1s)
@@ -72,6 +86,15 @@ test.skip('cron triggers', { timeout: 3000 }, async (t) => {
 	await queue.close()
 })
 
-test.todo('cron triggers fails if input does not accept date', async (t) => {
-
+test('cron triggers fails if input does not accept date', { timeout: 500 }, async (t) => {
+	assert.throws(() => {
+		new Job({
+			id: 'hello',
+			input: z.object({ foo: z.number() }),
+			// @ts-expect-error -- intentionally invalid
+			cron: '*/1 * * * * *',
+		}, async () => {
+			await Job.run('a', () => 1)
+		})
+	}, new TypeError("Job hello has a cron trigger but its input validator does not accept {date: '<ISO string>'} as an input."))
 })

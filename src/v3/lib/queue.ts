@@ -175,7 +175,7 @@ export class Queue<
 		const schedule: CronScheduler = externalImplementation
 			|| await import('node-cron')
 				.catch((error: Error) => {
-					throw new Error('To use `cron` triggers on jobs, install "node-cron" or provide a `cronScheduler` to the queue.', { cause: error })
+					throw new ReferenceError('To use `cron` triggers on jobs, install "node-cron" or provide a `cronScheduler` to the queue.', { cause: error })
 				})
 				.then(({ schedule }) =>
 					(str: string, cb: (date: Date | string) => void) => {
@@ -185,13 +185,6 @@ export class Queue<
 				)
 		for (const job of Object.values(this.jobs)) {
 			if (!job.cron) continue
-			if (job.input) {
-				try {
-					job.input.parse({ date: new Date().toISOString() })
-				} catch (error) {
-					throw new Error(`Job ${job.id} has a cron trigger but its input validator does not accept {date: '<ISO string>'} as an input.`)
-				}
-			}
 			const schedules = typeof job.cron === 'string' ? [job.cron] : job.cron
 			let willExec = false
 			for (const string of schedules) {

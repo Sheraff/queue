@@ -38,7 +38,7 @@ export class Pipe<
 	 * myQueue.pipes.myPipe.queue === myQueue
 	 * ```
 	 * 
-	 * @throws {Error} Will throw an error if called outside of a queue context.
+	 * @throws {ReferenceError} Will throw an error if called outside of a queue context.
 	 */
 	get queue() {
 		return getRegistrationContext(this).queue

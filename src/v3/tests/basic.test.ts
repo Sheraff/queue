@@ -443,5 +443,68 @@ test.describe('errors', async () => {
 		await queue.close()
 		db.close()
 	})
+
+	test('forward errors w/o userland errors', { timeout: 500 }, async (t) => {
+		const aaa = new Job({
+			id: 'aaa',
+		}, async () => {
+			try {
+				await Job.sleep(10)
+				const a = Job.run('throws', async () => {
+					return 1
+				})
+				return a
+			} catch (error) {
+				Job.catch(error)
+				return 2
+			}
+		})
+		const queue = new Queue({
+			id: 'basic',
+			jobs: { aaa },
+			storage: new SQLiteStorage()
+		})
+		let runs = 0
+		aaa.emitter.on('run', () => runs++)
+
+		const res = await invoke(queue.jobs.aaa, {})
+
+		assert.strictEqual(runs, 2, 'Job took several loops to complete')
+		assert.strictEqual(res, 1, 'Job should have returned 1')
+	})
+
+	test('forward errors with userland errors', { timeout: 500 }, async (t) => {
+		const aaa = new Job({
+			id: 'aaa',
+		}, async () => {
+			try {
+				await Job.sleep(10)
+				const a = Job.run({
+					id: 'throws',
+					retry: 2,
+					backoff: 10
+				}, async () => {
+					await new Promise(r => setTimeout(r, 10))
+					throw new Error('Userland error')
+				})
+				return a
+			} catch (error) {
+				Job.catch(error)
+				return 2
+			}
+		})
+		const queue = new Queue({
+			id: 'basic',
+			jobs: { aaa },
+			storage: new SQLiteStorage()
+		})
+		let runs = 0
+		aaa.emitter.on('run', () => runs++)
+
+		const promise = invoke(queue.jobs.aaa, {})
+
+		await assert.rejects(promise, new Error('Userland error'))
+		assert.strictEqual(runs, 3, 'Job took several loops to complete')
+	})
 })
 

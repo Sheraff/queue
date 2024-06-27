@@ -350,6 +350,11 @@ export class Job<
 	}
 
 	/** @public */
+	static catch(error: unknown) {
+		if (isInterrupt(error)) throw error
+	}
+
+	/** @public */
 	static cancel<I extends Job>(instance: I, data: I['in'], reason: CancelReason): Promise<void> {
 		const e = getExecutionContext()
 		return e.cancel(instance, data, reason)

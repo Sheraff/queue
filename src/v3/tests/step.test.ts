@@ -198,7 +198,7 @@ test('cancel', { timeout: 500 }, async (t) => {
 		storage: new SQLiteStorage()
 	})
 
-	const promise = invoke(queue.jobs.aaa, {})
+	const promise = invoke(queue.jobs.aaa, {}).catch(err => err)
 	await new Promise(r => setTimeout(r, 10))
 	await invoke(queue.jobs.bbb, {})
 	await promise

@@ -7,14 +7,48 @@ import type { Step, Task } from "./storage"
 
 export interface RegistrationContext {
 	queue: Queue
-	checkRegistration(instance: Job<any, any, any> | Pipe<any, any>): void | never
-	addTask<T>(job: Job, data: Data, key: string, parent: number | undefined, priority: number, cb: (inserted: boolean) => T): T | Promise<T>
-	resolveTask<T>(task: { queue: string, job: string, key: string }, status: 'completed' | 'cancelled', data: Data, cb: () => T): T | Promise<T>
-	resolveTask<T>(task: { queue: string, job: string, key: string }, status: 'failed', data: unknown, cb: () => T): T | Promise<T>
-	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
-	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'next_status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & { sleep_for?: number | null }, cb: () => T): T | Promise<T>
-	recordEvent(key: string, input: string, data: string): void
-	triggerJobsFromPipe(pipe: Pipe<string, any>, input: InputData): void
+	checkRegistration(
+		instance: Job<any, any, any> | Pipe<any, any>
+	): void | never
+	addTask<T>(
+		job: Job,
+		data: Data,
+		key: string,
+		parent: number | undefined,
+		priority: number,
+		debounce: undefined | { s: number, id: string },
+		cb: (inserted: boolean, cancelled?: Task) => T
+	): T | Promise<T>
+	resolveTask<T>(
+		task: { queue: string, job: string, key: string },
+		status: 'completed' | 'cancelled',
+		data: Data,
+		cb: () => T
+	): T | Promise<T>
+	resolveTask<T>(
+		task: { queue: string, job: string, key: string },
+		status: 'failed',
+		data: unknown,
+		cb: () => T
+	): T | Promise<T>
+	requeueTask<T>(
+		task: Task,
+		cb: () => T
+	): T | Promise<T>
+	recordStep<T>(
+		task: Task,
+		step: Pick<Step, 'step' | 'status' | 'next_status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & { sleep_for?: number | null },
+		cb: () => T
+	): T | Promise<T>
+	recordEvent(
+		key: string,
+		input: string,
+		data: string
+	): void
+	triggerJobsFromPipe(
+		pipe: Pipe<string, any>,
+		input: InputData
+	): void
 }
 
 /**

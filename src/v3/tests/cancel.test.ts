@@ -31,7 +31,7 @@ test.describe('cancel', () => {
 		})
 
 		const before = Date.now()
-		const promise = invoke(queue.jobs.aaa, {})
+		const promise = invoke(queue.jobs.aaa, {}).catch(err => err)
 		await new Promise(r => setTimeout(r, 10))
 		queue.jobs.aaa.cancel({}, { type: 'explicit' })
 		const result = await promise
@@ -78,7 +78,7 @@ test.describe('cancel', () => {
 			storage: new SQLiteStorage({ db })
 		})
 
-		const promise = invoke(queue.jobs.aaa, {})
+		const promise = invoke(queue.jobs.aaa, {}).catch(err => err)
 		queue.jobs.aaa.cancel({}, { type: 'explicit' })
 		const result = await promise
 		assert.strictEqual(done, false)
@@ -112,7 +112,7 @@ test.describe('cancel', () => {
 			storage: new SQLiteStorage({ db })
 		})
 
-		const promise = invoke(queue.jobs.aaa, {})
+		const promise = invoke(queue.jobs.aaa, {}).catch(err => err)
 		await new Promise(r => setTimeout(r, 10))
 		queue.jobs.aaa.cancel({}, { type: 'explicit' })
 		const result = await promise
@@ -157,7 +157,7 @@ test.describe('cancel', () => {
 			storage: new SQLiteStorage({ db })
 		})
 
-		const promise = invoke(queue.jobs.aaa, {})
+		const promise = invoke(queue.jobs.aaa, {}).catch(err => err)
 		await new Promise(r => setTimeout(r, 10))
 		queue.jobs.aaa.cancel({}, { type: 'explicit' })
 		queue.pipes.pipe.dispatch({ hello: 'world' })

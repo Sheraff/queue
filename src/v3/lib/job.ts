@@ -9,7 +9,7 @@ import parseMs, { type StringValue } from 'ms'
 export type CancelReason =
 	| { type: 'timeout', ms: number }
 	| { type: 'explicit' }
-	| { type: 'debounce', number: number }
+	| { type: 'debounce' }
 
 type EventMeta = { input: string, key: string, queue: string }
 
@@ -47,8 +47,8 @@ export type RunOptions = {
 	 * Defaults to a list of delays that increase with each attempt: `"100ms", "30s", "2m", "10m", "30m", "1h", "2h", "12h", "1d"`
 	 */
 	backoff?: number | StringValue | ((attempt: number) => number | StringValue) | number[] | StringValue[]
-	// timeout
-	// concurrency
+	// TODO: timeout
+	// TODO: concurrency
 	// ...
 }
 
@@ -57,7 +57,10 @@ export type WaitForOptions<Filter extends InputData> = {
 	timeout?: number
 	/** Should past events be able to satisfy this request? Defaults to `true`. Use `false` to indicate that only events emitted after this step ran can be used. */
 	retroactive?: boolean
+	// TODO: debounce
 }
+
+type DebounceConfig<In extends Data> = number | { id?: string, ms?: number } | ((input: In) => number | { id?: string, ms?: number })
 
 export const exec = Symbol('exec')
 export class Job<
@@ -107,6 +110,7 @@ export class Job<
 			/** The job must accept a `{date: '<ISO string>'}` input to use a cron schedule (or no input at all). */
 			priority?: number | ((input: NoInfer<In>) => number)
 			cron?: NoInfer<In extends { date: string } ? string | string[] : InputData extends In ? string | string[] : never>
+			debounce?: NoInfer<DebounceConfig<In>>
 			onTrigger?: (params: { input: In }) => void
 			onStart?: (params: { input: In }) => void
 			onSuccess?: (params: { input: In, result: Out }) => void
@@ -143,22 +147,30 @@ export class Job<
 				if (typeof executionContext === 'object') throw new Error("Cannot call this method inside a job script. Prefer using `Job.dispatch()`, or calling it inside a `Job.run()`.")
 				const registrationContext = getRegistrationContext(this)
 				registrationContext.recordEvent(`job/${this.id}/trigger`, meta.input, JSON.stringify({ input }))
+
 				const priority = typeof opts.priority === 'function' ? opts.priority(input) : opts.priority ?? 0
-				registrationContext.addTask(this, input, meta.key, executionContext, priority, (inserted) => {
-					if (inserted) return
-					registrationContext.queue.storage.getTask(registrationContext.queue.id, this.id, meta.key, (task) => {
-						if (!task) throw new Error('Task not found after insert')
-						if (task.status === 'failed') {
-							if (!task.data) throw new Error('Task previously failed, but no error data found')
-							setImmediate(() => this.#emitter.emit('error', { input, error: hydrateError(task.data!) }, meta))
-						} else if (task.status === 'completed') {
-							if (!task.data) throw new Error('Task previously completed, but no output data found')
-							setImmediate(() => this.#emitter.emit('success', { input, result: JSON.parse(task.data!) }, meta))
-						} else if (task.status === 'cancelled') {
-							if (!task.data) throw new Error('Task previously cancelled, but no reason data found')
-							setImmediate(() => this.#emitter.emit('cancel', { input, reason: JSON.parse(task.data!) }, meta))
-						}
-					})
+				const debounce = opts.debounce && resolveDebounce(opts.debounce, this.id, input)
+
+				registrationContext.addTask(this, input, meta.key, executionContext, priority, debounce, (inserted, cancelled) => {
+					if (!inserted) {
+						registrationContext.queue.storage.getTask(registrationContext.queue.id, this.id, meta.key, (task) => {
+							if (!task) throw new Error('Task not found after insert') // <- this might not always be an error, for example if the task was not added because of a throttle / rate-limit
+							if (task.status === 'failed') {
+								if (!task.data) throw new Error('Task previously failed, but no error data found')
+								setImmediate(() => this.#emitter.emit('error', { input, error: hydrateError(task.data!) }, meta))
+							} else if (task.status === 'completed') {
+								if (!task.data) throw new Error('Task previously completed, but no output data found')
+								setImmediate(() => this.#emitter.emit('success', { input, result: JSON.parse(task.data!) }, meta))
+							} else if (task.status === 'cancelled') {
+								if (!task.data) throw new Error('Task previously cancelled, but no reason data found')
+								setImmediate(() => this.#emitter.emit('cancel', { input, reason: JSON.parse(task.data!) }, meta))
+							}
+						})
+					}
+					if (cancelled) {
+						if (!cancelled.data) throw new Error('Task previously cancelled, but no reason data found')
+						setImmediate(() => this.queue.jobs[cancelled.job]!.cancel(JSON.parse(cancelled.input), JSON.parse(cancelled.data!)))
+					}
 				})
 			})
 
@@ -187,6 +199,7 @@ export class Job<
 				const registrationContext = getRegistrationContext(this)
 				registrationContext.recordEvent(`job/${this.id}/cancel`, meta.input, JSON.stringify({ input, reason }))
 				// TODO: Update steps too? (to avoid leaving them in a state that would block stuff like concurrency)
+				// TODO: find a way to avoid re-cancelling a task that was already cancelled (e.g. by a trigger with the same key, or by a debounce)
 				registrationContext.resolveTask({
 					queue: registrationContext.queue.id,
 					job: this.id,
@@ -686,6 +699,12 @@ function resolveBackoff(backoff: RunOptions['backoff'], runs: number) {
 	const value = typeof item === 'string' ? parseMs(item) : item
 	const delay = Math.max(0, value)
 	return delay
+}
+
+function resolveDebounce(debounce: DebounceConfig<any>, id: string, input?: any) {
+	if (typeof debounce === 'function') return resolveDebounce(debounce(input), id)
+	if (typeof debounce === 'number') return { id, s: debounce / 1000 }
+	return { id: debounce.id ?? id, s: (debounce.ms ?? 0) / 1000 }
 }
 
 const RETRY_TABLE: StringValue[] = [

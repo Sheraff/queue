@@ -5,7 +5,7 @@ type TaskStatus =
 	| 'pending'
 	/** task is being processed, do not pick up */
 	| 'running'
-	/** task is waiting for a timer or event (retries, debounce, throttle, ...) */
+	/** task is waiting for a timer (retries, debounce, throttle, ...) */
 	| 'stalled'
 	/** task finished, data is the successful result */
 	| 'completed'
@@ -80,7 +80,18 @@ export interface Storage {
 	/** Simply return the full Task based on unique index queue+job+key */
 	getTask<T>(queue: string, job: string, key: string, cb: (task: Task | undefined) => T): T | Promise<T>
 	/** Create a new Task, initial status is 'pending'. Returns `true` if the task was created, and `false` if it already existed. */
-	addTask<T>(task: { queue: string, job: string, key: string, input: string, parent_id: number | null, priority: number }, cb?: (inserted: boolean) => T): T | Promise<T>
+	addTask<T>(task: {
+		queue: string,
+		job: string,
+		key: string,
+		input: string,
+		parent_id: number | null,
+		priority: number,
+		debounce: { s: number, id: string } | null,
+	}, cb?: (
+		inserted: boolean,
+		cancelled?: Task
+	) => T): T | Promise<T>
 	/**
 	 * Exclusive transaction to:
 	 * - retrieve the next task to run immediately, if none, return undefined;
@@ -151,7 +162,12 @@ export class SQLiteStorage implements Storage {
 				job TEXT NOT NULL,
 				key TEXT NOT NULL,
 				input JSON NOT NULL,
+
 				priority INTEGER NOT NULL DEFAULT 0,
+
+				debounce_id TEXT,
+				sleep_until INTEGER,
+				
 				status TEXT NOT NULL,
 				started INTEGER NOT NULL DEFAULT FALSE,
 				runs INTEGER NOT NULL DEFAULT 0,
@@ -161,6 +177,7 @@ export class SQLiteStorage implements Storage {
 			);
 		
 			CREATE UNIQUE INDEX IF NOT EXISTS ${tasksTable}_job_key ON ${tasksTable} (queue, job, key);
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_debounce_index ON ${tasksTable} (queue, debounce_id);
 		
 			CREATE TABLE IF NOT EXISTS ${stepsTable} (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -207,7 +224,16 @@ export class SQLiteStorage implements Storage {
 			FROM ${tasksTable} task
 			WHERE
 				queue = @queue
-				AND status = 'pending'
+				AND (
+					status = 'pending'
+					OR (
+						status = 'stalled'
+						AND (
+							sleep_until IS NULL
+							OR sleep_until <= unixepoch('subsec')
+						)
+					)
+				)
 				AND NOT EXISTS (
 					SELECT 1
 					FROM ${stepsTable} step
@@ -273,14 +299,19 @@ export class SQLiteStorage implements Storage {
 		`)
 
 		this.#getNextFutureTaskStmt = this.#db.prepare<{ queue: string }, { seconds: number }>(/* sql */ `
-			SELECT (steps.sleep_until - unixepoch('subsec')) as seconds
+			SELECT (max(tasks.sleep_until, steps.sleep_until) - unixepoch('subsec')) as seconds
 			FROM ${tasksTable} tasks
 			LEFT JOIN ${stepsTable} steps ON steps.task_id = tasks.id
 			WHERE
 				tasks.queue = @queue
-				AND tasks.status = 'pending'
-				AND steps.status = 'stalled'
-				AND steps.sleep_until IS NOT NULL
+				AND (
+					tasks.status = 'pending'
+					AND steps.status = 'stalled'
+					AND steps.sleep_until IS NOT NULL
+				) OR (
+					tasks.status = 'stalled'
+					AND tasks.sleep_until IS NOT NULL
+				)
 			ORDER BY seconds ASC
 			LIMIT 1
 		`)
@@ -354,12 +385,44 @@ export class SQLiteStorage implements Storage {
 			WHERE queue = @queue AND job = @job AND key = @key
 		`)
 
-		this.#addTaskStmt = this.#db.prepare<Task, undefined | 1>(/* sql */ `
+		const addTaskStmt = this.#db.prepare<{ queue: string, job: string, key: string, input: string, parent_id: number | null, priority: number, debounce_id: string | null, sleep_for: number | null, status: TaskStatus }, undefined | { id: number }>(/* sql */ `
 			INSERT OR IGNORE
-			INTO ${tasksTable} (queue, job, key, input, parent_id, status, priority)
-			VALUES (@queue, @job, @key, @input, @parent_id, 'pending', @priority)
-			RETURNING 1
+			INTO ${tasksTable} (queue, job, key, input, parent_id, status, priority, debounce_id, sleep_until)
+			VALUES (
+				@queue,
+				@job,
+				@key,
+				@input,
+				@parent_id,
+				@status,
+				@priority,
+				@debounce_id,
+				CASE @sleep_for WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @sleep_for) END
+			)
+			RETURNING id
 		`)
+		const cancelMatchingDebounceStmt = this.#db.prepare<{ debounce_id: string, queue: string, new_id: number }, Task>(/* sql */ `
+			UPDATE ${tasksTable}
+			SET
+				status = 'cancelled',
+				data = '{"type":"debounce"}',
+				updated_at = unixepoch('subsec')
+			WHERE
+				queue = @queue
+				AND debounce_id = @debounce_id
+				AND status = 'stalled'
+				AND started = FALSE
+				AND id != @new_id
+			RETURNING *
+		`)
+
+		this.#addTaskTx = this.#db.transaction((task: { queue: string; job: string; key: string; input: string; parent_id: number | null; priority: number; debounce: { s: number; id: string } | null }) => {
+			const inserted = addTaskStmt.get({ ...task, debounce_id: task.debounce?.id ?? null, sleep_for: task.debounce?.s ?? null, status: task.debounce ? 'stalled' : 'pending' })
+			if (!inserted) return [false, undefined]
+			if (!task.debounce) return [true, undefined]
+			const cancelled = cancelMatchingDebounceStmt.get({ debounce_id: task.debounce.id, queue: task.queue, new_id: inserted.id })
+			return [true, cancelled]
+		})
 
 		// create or update step
 		this.#recordStepStmt = this.#db.prepare<{
@@ -479,7 +542,7 @@ export class SQLiteStorage implements Storage {
 	#getNextFutureTaskStmt: BetterSqlite3.Statement<{ queue: string }, { seconds: number } | undefined>
 	#resolveTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, status: TaskStatus, data: string | null }>
 	#loopTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string }>
-	#addTaskStmt: BetterSqlite3.Statement<{ queue: string, job: string, key: string, input: string, parent_id: number | null, priority: number }, undefined | 1>
+	#addTaskTx: BetterSqlite3.Transaction<(task: { queue: string, job: string, key: string, input: string, parent_id: number | null, priority: number, debounce: { s: number, id: string } | null }) => [inserted: boolean, cancelled?: Task]>
 	#recordStepStmt: BetterSqlite3.Statement<{
 		queue: string
 		job: string
@@ -502,9 +565,9 @@ export class SQLiteStorage implements Storage {
 		return cb(task)
 	}
 
-	addTask<T>(task: { queue: string, job: string, key: string, input: string, parent_id: number | null, priority: number }, cb?: (inserted: boolean) => T): T {
-		const inserted = this.#addTaskStmt.get(task)
-		return cb?.(Boolean(inserted)) as T
+	addTask<T>(task: { queue: string, job: string, key: string, input: string, parent_id: number | null, priority: number, debounce: { s: number, id: string } | null }, cb?: (inserted: boolean, cancelled?: Task) => T): T {
+		const [inserted, cancelled] = this.#addTaskTx.exclusive(task)
+		return cb?.(inserted, cancelled) as T
 	}
 
 	startNextTask<T>(queue: string, cb: (result: [task: Task, steps: Step[], hasNext: boolean] | undefined) => T): T {

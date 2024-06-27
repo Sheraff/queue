@@ -110,8 +110,41 @@ export class Job<
 			/** The job must accept a `{date: '<ISO string>'}` input to use a cron schedule (or no input at all). */
 			priority?: number | ((input: NoInfer<In>) => number)
 			cron?: NoInfer<In extends { date: string } ? string | string[] : InputData extends In ? string | string[] : never>
+			/**
+			 * Debounce configuration.
+			 * 
+			 * A job with a debounce ID will be delayed until the debounce duration has passed.
+			 * Any incoming job with the same debounce ID during the debounce period will cancel the previous one, and reset the timer.
+			 * 
+			 * Accepted values:
+			 * - If it's a number, it will be used as the debounce duration in milliseconds. The debounce ID will be the job ID.
+			 * - It can be an object with the `id` and `ms` properties
+			 * - If it's a function, it will be called with the input data, and should return a number or an object as described above.
+			 */
 			debounce?: NoInfer<OrchestrationTimer<In>>
+			/**
+			 * Throttle configuration.
+			 * 
+			 * Any incoming job with the same throttle ID will be delayed until the previous one has completed.
+			 * 
+			 * Accepted values:
+			 * - If it's a number, it will be used as the throttle duration in milliseconds. The throttle ID will be the job ID.
+			 * - It can be an object with the `id` and `ms` properties
+			 * - If it's a function, it will be called with the input data, and should return a number or an object as described above.
+			 */
 			throttle?: NoInfer<OrchestrationTimer<In>>
+			/**
+			 * Rate limit configuration.
+			 * 
+			 * Any incoming job with the a rate limit ID will be immediately dropped
+			 * if another job with the same ID was triggered within the rate limit duration.
+			 * It is not recorded in storage, and does not emit any events after the 'trigger'.
+			 * 
+			 * Accepted values:
+			 * - If it's a number, it will be used as the rate limit duration in milliseconds. The rate limit ID will be the job ID.
+			 * - It can be an object with the `id` and `ms` properties
+			 * - If it's a function, it will be called with the input data, and should return a number or an object as described above.
+			 */
 			rateLimit?: NoInfer<OrchestrationTimer<In>>
 			onTrigger?: (params: { input: In }) => void
 			onStart?: (params: { input: In }) => void
@@ -155,7 +188,12 @@ export class Job<
 				const throttle = opts.throttle && resolveOrchestrationConfig(opts.throttle, this.id, input)
 				const rateLimit = opts.rateLimit && resolveOrchestrationConfig(opts.rateLimit, this.id, input)
 
-				registrationContext.addTask(this, input, meta.key, executionContext, priority, debounce, throttle, rateLimit, (inserted, cancelled) => {
+				registrationContext.addTask(this, input, meta.key, executionContext, priority, debounce, throttle, rateLimit, (rateLimitError, inserted, cancelled) => {
+					if (rateLimitError !== null) {
+						// TODO: should we do something else here?
+						console.warn(`Rate limit reached for group ID ${rateLimit?.id} (on job ${this.id}). Retry in ${rateLimitError}ms`)
+						return
+					}
 					if (!inserted) {
 						registrationContext.queue.storage.getTask(registrationContext.queue.id, this.id, meta.key, (task) => {
 							if (!task) throw new Error('Task not found after insert') // <- this might not always be an error, for example if the task was not added because of a throttle / rate-limit

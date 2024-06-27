@@ -180,3 +180,47 @@ test('throttle', { timeout: 500 }, async (t) => {
 	await queue.close()
 	db.close()
 })
+
+
+test('throttle', { timeout: 500 }, async (t) => {
+	const aaa = new Job({
+		id: 'aaa',
+		input: z.object({ a: z.number() }),
+		output: z.object({ b: z.number() }),
+		rateLimit: 10,
+	}, async (input) => {
+		return { b: input.a }
+	})
+
+	const db = new Database()
+
+	const queue = new Queue({
+		id: 'shoooo',
+		jobs: { aaa },
+		storage: new SQLiteStorage({ db })
+	})
+
+	const first = invoke(queue.jobs.aaa, { a: 1 })
+	queue.jobs.aaa.dispatch({ a: 2 })
+	queue.jobs.aaa.dispatch({ a: 3 })
+
+	{
+		const tasks = db.prepare('SELECT * FROM tasks').all()
+		assert.equal(tasks.length, 1, 'Only 1 task is enqueued')
+	}
+
+	await new Promise((resolve) => setTimeout(resolve, 11))
+
+	const second = invoke(queue.jobs.aaa, { a: 4 })
+	queue.jobs.aaa.dispatch({ a: 5 })
+
+	{
+		const tasks = db.prepare('SELECT * FROM tasks').all()
+		assert.equal(tasks.length, 2, '2nd task is enqueued after the rate limit is up')
+	}
+
+	await Promise.all([first, second])
+
+	await queue.close()
+	db.close()
+})

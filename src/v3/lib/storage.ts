@@ -94,6 +94,7 @@ export interface Storage {
 		/** incoming tasks with the same ID are 'cancelled' immediately if there are existing tasks with that ID are started AND fewer than s seconds have passed (ID = rate_limit_id) */
 		rateLimit: { s: number, id: string } | null,
 	}, cb?: (
+		rateLimit: number | null,
 		inserted: boolean,
 		cancelled?: Task
 	) => T): T | Promise<T>
@@ -175,6 +176,8 @@ export class SQLiteStorage implements Storage {
 
 				throttle_id TEXT,
 				throttle_duration INTEGER,
+
+				rate_limit_id TEXT,
 				
 				status TEXT NOT NULL,
 				started_at INTEGER,
@@ -187,6 +190,7 @@ export class SQLiteStorage implements Storage {
 			CREATE UNIQUE INDEX IF NOT EXISTS ${tasksTable}_job_key ON ${tasksTable} (queue, job, key);
 			CREATE INDEX IF NOT EXISTS ${tasksTable}_debounce_index ON ${tasksTable} (queue, debounce_id);
 			CREATE INDEX IF NOT EXISTS ${tasksTable}_throttle_index ON ${tasksTable} (queue, throttle_id);
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_rate_limit_index ON ${tasksTable} (queue, rate_limit_id);
 		
 			CREATE TABLE IF NOT EXISTS ${stepsTable} (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -452,6 +456,17 @@ export class SQLiteStorage implements Storage {
 			WHERE queue = @queue AND job = @job AND key = @key
 		`)
 
+		const checkLatestRateLimitStmt = this.#db.prepare<{ queue: string, rate_limit_id: string, rate_limit_duration: number }, { ms: number }>(/* sql */ `
+			SELECT CEIL((@rate_limit_duration + created_at - unixepoch('subsec')) * 1000) ms
+			FROM ${tasksTable}
+			WHERE
+				queue = @queue
+				AND rate_limit_id = @rate_limit_id
+				AND created_at + @rate_limit_duration > unixepoch('subsec')
+			ORDER BY ms DESC
+			LIMIT 1
+		`)
+
 		const addTaskStmt = this.#db.prepare<{
 			queue: string,
 			job: string,
@@ -461,12 +476,13 @@ export class SQLiteStorage implements Storage {
 			priority: number,
 			debounce_id: string | null,
 			throttle_id: string | null,
+			rate_limit_id: string | null,
 			throttle_duration: number | null,
 			sleep_for: number | null,
 			status: TaskStatus
 		}, undefined | { id: number }>(/* sql */ `
 			INSERT OR IGNORE
-			INTO ${tasksTable} (queue, job, key, input, parent_id, status, priority, debounce_id, throttle_id, throttle_duration, sleep_until)
+			INTO ${tasksTable} (queue, job, key, input, parent_id, status, priority, debounce_id, throttle_id, rate_limit_id, throttle_duration, sleep_until)
 			VALUES (
 				@queue,
 				@job,
@@ -477,6 +493,7 @@ export class SQLiteStorage implements Storage {
 				@priority,
 				@debounce_id,
 				@throttle_id,
+				@rate_limit_id,
 				@throttle_duration,
 				CASE @sleep_for WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @sleep_for) END
 			)
@@ -506,19 +523,29 @@ export class SQLiteStorage implements Storage {
 			priority: number
 			debounce: { s: number; id: string } | null
 			throttle: { s: number; id: string } | null
+			rateLimit: { s: number; id: string } | null
 		}) => {
+			if (task.rateLimit) {
+				const limit = checkLatestRateLimitStmt.get({
+					queue: task.queue,
+					rate_limit_id: task.rateLimit.id,
+					rate_limit_duration: task.rateLimit.s
+				})
+				if (limit) return [limit.ms, false, undefined]
+			}
 			const inserted = addTaskStmt.get({
 				...task,
 				throttle_id: task.throttle?.id ?? null,
 				debounce_id: task.debounce?.id ?? null,
+				rate_limit_id: task.rateLimit?.id ?? null,
 				sleep_for: task.debounce?.s ?? null,
 				throttle_duration: task.throttle?.s ?? null,
 				status: task.debounce ? 'stalled' : 'pending'
 			})
-			if (!inserted) return [false, undefined]
-			if (!task.debounce) return [true, undefined]
+			if (!inserted) return [null, false, undefined]
+			if (!task.debounce) return [null, true, undefined]
 			const cancelled = cancelMatchingDebounceStmt.get({ debounce_id: task.debounce.id, queue: task.queue, new_id: inserted.id })
-			return [true, cancelled]
+			return [null, true, cancelled]
 		})
 
 		// create or update step
@@ -648,7 +675,8 @@ export class SQLiteStorage implements Storage {
 		priority: number,
 		debounce: { s: number, id: string } | null
 		throttle: { s: number, id: string } | null
-	}) => [inserted: boolean, cancelled?: Task]>
+		rateLimit: { s: number, id: string } | null
+	}) => [rateLimitMs: number | null, inserted: boolean, cancelled?: Task]>
 	#recordStepStmt: BetterSqlite3.Statement<{
 		queue: string
 		job: string
@@ -680,9 +708,10 @@ export class SQLiteStorage implements Storage {
 		priority: number
 		debounce: { s: number, id: string } | null
 		throttle: { s: number, id: string } | null
-	}, cb?: (inserted: boolean, cancelled?: Task) => T): T {
-		const [inserted, cancelled] = this.#addTaskTx.exclusive(task)
-		return cb?.(inserted, cancelled) as T
+		rateLimit: { s: number, id: string } | null
+	}, cb?: (rateLimit: number | null, inserted: boolean, cancelled?: Task) => T): T {
+		const [rateLimit, inserted, cancelled] = this.#addTaskTx.exclusive(task)
+		return cb?.(rateLimit, inserted, cancelled) as T
 	}
 
 	startNextTask<T>(queue: string, cb: (result: [task: Task, steps: Step[], hasNext: boolean] | undefined) => T): T {

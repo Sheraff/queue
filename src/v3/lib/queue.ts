@@ -94,9 +94,9 @@ export class Queue<
 				debounce: debounce ?? null,
 				throttle: throttle ?? null,
 				rateLimit: rateLimit ?? null,
-			}, (inserted, cancelled) => {
-				this.#loop()
-				return cb(inserted, cancelled)
+			}, (rateLimit, inserted, cancelled) => {
+				if (!rateLimit) this.#loop()
+				return cb(rateLimit, inserted, cancelled)
 			})
 		},
 		resolveTask: (task, status, data, cb) => {

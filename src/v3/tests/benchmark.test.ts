@@ -26,7 +26,7 @@ test.describe('benchmark', {
 		await invoke(queue.jobs.hello, {})
 		performance.mark('end')
 		const duration = performance.measure('hello', 'start', 'end').duration
-		t.diagnostic(`10000 sync steps took ${duration.toFixed(2)}ms`)
+		t.diagnostic(`10000 sync steps took ${duration.toFixed(2)}ms (< 150ms)`)
 		t.diagnostic(`Overall: ${(duration / 10000).toFixed(4)} ms/step`)
 		assert(duration < 150, `Benchmark took ${duration.toFixed(2)}ms, expected less than 150ms`)
 
@@ -52,7 +52,7 @@ test.describe('benchmark', {
 		await invoke(queue.jobs.hello, {})
 		performance.mark('end')
 		const duration = performance.measure('hello', 'start', 'end').duration
-		t.diagnostic(`100 async steps took ${duration.toFixed(2)}ms`)
+		t.diagnostic(`100 async steps took ${duration.toFixed(2)}ms (< 100ms)`)
 		t.diagnostic(`Overall: ${(duration / 100).toFixed(4)} ms/step`)
 		assert(duration < 100, `Benchmark took ${duration}ms, expected less than 100ms`)
 

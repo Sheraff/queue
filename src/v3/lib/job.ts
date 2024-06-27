@@ -4,7 +4,7 @@ import { Pipe, type PipeInto } from "./pipe"
 import { execution, type ExecutionContext, type RegistrationContext } from "./context"
 import type { Step, Task } from "./storage"
 import { getRegistrationContext, hash, hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError, serialize, serializeError } from "./utils"
-import parseMs, { type StringValue } from 'ms'
+import { parseDuration, parsePeriod, type Duration, type Frequency } from './ms'
 
 export type CancelReason =
 	| { type: 'timeout', ms: number }
@@ -46,7 +46,7 @@ export type RunOptions = {
 	 * 
 	 * Defaults to a list of delays that increase with each attempt: `"100ms", "30s", "2m", "10m", "30m", "1h", "2h", "12h", "1d"`
 	 */
-	backoff?: number | StringValue | ((attempt: number) => number | StringValue) | number[] | StringValue[]
+	backoff?: number | Duration | ((attempt: number) => number | Duration) | number[] | Duration[]
 	// TODO: timeout
 	// TODO: concurrency
 	// ...
@@ -60,7 +60,7 @@ export type WaitForOptions<Filter extends InputData> = {
 	// TODO: debounce
 }
 
-type OrchestrationTimer<In extends Data> = number | { id?: string, ms?: number } | ((input: In) => number | { id?: string, ms?: number })
+type OrchestrationTimer<In extends Data> = number | Frequency | { id?: string, ms?: number | Frequency } | ((input: In) => number | Frequency | { id?: string, ms?: number | Frequency })
 
 export const exec = Symbol('exec')
 export class Job<
@@ -116,10 +116,10 @@ export class Job<
 			 * A job with a debounce ID will be delayed until the debounce duration has passed.
 			 * Any incoming job with the same debounce ID during the debounce period will cancel the previous one, and reset the timer.
 			 * 
-			 * Accepted values:
-			 * - If it's a number, it will be used as the debounce duration in milliseconds. The debounce ID will be the job ID.
+			 * Accepted configs:
+			 * - If it's a value (number or "10 per second"), it will be used as the debounce duration in milliseconds. The debounce ID will be the job ID.
 			 * - It can be an object with the `id` and `ms` properties
-			 * - If it's a function, it will be called with the input data, and should return a number or an object as described above.
+			 * - If it's a function, it will be called with the input data, and should return a value or an object as described above.
 			 */
 			debounce?: NoInfer<OrchestrationTimer<In>>
 			/**
@@ -127,10 +127,10 @@ export class Job<
 			 * 
 			 * Any incoming job with the same throttle ID will be delayed until the previous one has completed.
 			 * 
-			 * Accepted values:
-			 * - If it's a number, it will be used as the throttle duration in milliseconds. The throttle ID will be the job ID.
+			 * Accepted configs:
+			 * - If it's a value (number or "10 per second"), it will be used as the throttle duration in milliseconds. The throttle ID will be the job ID.
 			 * - It can be an object with the `id` and `ms` properties
-			 * - If it's a function, it will be called with the input data, and should return a number or an object as described above.
+			 * - If it's a function, it will be called with the input data, and should return a value or an object as described above.
 			 */
 			throttle?: NoInfer<OrchestrationTimer<In>>
 			/**
@@ -140,10 +140,10 @@ export class Job<
 			 * if another job with the same ID was triggered within the rate limit duration.
 			 * It is not recorded in storage, and does not emit any events after the 'trigger'.
 			 * 
-			 * Accepted values:
-			 * - If it's a number, it will be used as the rate limit duration in milliseconds. The rate limit ID will be the job ID.
+			 * Accepted configs:
+			 * - If it's a value (number or "10 per second"), it will be used as the rate limit duration in milliseconds. The rate limit ID will be the job ID.
 			 * - It can be an object with the `id` and `ms` properties
-			 * - If it's a function, it will be called with the input data, and should return a number or an object as described above.
+			 * - If it's a function, it will be called with the input data, and should return a value or an object as described above.
 			 */
 			rateLimit?: NoInfer<OrchestrationTimer<In>>
 			onTrigger?: (params: { input: In }) => void
@@ -317,9 +317,9 @@ export class Job<
 	}
 
 	/** @public */
-	static sleep(ms: number | StringValue): Promise<void> {
+	static sleep(ms: number | Duration): Promise<void> {
 		const e = getExecutionContext()
-		if (typeof ms === 'string') ms = parseMs(ms)
+		if (typeof ms === 'string') ms = parseDuration(ms)
 		return e.sleep(ms)
 	}
 
@@ -738,18 +738,20 @@ function getExecutionContext(): ExecutionContext {
 function resolveBackoff(backoff: RunOptions['backoff'], runs: number) {
 	const called = typeof backoff === 'function' ? backoff(runs) : backoff ?? RETRY_TABLE
 	const item = Array.isArray(called) ? (called[runs - 1] ?? called.at(-1) ?? 100) : called
-	const value = typeof item === 'string' ? parseMs(item) : item
+	const value = typeof item === 'string' ? parseDuration(item) : item
 	const delay = Math.max(0, value)
 	return delay
 }
 
-function resolveOrchestrationConfig(config: OrchestrationTimer<any>, id: string, input?: any) {
+function resolveOrchestrationConfig(config: OrchestrationTimer<any>, id: string, input?: any): { id: string, s: number } {
 	if (typeof config === 'function') return resolveOrchestrationConfig(config(input), id)
 	if (typeof config === 'number') return { id, s: config / 1000 }
-	return { id: config.id ?? id, s: (config.ms ?? 0) / 1000 }
+	if (typeof config === 'string') return { id, s: parsePeriod(config) / 1000 }
+	const ms = typeof config.ms === 'string' ? parsePeriod(config.ms) : config.ms ?? 0
+	return { id: config.id ?? id, s: ms / 1000 }
 }
 
-const RETRY_TABLE: StringValue[] = [
+const RETRY_TABLE: Duration[] = [
 	"100ms",
 	"30s",
 	"2m",

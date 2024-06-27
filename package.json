@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx --watch src/userland/main.ts",
     "foo": "tsx --watch --test src/v3/tests/**",
-    "bar": "tsx --watch --test src/v3/tests/resumable.test.ts",
+    "bar": "tsx --watch --test src/v3/tests/ms.test.ts",
     "test": "tsx --watch --test",
     "test:cov": "tsx --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=lcov.info",
     "tsc": "tsc --noEmit"
@@ -17,7 +17,6 @@
   "license": "ISC",
   "dependencies": {
     "better-sqlite3": "^11.0.0",
-    "ms": "3.0.0-canary.1",
     "serialize-error": "^11.0.3",
     "zod": "3.23.8"
   },

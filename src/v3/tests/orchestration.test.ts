@@ -44,7 +44,7 @@ test('debounce', { timeout: 500 }, async (t) => {
 		id: 'aaa',
 		input: z.object({ a: z.number() }),
 		output: z.object({ b: z.number() }),
-		debounce: { id: 'global', ms: 50 },
+		debounce: { id: 'global', ms: "20/s" },
 	}, async (input) => {
 		return { b: input.a }
 	})
@@ -53,7 +53,7 @@ test('debounce', { timeout: 500 }, async (t) => {
 		id: 'bbb',
 		input: z.object({ b: z.number() }),
 		output: z.object({ c: z.number() }),
-		debounce: { id: 'global', ms: 50 },
+		debounce: { id: 'global', ms: "20 per sec" },
 	}, async (input) => {
 		return { c: input.b }
 	})
@@ -112,7 +112,7 @@ test('throttle', { timeout: 500 }, async (t) => {
 		id: 'aaa',
 		input: z.object({ a: z.number() }),
 		output: z.object({ b: z.number() }),
-		throttle: { id: 'global', ms: 10 },
+		throttle: { id: 'global', ms: "100 per second" },
 		priority: 1,
 	}, async (input) => {
 		return { b: input.a }
@@ -122,7 +122,7 @@ test('throttle', { timeout: 500 }, async (t) => {
 		id: 'bbb',
 		input: z.object({ b: z.number() }),
 		output: z.object({ c: z.number() }),
-		throttle: { id: 'global', ms: 10 },
+		throttle: { id: 'global', ms: "100/s" },
 		priority: 2,
 	}, async (input) => {
 		return { c: input.b }
@@ -187,7 +187,7 @@ test('throttle', { timeout: 500 }, async (t) => {
 		id: 'aaa',
 		input: z.object({ a: z.number() }),
 		output: z.object({ b: z.number() }),
-		rateLimit: 10,
+		rateLimit: "100/s",
 	}, async (input) => {
 		return { b: input.a }
 	})

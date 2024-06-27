@@ -60,7 +60,7 @@ export type WaitForOptions<Filter extends InputData> = {
 	// TODO: debounce
 }
 
-type DebounceConfig<In extends Data> = number | { id?: string, ms?: number } | ((input: In) => number | { id?: string, ms?: number })
+type OrchestrationTimer<In extends Data> = number | { id?: string, ms?: number } | ((input: In) => number | { id?: string, ms?: number })
 
 export const exec = Symbol('exec')
 export class Job<
@@ -110,7 +110,9 @@ export class Job<
 			/** The job must accept a `{date: '<ISO string>'}` input to use a cron schedule (or no input at all). */
 			priority?: number | ((input: NoInfer<In>) => number)
 			cron?: NoInfer<In extends { date: string } ? string | string[] : InputData extends In ? string | string[] : never>
-			debounce?: NoInfer<DebounceConfig<In>>
+			debounce?: NoInfer<OrchestrationTimer<In>>
+			throttle?: NoInfer<OrchestrationTimer<In>>
+			rateLimit?: NoInfer<OrchestrationTimer<In>>
 			onTrigger?: (params: { input: In }) => void
 			onStart?: (params: { input: In }) => void
 			onSuccess?: (params: { input: In, result: Out }) => void
@@ -149,9 +151,11 @@ export class Job<
 				registrationContext.recordEvent(`job/${this.id}/trigger`, meta.input, JSON.stringify({ input }))
 
 				const priority = typeof opts.priority === 'function' ? opts.priority(input) : opts.priority ?? 0
-				const debounce = opts.debounce && resolveDebounce(opts.debounce, this.id, input)
+				const debounce = opts.debounce && resolveOrchestrationConfig(opts.debounce, this.id, input)
+				const throttle = opts.throttle && resolveOrchestrationConfig(opts.throttle, this.id, input)
+				const rateLimit = opts.rateLimit && resolveOrchestrationConfig(opts.rateLimit, this.id, input)
 
-				registrationContext.addTask(this, input, meta.key, executionContext, priority, debounce, (inserted, cancelled) => {
+				registrationContext.addTask(this, input, meta.key, executionContext, priority, debounce, throttle, rateLimit, (inserted, cancelled) => {
 					if (!inserted) {
 						registrationContext.queue.storage.getTask(registrationContext.queue.id, this.id, meta.key, (task) => {
 							if (!task) throw new Error('Task not found after insert') // <- this might not always be an error, for example if the task was not added because of a throttle / rate-limit
@@ -326,7 +330,7 @@ export class Job<
 		this.#emitter.prependListener('cancel', onCancel)
 
 		const promise = execution.run(executionContext, async () => {
-			if (!task.started) {
+			if (!task.started_at) {
 				this.#emitter.emit('start', { input }, { input: task.input, key: task.key, queue: registrationContext.queue.id })
 			} else {
 				this.#emitter.emit('run', { input }, { input: task.input, key: task.key, queue: registrationContext.queue.id })
@@ -701,10 +705,10 @@ function resolveBackoff(backoff: RunOptions['backoff'], runs: number) {
 	return delay
 }
 
-function resolveDebounce(debounce: DebounceConfig<any>, id: string, input?: any) {
-	if (typeof debounce === 'function') return resolveDebounce(debounce(input), id)
-	if (typeof debounce === 'number') return { id, s: debounce / 1000 }
-	return { id: debounce.id ?? id, s: (debounce.ms ?? 0) / 1000 }
+function resolveOrchestrationConfig(config: OrchestrationTimer<any>, id: string, input?: any) {
+	if (typeof config === 'function') return resolveOrchestrationConfig(config(input), id)
+	if (typeof config === 'number') return { id, s: config / 1000 }
+	return { id: config.id ?? id, s: (config.ms ?? 0) / 1000 }
 }
 
 const RETRY_TABLE: StringValue[] = [

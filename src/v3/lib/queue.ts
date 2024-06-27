@@ -83,15 +83,28 @@ export class Queue<
 			if (instance instanceof Pipe) return console.assert(this.pipes && instance.id in this.pipes, `Pipe ${instance.id} not registered in queue ${this.id}`)
 			throw new Error('Unknown instance type')
 		},
-		addTask: (job, data, key, parent, priority, debounce, cb) => {
-			return this.storage.addTask({ queue: this.id, job: job.id, key, input: JSON.stringify(data), parent_id: parent ?? null, priority, debounce: debounce ?? null }, (inserted, cancelled) => {
-				if (inserted) this.#loop()
+		addTask: (job, data, key, parent, priority, debounce, throttle, rateLimit, cb) => {
+			return this.storage.addTask({
+				queue: this.id,
+				job: job.id,
+				key,
+				input: JSON.stringify(data),
+				parent_id: parent ?? null,
+				priority,
+				debounce: debounce ?? null,
+				throttle: throttle ?? null,
+				rateLimit: rateLimit ?? null,
+			}, (inserted, cancelled) => {
+				this.#loop()
 				return cb(inserted, cancelled)
 			})
 		},
 		resolveTask: (task, status, data, cb) => {
 			const output = status === 'failed' ? serializeError(data) : JSON.stringify(data)
-			return this.storage.resolveTask(task, status, output, cb)
+			return this.storage.resolveTask(task, status, output, () => {
+				this.#loop()
+				return cb()
+			})
 		},
 		requeueTask: (task, cb) => {
 			return this.storage.requeueTask(task, cb)
@@ -160,10 +173,10 @@ export class Queue<
 				if (this.#willRun || this.#closed) return
 				this.storage.nextFutureTask(this.id, (result) => {
 					if (this.#willRun || this.#closed) return
-					if (!result) return // program will exit unless something else (outside of this queue) is keeping it open
+					if (result.ms === null) return // program will exit unless something else (outside of this queue) is keeping it open
 					this.#sleepTimeout = setTimeout(
 						() => this.#loop(),
-						Math.ceil(result.seconds * 1000)
+						Math.max(0, result.ms)
 					)
 				})
 			})

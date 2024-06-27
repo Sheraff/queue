@@ -17,6 +17,8 @@ export interface RegistrationContext {
 		parent: number | undefined,
 		priority: number,
 		debounce: undefined | { s: number, id: string },
+		throttle: undefined | { s: number, id: string },
+		rateLimit: undefined | { s: number, id: string },
 		cb: (inserted: boolean, cancelled?: Task) => T
 	): T | Promise<T>
 	resolveTask<T>(

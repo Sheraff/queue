@@ -74,8 +74,8 @@ export const registration = new AsyncLocalStorage<RegistrationContext>()
 
 export interface ExecutionContext {
 	run<Out extends Data>(options: RunOptions, fn: () => Out | Promise<Out>): Promise<Out>
-	sleep(ms: number): Promise<void>
-	waitFor(instance: Job | Pipe, event: string, options: WaitForOptions<InputData>): Promise<Data>
+	sleep(ms: number): Promise<void> | void
+	waitFor(instance: Job | Pipe, event: string, options: WaitForOptions<InputData>): Promise<Data> | void
 	invoke(job: Job, data: InputData): Promise<Data>
 	dispatch(instance: Job | Pipe, data: InputData): Promise<void>
 	cancel(instance: Job, input: InputData, reason: CancelReason): Promise<void>

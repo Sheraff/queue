@@ -47,7 +47,7 @@ export type RunOptions = {
 	 * Defaults to a list of delays that increase with each attempt: `"100ms", "30s", "2m", "10m", "30m", "1h", "2h", "12h", "1d"`
 	 */
 	backoff?: number | Duration | ((attempt: number) => number | Duration) | number[] | Duration[]
-	// TODO: timeout
+	// timeout?: number | Duration
 	// TODO: concurrency
 	// ...
 }
@@ -317,7 +317,7 @@ export class Job<
 	}
 
 	/** @public */
-	static sleep(ms: number | Duration): Promise<void> {
+	static async sleep(ms: number | Duration): Promise<void> {
 		const e = getExecutionContext()
 		if (typeof ms === 'string') ms = parseDuration(ms)
 		return e.sleep(ms)
@@ -344,7 +344,7 @@ export class Job<
 	}
 
 	/** @public */
-	static dispatch<I extends Job | Pipe>(instance: I, data: I['in']): Promise<void> {
+	static async dispatch<I extends Job | Pipe>(instance: I, data: I['in']): Promise<void> {
 		const e = getExecutionContext()
 		return e.dispatch(instance, data)
 	}
@@ -463,10 +463,9 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		return i
 	}
 
-	const run: ExecutionContext['run'] = async (options, fn) => {
+	const run: ExecutionContext['run'] = (options, fn) => {
 		if (cancelled) {
-			await Promise.resolve()
-			throw interrupt
+			return Promise.reject(interrupt)
 		}
 		const index = getIndex(options.id, options[system] ?? false)
 		const step = `${options[system] ? 'system' : 'user'}/${options.id}#${index}`
@@ -481,8 +480,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 			} else if (entry.status === 'stalled') {
 				if (entry.sleep_done === null) throw new Error('Sleep step already created, but no duration found')
 				if (!entry.sleep_done) {
-					await Promise.resolve()
-					throw interrupt
+					return Promise.reject(interrupt)
 				}
 			}
 		}
@@ -566,17 +564,15 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		}
 
 		if (delegateToNextTick) {
-			await Promise.resolve() // let parallel tasks resolve too
-			throw interrupt
+			return Promise.reject(interrupt) // let parallel tasks resolve too
 		}
 		if (syncError) throw syncError
 		return syncResult
 	}
 
-	const sleep: ExecutionContext['sleep'] = async (ms) => {
+	const sleep: ExecutionContext['sleep'] = (ms) => {
 		if (cancelled) {
-			await Promise.resolve()
-			throw interrupt
+			return Promise.reject(interrupt)
 		}
 		const index = getIndex('sleep', true)
 		const step = `system/sleep#${index}`
@@ -586,8 +582,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 			if (entry.sleep_done === null) throw new Error('Sleep step already created, but no duration found')
 			if (entry.sleep_done) throw new Error('Sleep step already completed')
 			if (!entry.sleep_done) {
-				await Promise.resolve()
-				throw interrupt
+				return Promise.reject(interrupt)
 			}
 		}
 		const status = ms <= 0 ? 'completed' : 'stalled'
@@ -601,14 +596,12 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		if (isPromise(maybePromise)) {
 			promises.push(maybePromise)
 		}
-		await Promise.resolve()
-		throw interrupt
+		return Promise.reject(interrupt)
 	}
 
-	const waitFor: ExecutionContext['waitFor'] = async (instance, event, options) => {
+	const waitFor: ExecutionContext['waitFor'] = (instance, event, options) => {
 		if (cancelled) {
-			await Promise.resolve()
-			throw interrupt
+			return Promise.reject(interrupt)
 		}
 		const name = `waitFor::${instance.type}::${instance.id}::${event}`
 		const index = getIndex(name, true)
@@ -623,8 +616,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				if (!entry.data) throw new Error('Step marked as failed in storage, but no error data found')
 				throw hydrateError(entry.data)
 			} else if (entry.status === 'waiting') {
-				await Promise.resolve()
-				throw interrupt
+				return Promise.reject(interrupt)
 			} else {
 				throw new Error(`Unexpected waitFor step status ${entry.status}`)
 			}
@@ -652,16 +644,14 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		if (isPromise(maybePromise)) {
 			promises.push(maybePromise)
 		}
-		await Promise.resolve()
-		throw interrupt
+		return Promise.reject(interrupt)
 	}
 
-	const dispatch: ExecutionContext['dispatch'] = async (instance, data) => {
+	const dispatch: ExecutionContext['dispatch'] = (instance, data) => {
 		if (cancelled) {
-			await Promise.resolve()
-			throw interrupt
+			return Promise.reject(interrupt)
 		}
-		run({
+		return run({
 			id: `dispatch-${instance.type}-${instance.id}`,
 			[system]: true,
 			retry: 0,
@@ -672,8 +662,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 
 	const invoke: ExecutionContext['invoke'] = async (job, input) => {
 		if (cancelled) {
-			await Promise.resolve()
-			throw interrupt
+			return Promise.reject(interrupt)
 		}
 		const promise = waitFor(job, 'settled', { filter: input })
 		await dispatch(job, input)
@@ -682,12 +671,11 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		return result
 	}
 
-	const cancel: ExecutionContext['cancel'] = async (instance, data, reason) => {
+	const cancel: ExecutionContext['cancel'] = (instance, data, reason) => {
 		if (cancelled) {
-			await Promise.resolve()
-			throw interrupt
+			return Promise.reject(interrupt)
 		}
-		run({
+		return run({
 			id: `cancel-${instance.type}-${instance.id}`,
 			[system]: true,
 			retry: 0

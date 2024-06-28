@@ -47,17 +47,16 @@ export type RunOptions = {
 	 * Defaults to a list of delays that increase with each attempt: `"100ms", "30s", "2m", "10m", "30m", "1h", "2h", "12h", "1d"`
 	 */
 	backoff?: number | Duration | ((attempt: number) => number | Duration) | number[] | Duration[]
-	// timeout?: number | Duration
+	// TODO: timeout?: number | Duration
 	// TODO: concurrency
 	// ...
 }
 
 export type WaitForOptions<Filter extends InputData> = {
 	filter?: DeepPartial<Filter>
-	timeout?: number
+	// TODO: timeout?: number | Duration
 	/** Should past events be able to satisfy this request? Defaults to `true`. Use `false` to indicate that only events emitted after this step ran can be used. */
 	retroactive?: boolean
-	// TODO: debounce
 }
 
 type OrchestrationTimer<In extends Data> = number | Frequency | { id?: string, ms?: number | Frequency } | ((input: In) => number | Frequency | { id?: string, ms?: number | Frequency })
@@ -146,6 +145,7 @@ export class Job<
 			 * - If it's a function, it will be called with the input data, and should return a value or an object as described above.
 			 */
 			rateLimit?: NoInfer<OrchestrationTimer<In>>
+			// TODO: timeout?: number | Duration | ((input: NoInfer<In>) => number | Duration)
 			onTrigger?: (params: { input: In }) => void
 			onStart?: (params: { input: In }) => void
 			onSuccess?: (params: { input: In, result: Out }) => void

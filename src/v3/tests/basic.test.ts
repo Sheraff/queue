@@ -374,7 +374,7 @@ test.describe('errors', async () => {
 		assert.equal(count, 3)
 
 		const duration = performance.measure('test', 'start', 'error').duration
-		t.diagnostic(`Duration: ${duration.toFixed(2)}ms`)
+		t.diagnostic(`Duration: ${duration.toFixed(2)}ms (< 2ms)`)
 		assert(duration < 2, 'Duration should be less than 2ms')
 
 		await queue.close()

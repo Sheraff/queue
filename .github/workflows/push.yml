@@ -55,6 +55,7 @@ jobs:
 
       - name: 🚦 Run tests
         run: pnpm test:cov
+        timeout-minutes: 2
 
       - name: ☂️ Coverage
         if: always() && github.event_name == 'pull_request'

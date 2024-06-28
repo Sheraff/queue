@@ -22,6 +22,8 @@ export type Task = {
 	key: string
 	input: string
 	priority: number
+	timeout_at: number | null
+	timed_out?: boolean | null
 	status: TaskStatus
 	runs: number
 	created_at: number
@@ -93,6 +95,7 @@ export interface Storage {
 		throttle: { s: number, id: string } | null,
 		/** incoming tasks with the same ID are 'cancelled' immediately if there are existing tasks with that ID are started AND fewer than s seconds have passed (ID = rate_limit_id) */
 		rateLimit: { s: number, id: string } | null,
+		timeout: number | null
 	}, cb?: (
 		rateLimit: number | null,
 		inserted: boolean,
@@ -170,6 +173,7 @@ export class SQLiteStorage implements Storage {
 				input JSON NOT NULL,
 
 				priority INTEGER NOT NULL DEFAULT 0,
+				timeout_at INTEGER,
 
 				debounce_id TEXT,
 				sleep_until INTEGER,
@@ -227,106 +231,126 @@ export class SQLiteStorage implements Storage {
 		`)
 
 		this.#getTaskStmt = this.#db.prepare<{ queue: string, job: string, key: string }, Task | undefined>(/* sql */ `
-			SELECT *
+			SELECT
+				*,
+				CASE
+					WHEN timeout_at IS NULL THEN NULL
+					WHEN (timeout_at <= unixepoch('subsec')) THEN TRUE
+					ELSE FALSE
+				END timed_out
 			FROM ${tasksTable}
 			WHERE queue = @queue AND job = @job AND key = @key
 		`)
 
 		const getNextTaskStmt = this.#db.prepare<{ queue: string }, Task>(/* sql */ `
-			SELECT *
+			SELECT
+				*,
+				CASE
+					WHEN timeout_at IS NULL THEN NULL
+					WHEN (timeout_at <= unixepoch('subsec')) THEN TRUE
+					ELSE FALSE
+				END timed_out
 			FROM ${tasksTable} task
 			WHERE
-				queue = @queue
-				AND (
-					status = 'pending'
-					OR (
-						-- task is sleeping, e.g. debounced
-						status = 'stalled'
-						AND sleep_until IS NOT NULL
-						AND sleep_until <= unixepoch('subsec')
-					) OR (
-						-- task is throttled
-						status = 'stalled'
-						AND throttle_id IS NOT NULL
-						AND NOT EXISTS (
-							SELECT 1
-							FROM ${tasksTable} sibling
-							WHERE sibling.queue = task.queue
-								AND sibling.throttle_id = task.throttle_id
-								AND sibling.id != task.id
-								AND sibling.started_at IS NOT NULL
-								AND sibling.started_at + task.throttle_duration > unixepoch('subsec')
-							LIMIT 1
-						)
-						AND id = (
-							SELECT id
-							FROM ${tasksTable}
-							WHERE queue = task.queue
-							AND throttle_id = task.throttle_id
-							AND started_at IS NULL
-							ORDER BY priority DESC, created_at ASC
-							LIMIT 1
-						)
-					)
-				)
-				AND NOT EXISTS (
-					-- check for blocking steps (TODO: maybe this check is only necessary if started_at is not null? It would be a perf improvement for all throttled / debounced tasks)
-					SELECT 1
-					FROM ${stepsTable} step
-					WHERE
-						task_id = task.id
-						AND ((
-							-- step is stalled and sleep timer is not expired
+				(
+					-- task timed out
+					queue = @queue
+					AND status IN ('pending', 'stalled')
+					AND timeout_at IS NOT NULL
+					AND timeout_at <= unixepoch('subsec')
+				) OR (
+					queue = @queue
+					AND (
+						status = 'pending'
+						OR (
+							-- task is sleeping, e.g. debounced
 							status = 'stalled'
 							AND sleep_until IS NOT NULL
-							AND (sleep_until > unixepoch('subsec'))
+							AND sleep_until <= unixepoch('subsec')
 						) OR (
-							-- step is waiting for an event
-							status = 'waiting'
-							AND wait_for IS NOT NULL
-							AND wait_filter IS NOT NULL
+							-- task is throttled
+							status = 'stalled'
+							AND throttle_id IS NOT NULL
 							AND NOT EXISTS (
-								WITH filter AS ( -- parse the filter JSON into a table
-									SELECT *
-									FROM json_tree(wait_filter)
-									WHERE type != 'null'
-								)
-								SELECT 1 FROM ${eventsTable} event
-								WHERE event.queue = step.queue
-								AND event.key = step.wait_for
-								AND (
-									CASE step.wait_retroactive
-									WHEN TRUE THEN 1
-									ELSE event.created_at >= step.created_at
-									END
-								)
-								AND NOT EXISTS ( -- check if all filter conditions are met (reverse checking: if a single mismatch, then it's not a match)
-									SELECT 1
-									FROM filter
-									WHERE (
-										filter.type = 'object'
-										AND (
-											json_extract(event.input, filter.fullKey) IS NULL
-											OR json_type(json_extract(event.input, filter.fullKey)) != 'object'
-										)
-									) OR (
-										filter.type = 'array'
-										AND (
-											json_extract(event.input, filter.fullKey) IS NULL
-											OR json_type(json_extract(event.input, filter.fullKey)) != 'array'
-										)
-									) OR (
-										filter.type NOT IN ('object', 'array')
-										AND (
-											json_extract(event.input, filter.fullKey) IS NULL
-											OR json_extract(event.input, filter.fullKey) != filter.value
-										)
-									)
-									LIMIT 1
-								)
+								SELECT 1
+								FROM ${tasksTable} sibling
+								WHERE sibling.queue = task.queue
+									AND sibling.throttle_id = task.throttle_id
+									AND sibling.id != task.id
+									AND sibling.started_at IS NOT NULL
+									AND sibling.started_at + task.throttle_duration > unixepoch('subsec')
+								LIMIT 1
 							)
-						))
-					LIMIT 1
+							AND id = (
+								SELECT id
+								FROM ${tasksTable}
+								WHERE queue = task.queue
+								AND throttle_id = task.throttle_id
+								AND started_at IS NULL
+								ORDER BY priority DESC, created_at ASC
+								LIMIT 1
+							)
+						)
+					)
+					AND NOT EXISTS (
+						-- check for blocking steps (TODO: maybe this check is only necessary if started_at is not null? It would be a perf improvement for all throttled / debounced tasks)
+						SELECT 1
+						FROM ${stepsTable} step
+						WHERE
+							task_id = task.id
+							AND ((
+								-- step is stalled and sleep timer is not expired
+								status = 'stalled'
+								AND sleep_until IS NOT NULL
+								AND (sleep_until > unixepoch('subsec'))
+							) OR (
+								-- step is waiting for an event
+								status = 'waiting'
+								AND wait_for IS NOT NULL
+								AND wait_filter IS NOT NULL
+								AND NOT EXISTS (
+									WITH filter AS ( -- parse the filter JSON into a table
+										SELECT *
+										FROM json_tree(wait_filter)
+										WHERE type != 'null'
+									)
+									SELECT 1 FROM ${eventsTable} event
+									WHERE event.queue = step.queue
+									AND event.key = step.wait_for
+									AND (
+										CASE step.wait_retroactive
+										WHEN TRUE THEN 1
+										ELSE event.created_at >= step.created_at
+										END
+									)
+									AND NOT EXISTS ( -- check if all filter conditions are met (reverse checking: if a single mismatch, then it's not a match)
+										SELECT 1
+										FROM filter
+										WHERE (
+											filter.type = 'object'
+											AND (
+												json_extract(event.input, filter.fullKey) IS NULL
+												OR json_type(json_extract(event.input, filter.fullKey)) != 'object'
+											)
+										) OR (
+											filter.type = 'array'
+											AND (
+												json_extract(event.input, filter.fullKey) IS NULL
+												OR json_type(json_extract(event.input, filter.fullKey)) != 'array'
+											)
+										) OR (
+											filter.type NOT IN ('object', 'array')
+											AND (
+												json_extract(event.input, filter.fullKey) IS NULL
+												OR json_extract(event.input, filter.fullKey) != filter.value
+											)
+										)
+										LIMIT 1
+									)
+								)
+							))
+						LIMIT 1
+					)
 				)
 			ORDER BY
 				priority DESC,
@@ -375,6 +399,16 @@ export class SQLiteStorage implements Storage {
 						AND sibling.started_at IS NOT NULL
 					ORDER BY seconds ASC
 					LIMIT 1
+				),
+				timed_out AS (
+					SELECT (timeout_at - unixepoch('subsec')) as seconds
+					FROM ${tasksTable}
+					WHERE
+						queue = @queue
+						AND status IN ('pending', 'stalled')
+						AND timeout_at IS NOT NULL
+					ORDER BY seconds ASC
+					LIMIT 1
 				)
 			SELECT CEIL(MIN(seconds) * 1000) as ms
 			FROM (
@@ -383,6 +417,8 @@ export class SQLiteStorage implements Storage {
 				SELECT seconds FROM sleeping
 				UNION ALL
 				SELECT seconds FROM throttled
+				UNION ALL
+				SELECT seconds FROM timed_out
 			) AS combined
 			LIMIT 1
 		`)
@@ -474,6 +510,7 @@ export class SQLiteStorage implements Storage {
 			input: string,
 			parent_id: number | null,
 			priority: number,
+			timeout: number | null,
 			debounce_id: string | null,
 			throttle_id: string | null,
 			rate_limit_id: string | null,
@@ -482,7 +519,7 @@ export class SQLiteStorage implements Storage {
 			status: TaskStatus
 		}, undefined | { id: number }>(/* sql */ `
 			INSERT OR IGNORE
-			INTO ${tasksTable} (queue, job, key, input, parent_id, status, priority, debounce_id, throttle_id, rate_limit_id, throttle_duration, sleep_until)
+			INTO ${tasksTable} (queue, job, key, input, parent_id, status, priority, timeout_at, debounce_id, throttle_id, rate_limit_id, throttle_duration, sleep_until)
 			VALUES (
 				@queue,
 				@job,
@@ -491,6 +528,7 @@ export class SQLiteStorage implements Storage {
 				@parent_id,
 				CASE WHEN (@throttle_id IS NOT NULL) THEN 'stalled' ELSE @status END,
 				@priority,
+				CASE @timeout WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @timeout) END,
 				@debounce_id,
 				@throttle_id,
 				@rate_limit_id,
@@ -521,6 +559,7 @@ export class SQLiteStorage implements Storage {
 			input: string
 			parent_id: number | null
 			priority: number
+			timeout: number | null
 			debounce: { s: number; id: string } | null
 			throttle: { s: number; id: string } | null
 			rateLimit: { s: number; id: string } | null
@@ -673,6 +712,7 @@ export class SQLiteStorage implements Storage {
 		input: string,
 		parent_id: number | null,
 		priority: number,
+		timeout: number | null,
 		debounce: { s: number, id: string } | null
 		throttle: { s: number, id: string } | null
 		rateLimit: { s: number, id: string } | null
@@ -706,6 +746,7 @@ export class SQLiteStorage implements Storage {
 		input: string
 		parent_id: number | null
 		priority: number
+		timeout: number | null
 		debounce: { s: number, id: string } | null
 		throttle: { s: number, id: string } | null
 		rateLimit: { s: number, id: string } | null

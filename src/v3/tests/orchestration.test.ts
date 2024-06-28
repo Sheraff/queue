@@ -224,3 +224,46 @@ test('throttle', { timeout: 500 }, async (t) => {
 	await queue.close()
 	db.close()
 })
+
+test('timeout', { timeout: 500 }, async (t) => {
+	let runs = 0
+	let cancel
+	const aaa = new Job({
+		id: 'aaa',
+		input: z.object({ a: z.number() }),
+		output: z.object({ b: z.number() }),
+		timeout: "10 ms",
+		onCancel: ({ reason }) => { cancel = reason }
+	}, async (input) => {
+		runs++
+		await Job.sleep("20 ms")
+		return { b: input.a }
+	})
+
+	const queue = new Queue({
+		id: 'shoooo',
+		jobs: { aaa },
+		storage: new SQLiteStorage()
+	})
+
+	let finished: string = ''
+
+	performance.mark('start')
+	await invoke(queue.jobs.aaa, { a: 1 })
+		.then(() => finished = 'success')
+		.catch(() => finished = 'error')
+	performance.mark('end')
+
+	assert.deepEqual(finished, 'error', 'job got cancelled due to timeout')
+	assert.deepEqual(runs, 1, 'timeout needs a single loop to cancel the job')
+
+	const duration = performance.measure('timeout', 'start', 'end').duration
+	performance.clearMarks()
+	performance.clearMeasures()
+	t.diagnostic(`Timeout took ${duration.toFixed(2)}ms (< 20ms)`)
+	assert(duration < 20, 'timeout was less than 20ms')
+
+	assert.deepEqual(cancel, { type: 'timeout' }, 'reason for cancellation was timeout')
+
+	await queue.close()
+})

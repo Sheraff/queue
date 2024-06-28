@@ -31,6 +31,7 @@ test.describe('benchmark', {
 		assert(duration < 150, `Benchmark took ${duration.toFixed(2)}ms, expected less than 150ms`)
 
 		await queue.close()
+		performance.clearMarks()
 	})
 
 	test('asynchronous', async (t) => {
@@ -57,5 +58,6 @@ test.describe('benchmark', {
 		assert(duration < 100, `Benchmark took ${duration}ms, expected less than 100ms`)
 
 		await queue.close()
+		performance.clearMarks()
 	})
 })

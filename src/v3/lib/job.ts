@@ -7,7 +7,7 @@ import { getRegistrationContext, hash, hydrateError, interrupt, isInterrupt, isP
 import { parseDuration, parsePeriod, type Duration, type Frequency } from './ms'
 
 export type CancelReason =
-	| { type: 'timeout', ms: number }
+	| { type: 'timeout' }
 	| { type: 'explicit' }
 	| { type: 'debounce' }
 
@@ -106,8 +106,8 @@ export class Job<
 			input?: Validator<In>
 			output?: Validator<Out>
 			triggers?: NoInfer<Array<Pipe<string, In> | PipeInto<any, In>>>
-			/** The job must accept a `{date: '<ISO string>'}` input to use a cron schedule (or no input at all). */
 			priority?: number | ((input: NoInfer<In>) => number)
+			/** The job must accept a `{date: '<ISO string>'}` input to use a cron schedule (or no input at all). */
 			cron?: NoInfer<In extends { date: string } ? string | string[] : InputData extends In ? string | string[] : never>
 			/**
 			 * Debounce configuration.
@@ -145,7 +145,18 @@ export class Job<
 			 * - If it's a function, it will be called with the input data, and should return a value or an object as described above.
 			 */
 			rateLimit?: NoInfer<OrchestrationTimer<In>>
-			// TODO: timeout?: number | Duration | ((input: NoInfer<In>) => number | Duration)
+			/**
+			 * Timeout configuration.
+			 * 
+			 * If the job takes longer than the timeout duration, it will be cancelled with a timeout reason.
+			 * 
+			 * Accepted configs:
+			 * - If it's a value (number or "30 min"), it will be used as the timeout duration in milliseconds.
+			 * - If it's a function, it will be called with the input data, and should return a value as described above.
+			 * 
+			 * @default "1 hour" 
+			 */
+			timeout?: number | Duration | ((input: NoInfer<In>) => number | Duration)
 			onTrigger?: (params: { input: In }) => void
 			onStart?: (params: { input: In }) => void
 			onSuccess?: (params: { input: In, result: Out }) => void
@@ -187,8 +198,9 @@ export class Job<
 				const debounce = opts.debounce && resolveOrchestrationConfig(opts.debounce, this.id, input)
 				const throttle = opts.throttle && resolveOrchestrationConfig(opts.throttle, this.id, input)
 				const rateLimit = opts.rateLimit && resolveOrchestrationConfig(opts.rateLimit, this.id, input)
+				const timeout = resolveJobTimeout(opts.timeout ?? "1 hour", input)
 
-				registrationContext.addTask(this, input, meta.key, executionContext, priority, debounce, throttle, rateLimit, (rateLimitError, inserted, cancelled) => {
+				registrationContext.addTask(this, input, meta.key, executionContext, priority, debounce, throttle, rateLimit, timeout, (rateLimitError, inserted, cancelled) => {
 					if (rateLimitError !== null) {
 						// TODO: should we do something else here?
 						console.warn(`Rate limit reached for group ID ${rateLimit?.id} (on job ${this.id}). Retry in ${rateLimitError}ms`)
@@ -237,7 +249,7 @@ export class Job<
 			})
 
 			this.#emitter.on('cancel', ({ input, reason }, meta) => {
-				opts.onCancel?.({ input, reason: { type: 'explicit' } })
+				opts.onCancel?.({ input, reason })
 				const registrationContext = getRegistrationContext(this)
 				registrationContext.recordEvent(`job/${this.id}/cancel`, meta.input, JSON.stringify({ input, reason }))
 				// TODO: Update steps too? (to avoid leaving them in a state that would block stuff like concurrency)
@@ -363,6 +375,11 @@ export class Job<
 	/** @package */
 	[exec](registrationContext: RegistrationContext, task: Task, steps: Step[]): Promise<void> {
 		const input = JSON.parse(task.input) as In
+
+		if (task.timed_out) {
+			this.#emitter.emit('cancel', { input, reason: { type: 'timeout' } }, { input: task.input, key: task.key, queue: registrationContext.queue.id })
+			return Promise.resolve()
+		}
 
 		const executionContext = makeExecutionContext(registrationContext, task, steps)
 
@@ -742,6 +759,12 @@ function resolveOrchestrationConfig(config: OrchestrationTimer<any>, id: string,
 	if (typeof config === 'string') return { id, s: parsePeriod(config) / 1000 }
 	const ms = typeof config.ms === 'string' ? parsePeriod(config.ms) : config.ms ?? 0
 	return { id: config.id ?? id, s: ms / 1000 }
+}
+
+function resolveJobTimeout<In extends Data>(timeout: number | Duration | ((input: NoInfer<In>) => number | Duration), input: In) {
+	if (typeof timeout === 'function') return resolveJobTimeout(timeout(input), input)
+	if (typeof timeout === 'string') return resolveJobTimeout(parseDuration(timeout), input)
+	return timeout <= 0 ? null : timeout / 1000
 }
 
 const RETRY_TABLE: Duration[] = [

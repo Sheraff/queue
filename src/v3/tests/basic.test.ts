@@ -47,6 +47,7 @@ test('simple sync job', { timeout: 500 }, async (t) => {
 	assert.strictEqual(steps.filter(s => s.step.startsWith('user/add-one#')).length, 10)
 
 	db.close()
+	performance.clearMarks()
 })
 
 test('simple async job', { timeout: 500 }, async (t) => {
@@ -90,6 +91,7 @@ test('simple async job', { timeout: 500 }, async (t) => {
 	assert.strictEqual(steps.filter(s => s.step.startsWith('user/add-one#')).length, 10)
 
 	db.close()
+	performance.clearMarks()
 })
 
 test.describe('memo', { timeout: 500 }, () => {

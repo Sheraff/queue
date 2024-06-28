@@ -200,18 +200,17 @@ export class Queue<
 		for (const job of Object.values(this.jobs)) {
 			if (!job.cron) continue
 			const schedules = typeof job.cron === 'string' ? [job.cron] : job.cron
-			let willExec = false
+			const done = new Set<string>()
 			for (const string of schedules) {
 				this.#cronjobs.push(schedule(string, (date) => {
 					if (typeof date === 'string') return
 					// in case multiple cron schedules happen to overlap in the same second, we only want to run the job once
 					// for example: every hour '0 * * * *' and every minute '* * * * *' would both run at the same time at the start of the hour
-					if (willExec) return
-					willExec = true
-					setImmediate(() => {
-						willExec = false
-						job.dispatch({ date: date.toISOString() })
-					})
+					const str = `${date.getMinutes()}:${date.getSeconds()}`
+					if (done.has(str)) return
+					done.add(str)
+					setImmediate(() => job.dispatch({ date: date.toISOString() }))
+					setTimeout(() => done.delete(str), 10).unref()
 				}))
 			}
 		}

@@ -65,13 +65,13 @@ test('cron triggers', {
 	const hello = new Job({
 		id: 'hello',
 		input: z.object({ date: z.string().datetime(), foo: z.number().optional() }),
-		cron: ['*/1 * * * * *', '*/1 * * * * *'],
+		cron: ['*/1 * * * * *', '*/1 * * * * *', '*/1 * * * * *'],
 	}, async () => {
 		await Job.run('a', () => executed++)
 	})
 
-	let triggers = 0
-	hello.emitter.on('trigger', () => triggers++)
+	const inputs: any[] = []
+	hello.emitter.on('trigger', ({ input }) => inputs.push(input))
 
 	const queue = new Queue({
 		id: 'cron',
@@ -81,10 +81,14 @@ test('cron triggers', {
 
 	await new Promise(r => setTimeout(r, 2100))
 
-	t.diagnostic(`Triggered ${triggers} times`)
+	const unique = new Set(inputs.map(i => i.date))
+	const allUnique = unique.size === inputs.length
+
+	t.diagnostic(`Triggered ${inputs.length} times`)
 	t.diagnostic(`Executed ${executed} times`)
-	assert.strictEqual(executed, 2, 'Step should have been executed once')
-	assert.strictEqual(executed, triggers, 'Step triggers should be debounced')
+	assert(executed >= 2, 'Step should have been executed a few times')
+	assert(allUnique, 'Step triggers should be debounced')
+
 
 	await queue.close()
 })

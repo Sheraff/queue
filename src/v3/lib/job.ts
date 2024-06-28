@@ -213,8 +213,7 @@ export class Job<
 								if (!task.data) throw new Error('Task previously failed, but no error data found')
 								setImmediate(() => this.#emitter.emit('error', { input, error: hydrateError(task.data!) }, meta))
 							} else if (task.status === 'completed') {
-								if (!task.data) throw new Error('Task previously completed, but no output data found')
-								setImmediate(() => this.#emitter.emit('success', { input, result: JSON.parse(task.data!) }, meta))
+								setImmediate(() => this.#emitter.emit('success', { input, result: task.data && JSON.parse(task.data!) }, meta))
 							} else if (task.status === 'cancelled') {
 								if (!task.data) throw new Error('Task previously cancelled, but no reason data found')
 								setImmediate(() => this.#emitter.emit('cancel', { input, reason: JSON.parse(task.data!) }, meta))

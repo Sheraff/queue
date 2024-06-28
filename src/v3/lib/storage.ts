@@ -69,6 +69,13 @@ export type Step = {
 	/** computed on read to know if sleep timer expired */
 	sleep_done: boolean | null
 
+	/** used on write */
+	timeout: number | null
+	/** actual value stored in storage */
+	timeout_at: number | null
+	/** computed on read */
+	timed_out: boolean | null
+
 	wait_for?: string | null // 'job/aaa/settled' | 'pipe/bbb'
 	wait_filter?: string | null // '{"input":{},"error":null}'
 	wait_retroactive?: boolean | null
@@ -128,7 +135,10 @@ export interface Storage {
 	/** Set the task back to 'pending' after the step promises it was waiting for resolved. It can be picked up again. */
 	requeueTask<T>(task: Task, cb: () => T): T | Promise<T>
 	/** Insert or update a step based on unique index queue+job+key+step */
-	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & { sleep_for?: number | null }, cb: () => T): T | Promise<T>
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & {
+		sleep_for?: number | null
+		timeout?: number | null
+	}, cb: () => T): T | Promise<T>
 	/** Append event to table */
 	recordEvent<T>(queue: string, key: string, input: string, data: string, cb?: () => T): T | Promise<T>
 }
@@ -209,6 +219,7 @@ export class SQLiteStorage implements Storage {
 				created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 				updated_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
 				sleep_until INTEGER,
+				timeout_at INTEGER,
 				wait_for TEXT,
 				wait_filter JSON,
 				wait_retroactive BOOLEAN,
@@ -258,6 +269,19 @@ export class SQLiteStorage implements Storage {
 					AND status IN ('pending', 'stalled')
 					AND timeout_at IS NOT NULL
 					AND timeout_at <= unixepoch('subsec')
+				) OR (
+					-- step timed out
+					queue = @queue
+					AND status IN ('pending', 'stalled')
+					AND EXISTS (
+						SELECT 1
+						FROM ${stepsTable} step
+						WHERE
+							step.task_id = task.id
+							AND step.status IN ('stalled', 'waiting')
+							AND step.timeout_at IS NOT NULL
+							AND step.timeout_at <= unixepoch('subsec')
+					)
 				) OR (
 					queue = @queue
 					AND (
@@ -409,6 +433,19 @@ export class SQLiteStorage implements Storage {
 						AND timeout_at IS NOT NULL
 					ORDER BY seconds ASC
 					LIMIT 1
+				),
+				step_timed_out AS (
+					SELECT (step.timeout_at - unixepoch('subsec')) as seconds
+					FROM ${tasksTable} task
+					LEFT JOIN ${stepsTable} step
+					ON step.task_id = task.id
+					WHERE
+						task.queue = @queue
+						AND task.status IN ('pending', 'stalled')
+						AND step.status IN ('stalled', 'waiting')
+						AND step.timeout_at IS NOT NULL
+					ORDER BY seconds ASC
+					LIMIT 1
 				)
 			SELECT CEIL(MIN(seconds) * 1000) as ms
 			FROM (
@@ -419,6 +456,8 @@ export class SQLiteStorage implements Storage {
 				SELECT seconds FROM throttled
 				UNION ALL
 				SELECT seconds FROM timed_out
+				UNION ALL
+				SELECT seconds FROM step_timed_out
 			) AS combined
 			LIMIT 1
 		`)
@@ -439,7 +478,12 @@ export class SQLiteStorage implements Storage {
 					WHEN sleep_until IS NULL THEN NULL
 					WHEN ((sleep_until) <= unixepoch('subsec')) THEN TRUE
 					ELSE FALSE
-				END sleep_done
+				END sleep_done,
+				CASE
+					WHEN timeout_at IS NULL THEN NULL
+					WHEN ((timeout_at) <= unixepoch('subsec')) THEN TRUE
+					ELSE FALSE
+				END timed_out
 			FROM ${stepsTable}
 			WHERE
 				task_id = @id
@@ -459,6 +503,7 @@ export class SQLiteStorage implements Storage {
 					steps[i] = this.#recordStepStmt.get({
 						...step,
 						sleep_for: null,
+						timeout: null,
 						status: 'completed',
 						data: event.data,
 					})
@@ -468,6 +513,7 @@ export class SQLiteStorage implements Storage {
 					steps[i] = this.#recordStepStmt.get({
 						...step,
 						sleep_for: null,
+						timeout: null,
 						status: step.next_status,
 					})
 				}
@@ -598,6 +644,7 @@ export class SQLiteStorage implements Storage {
 			status: StepStatus
 			next_status: StepStatus | null
 			sleep_for: number | null
+			timeout: number | null
 			wait_for: string | null
 			wait_filter: string | null
 			wait_retroactive: number | null
@@ -613,6 +660,7 @@ export class SQLiteStorage implements Storage {
 				status,
 				next_status,
 				sleep_until,
+				timeout_at,
 				wait_for,
 				wait_filter,
 				wait_retroactive,
@@ -628,6 +676,7 @@ export class SQLiteStorage implements Storage {
 				@status,
 				@next_status,
 				CASE @sleep_for WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @sleep_for) END,
+				CASE @timeout WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @timeout) END,
 				@wait_for,
 				@wait_filter,
 				@wait_retroactive,
@@ -727,6 +776,7 @@ export class SQLiteStorage implements Storage {
 		status: StepStatus
 		next_status: StepStatus | null
 		sleep_for: number | null
+		timeout: number | null
 		wait_for: string | null
 		wait_filter: string | null
 		wait_retroactive: number | null
@@ -775,7 +825,10 @@ export class SQLiteStorage implements Storage {
 		return cb() as T
 	}
 
-	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'next_status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & { sleep_for?: number }, cb: () => T): T {
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'next_status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & {
+		sleep_for?: number
+		timeout?: number
+	}, cb: () => T): T {
 		this.#recordStepStmt.run({
 			queue: task.queue,
 			job: task.job,
@@ -786,6 +839,7 @@ export class SQLiteStorage implements Storage {
 			status: step.status,
 			next_status: step.next_status ?? null,
 			sleep_for: step.sleep_for ?? null,
+			timeout: step.timeout ?? null,
 			wait_for: step.wait_for ?? null,
 			wait_filter: step.wait_filter ?? null,
 			wait_retroactive: Number(step.wait_retroactive) ?? null,

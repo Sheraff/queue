@@ -83,6 +83,10 @@ export class NonRecoverableError extends Error {
 	override name = 'NonRecoverableError'
 }
 
+export class TimeoutError extends Error {
+	override name = 'TimeoutError'
+}
+
 export function hydrateError(serialized: string): Error {
 	const obj = JSON.parse(serialized)
 	const error = new Error(obj.message)

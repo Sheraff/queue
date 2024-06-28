@@ -5,6 +5,7 @@ import assert from "node:assert"
 import Database from "better-sqlite3"
 import type { Step } from "../lib/storage"
 import { z } from "zod"
+import { TimeoutError } from "../lib/utils"
 
 test('sleep', { timeout: 500 }, async (t) => {
 
@@ -238,4 +239,103 @@ test('dispatch', async (t) => {
 	assert.deepEqual(result, { foo: 1 })
 
 	await queue.close()
+})
+
+test.describe('timeout in job step', { timeout: 500 }, () => {
+	test('waitFor timeout', async (t) => {
+		const pipe = new Pipe({
+			id: 'foo',
+			input: z.object({ in: z.number() }),
+		})
+
+		const aaa = new Job({
+			id: 'aaa',
+		}, async () => {
+			await Job.waitFor(pipe, { timeout: '5ms' })
+		})
+
+		const db = new Database()
+		db.pragma('journal_mode = WAL')
+
+		const queue = new Queue({
+			id: 'timeout',
+			jobs: { aaa },
+			storage: new SQLiteStorage({ db })
+		})
+
+		const result = invoke(queue.jobs.aaa, {})
+
+		await assert.rejects(result, new TimeoutError('Step timed out'))
+		await queue.close()
+	})
+
+	test('invoke timeout', async (t) => {
+		const bbb = new Job({
+			id: 'bbb',
+		}, async () => {
+			await Job.run('long', async () => {
+				await new Promise(resolve => setTimeout(resolve, 100))
+			})
+		})
+
+		const aaa = new Job({
+			id: 'aaa',
+		}, async () => {
+			await Job.invoke(bbb, {}, { timeout: '5ms' })
+		})
+
+		const db = new Database()
+		db.pragma('journal_mode = WAL')
+
+		const queue = new Queue({
+			id: 'timeout',
+			jobs: { aaa, bbb },
+			storage: new SQLiteStorage({ db })
+		})
+
+		const result = invoke(queue.jobs.aaa, {})
+
+		await assert.rejects(result, new TimeoutError('Step timed out'))
+		await queue.close()
+	})
+
+	test('run timeout', async (t) => {
+		let aborted = false
+		const aaa = new Job({
+			id: 'aaa',
+			onStart() { performance.mark('start') },
+			onSettled() { performance.mark('end') }
+		}, async () => {
+			await Job.run({
+				id: 'foo',
+				timeout: '5ms',
+				retry: 2,
+				backoff: 0
+			}, async ({ signal }) => {
+				if (signal) signal.onabort = () => aborted = true
+				await new Promise(resolve => setTimeout(resolve, 100))
+			})
+		})
+
+		const db = new Database()
+		db.pragma('journal_mode = WAL')
+
+		const queue = new Queue({
+			id: 'timeout',
+			jobs: { aaa },
+			storage: new SQLiteStorage({ db })
+		})
+
+		const result = invoke(queue.jobs.aaa, {})
+
+		await assert.rejects(result, new TimeoutError('Step timed out'))
+		assert(aborted, 'Step should have been aborted')
+
+		const duration = performance.measure('run', 'start', 'end').duration
+		performance.clearMarks()
+		t.diagnostic(`Run took ${duration.toFixed(2)}ms (requested 5ms)`)
+		assert(duration < 50, 'Run should have been aborted and not waited for the full 100ms')
+
+		await queue.close()
+	})
 })

@@ -3,7 +3,7 @@ import type { Data, DeepPartial, InputData, Validator } from "./types"
 import { Pipe, type PipeInto } from "./pipe"
 import { execution, type ExecutionContext, type RegistrationContext } from "./context"
 import type { Step, Task } from "./storage"
-import { getRegistrationContext, hash, hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError, serialize, serializeError } from "./utils"
+import { getRegistrationContext, hash, hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError, serialize, serializeError, TimeoutError } from "./utils"
 import { parseDuration, parsePeriod, type Duration, type Frequency } from './ms'
 
 export type CancelReason =
@@ -47,14 +47,14 @@ export type RunOptions = {
 	 * Defaults to a list of delays that increase with each attempt: `"100ms", "30s", "2m", "10m", "30m", "1h", "2h", "12h", "1d"`
 	 */
 	backoff?: number | Duration | ((attempt: number) => number | Duration) | number[] | Duration[]
-	// TODO: timeout?: number | Duration
+	timeout?: number | Duration
 	// TODO: concurrency
 	// ...
 }
 
 export type WaitForOptions<Filter extends InputData> = {
 	filter?: DeepPartial<Filter>
-	// TODO: timeout?: number | Duration
+	timeout?: number | Duration
 	/** Should past events be able to satisfy this request? Defaults to `true`. Use `false` to indicate that only events emitted after this step ran can be used. */
 	retroactive?: boolean
 }
@@ -319,10 +319,16 @@ export class Job<
 		return key
 	}
 
-	/** @public */
-	static async run<Out extends Data>(id: string, fn: () => Out | Promise<Out>): Promise<Out>
-	static async run<Out extends Data>(opts: RunOptions, fn: () => Out | Promise<Out>): Promise<Out>
-	static async run<Out extends Data>(optsOrId: string | RunOptions, fn: () => Out | Promise<Out>): Promise<Out> {
+	/**
+	 * @public
+	 * 
+	 * @description
+	 * The `signal` property of the `utils` object is only provided when the options contain a `timeout`.
+	 */
+	// TODO: make the types actually reflect the presence / absence of the signal
+	static async run<Out extends Data>(id: string, fn: (utils: { signal?: AbortSignal }) => Out | Promise<Out>): Promise<Out>
+	static async run<Out extends Data>(opts: RunOptions, fn: (utils: { signal?: AbortSignal }) => Out | Promise<Out>): Promise<Out>
+	static async run<Out extends Data>(optsOrId: string | RunOptions, fn: (utils: { signal?: AbortSignal }) => Out | Promise<Out>): Promise<Out> {
 		const e = getExecutionContext()
 		const opts: RunOptions = typeof optsOrId === 'string' ? { id: optsOrId } : optsOrId
 		return e.run(opts, fn)
@@ -350,9 +356,9 @@ export class Job<
 	}
 
 	/** @public */
-	static async invoke<J extends Job>(job: J, data: J['in']): Promise<J['out']> {
+	static async invoke<J extends Job>(job: J, data: J['in'], options?: Omit<WaitForOptions<J['in']>, "filter" | "retroactive">): Promise<J['out']> {
 		const e = getExecutionContext()
-		return e.invoke(job, data)
+		return e.invoke(job, data, options)
 	}
 
 	/** @public */
@@ -486,15 +492,18 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		}
 		const index = getIndex(options.id, options[system] ?? false)
 		const step = `${options[system] ? 'system' : 'user'}/${options.id}#${index}`
+
 		const entry = steps.find(s => s.step === step)
 		if (entry) {
 			if (entry.status === 'completed') {
 				if (!entry.data) return
 				return JSON.parse(entry.data)
-			} else if (entry.status === 'failed') {
+			}
+			if (entry.status === 'failed') {
 				if (!entry.data) throw new Error('Step marked as failed in storage, but no error data found')
 				throw hydrateError(entry.data)
-			} else if (entry.status === 'stalled') {
+			}
+			if (entry.status === 'stalled') {
 				if (entry.sleep_done === null) throw new Error('Sleep step already created, but no duration found')
 				if (!entry.sleep_done) {
 					return Promise.reject(interrupt)
@@ -550,16 +559,35 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		}
 
 		try {
-			const maybePromise = execution.run(task.id, fn)
+			const timeout = resolveStepTimeout(options.timeout)
+			const controller = timeout !== null ? new AbortController() : null
+			const utils = controller ? { signal: controller.signal } : {}
+			const maybePromise = execution.run(task.id, () => fn(utils))
 			if (isPromise(maybePromise)) {
+				let id: NodeJS.Timeout | null = null
+				const promise = controller
+					? Promise.race([
+						new Promise<void>((_, reject) =>
+							id = setTimeout(() => {
+								controller.abort()
+								reject(new TimeoutError('Step timed out'))
+							}, timeout! * 1000)
+						),
+						maybePromise
+					])
+					: maybePromise
+
 				promises.push(new Promise<Data>(resolve =>
 					registrationContext.recordStep(
 						task,
 						{ step, status: 'running', data: null, runs },
-						() => resolve(maybePromise)
+						() => resolve(promise)
 					))
 					.then(onSuccess)
 					.catch(onError)
+					.finally(() => {
+						if (id) clearTimeout(id)
+					})
 				)
 			} else {
 				const successMaybePromise = onSuccess(maybePromise)
@@ -629,19 +657,25 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 			if (entry.status === 'completed') {
 				if (!entry.data) return
 				return JSON.parse(entry.data)
-			} else if (entry.status === 'failed') {
+			}
+			if (entry.status === 'failed') {
 				if (!entry.data) throw new Error('Step marked as failed in storage, but no error data found')
 				throw hydrateError(entry.data)
-			} else if (entry.status === 'waiting') {
-				return Promise.reject(interrupt)
-			} else {
-				throw new Error(`Unexpected waitFor step status ${entry.status}`)
 			}
+			if (entry.timed_out) {
+				throw new TimeoutError('Step timed out')
+			}
+			if (entry.status === 'waiting') {
+				return Promise.reject(interrupt)
+			}
+			throw new Error(`Unexpected waitFor step status ${entry.status}`)
 		}
 
 		const key = instance instanceof Job
 			? `job/${instance.id}/${event}`
 			: `pipe/${instance.id}`
+
+		const timeout = resolveStepTimeout(options.timeout)
 
 		const maybePromise = syncOrPromise<void>(resolve => {
 			registrationContext.recordStep(
@@ -653,7 +687,8 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 					wait_for: key,
 					wait_retroactive: options.retroactive ?? true,
 					wait_filter: options.filter ? JSON.stringify(options.filter) : '{}', // TODO: query might be more performant if we supported the null filter case
-					runs: 0
+					runs: 0,
+					timeout,
 				},
 				resolve
 			)
@@ -677,11 +712,11 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		})
 	}
 
-	const invoke: ExecutionContext['invoke'] = async (job, input) => {
+	const invoke: ExecutionContext['invoke'] = async (job, input, options?: Omit<WaitForOptions<InputData>, 'retroactive' | 'filter'>) => {
 		if (cancelled) {
 			return Promise.reject(interrupt)
 		}
-		const promise = waitFor(job, 'settled', { filter: input })
+		const promise = waitFor(job, 'settled', { ...options, filter: input })
 		await dispatch(job, input)
 		const { result, error } = (await promise) as { result: Data, error: unknown }
 		if (error) throw error
@@ -765,6 +800,12 @@ function resolveJobTimeout<In extends Data>(timeout: number | Duration | ((input
 	if (typeof timeout === 'function') return resolveJobTimeout(timeout(input), input)
 	if (typeof timeout === 'string') return resolveJobTimeout(parseDuration(timeout), input)
 	return timeout <= 0 ? null : timeout / 1000
+}
+
+function resolveStepTimeout(timeout?: number | Duration) {
+	if (typeof timeout === 'string') return parseDuration(timeout) / 1000
+	if (typeof timeout === 'number') return timeout / 1000
+	return null
 }
 
 const RETRY_TABLE: Duration[] = [

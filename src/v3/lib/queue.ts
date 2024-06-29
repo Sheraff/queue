@@ -2,7 +2,7 @@ import { Pipe } from "./pipe"
 import { exec, Job } from "./job"
 import type { Storage } from "./storage"
 import { registration, type RegistrationContext } from "./context"
-import { hash, serializeError } from "./utils"
+import { isPromise, serializeError } from "./utils"
 
 type SafeKeys<K extends string> = { [k in K]: { id: k } }
 
@@ -24,6 +24,8 @@ export class Queue<
 	public readonly storage: Storage
 	/** @public */
 	public readonly parallel: number
+	/** @public */
+	public readonly ready: Promise<void>
 
 	constructor(opts: {
 		id: string,
@@ -69,11 +71,24 @@ export class Queue<
 			])) as Pipes
 		}
 
-		for (const job of Object.values(this.jobs)) {
-			job.start()
+		const init = this.storage.init()
+		if (isPromise(init)) {
+			this.ready = init
+			init.then(() => {
+				for (const job of Object.values(this.jobs)) {
+					job.start()
+				}
+				this.#loop()
+				this.#cron(opts.cronScheduler)
+			})
+		} else {
+			this.ready = Promise.resolve()
+			for (const job of Object.values(this.jobs)) {
+				job.start()
+			}
+			this.#loop()
+			this.#cron(opts.cronScheduler)
 		}
-		this.#loop()
-		this.#cron(opts.cronScheduler)
 	}
 
 	#registrationContext: RegistrationContext = {

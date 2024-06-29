@@ -183,10 +183,10 @@ export class SQLiteStorage implements Storage {
 				input JSON NOT NULL,
 
 				priority INTEGER NOT NULL DEFAULT 0,
-				timeout_at INTEGER,
+				timeout_at REAL,
 
 				debounce_id TEXT,
-				sleep_until INTEGER,
+				sleep_until REAL,
 
 				throttle_id TEXT,
 				throttle_duration INTEGER,
@@ -194,10 +194,10 @@ export class SQLiteStorage implements Storage {
 				rate_limit_id TEXT,
 				
 				status TEXT NOT NULL,
-				started_at INTEGER,
+				started_at REAL,
 				runs INTEGER NOT NULL DEFAULT 0,
-				created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
-				updated_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
+				created_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+				updated_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
 				data JSON
 			);
 		
@@ -216,10 +216,10 @@ export class SQLiteStorage implements Storage {
 				status TEXT NOT NULL,
 				next_status TEXT,
 				runs INTEGER NOT NULL DEFAULT 0,
-				created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
-				updated_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
-				sleep_until INTEGER,
-				timeout_at INTEGER,
+				created_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+				updated_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+				sleep_until REAL,
+				timeout_at REAL,
 				wait_for TEXT,
 				wait_filter JSON,
 				wait_retroactive BOOLEAN,
@@ -233,7 +233,7 @@ export class SQLiteStorage implements Storage {
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				queue TEXT NOT NULL,
 				key TEXT NOT NULL,
-				created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
+				created_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
 				input JSON,
 				data JSON
 			);
@@ -302,7 +302,7 @@ export class SQLiteStorage implements Storage {
 									AND sibling.throttle_id = task.throttle_id
 									AND sibling.id != task.id
 									AND sibling.started_at IS NOT NULL
-									AND sibling.started_at + task.throttle_duration > unixepoch('subsec')
+									AND sibling.started_at > unixepoch('subsec') - task.throttle_duration
 								LIMIT 1
 							)
 							AND id = (
@@ -385,7 +385,7 @@ export class SQLiteStorage implements Storage {
 		this.#getNextFutureTaskStmt = this.#db.prepare<{ queue: string }, { ms: number }>(/* sql */ `
 			WITH
 				pending AS (
-					SELECT (step.sleep_until - unixepoch('subsec')) as seconds
+					SELECT (step.sleep_until) as timeout
 					FROM ${tasksTable} task
 					LEFT JOIN ${stepsTable} step
 					ON step.task_id = task.id
@@ -394,21 +394,21 @@ export class SQLiteStorage implements Storage {
 						AND task.status = 'pending'
 						AND step.status = 'stalled'
 						AND step.sleep_until IS NOT NULL
-					ORDER BY seconds ASC
+					ORDER BY timeout ASC
 					LIMIT 1
 				),
 				sleeping AS (
-					SELECT (task.sleep_until - unixepoch('subsec')) as seconds
+					SELECT (task.sleep_until) as timeout
 					FROM ${tasksTable} task
 					WHERE
 						task.queue = @queue
 						AND task.status = 'stalled'
 						AND task.sleep_until IS NOT NULL
-					ORDER BY seconds ASC
+					ORDER BY timeout ASC
 					LIMIT 1
 				),
 				throttled AS (
-					SELECT (sibling.started_at + task.throttle_duration - unixepoch('subsec')) as seconds
+					SELECT (sibling.started_at + task.throttle_duration) as timeout
 					FROM ${tasksTable} task
 					LEFT JOIN ${tasksTable} sibling
 					ON
@@ -421,21 +421,21 @@ export class SQLiteStorage implements Storage {
 						AND task.throttle_id IS NOT NULL
 						AND task.started_at IS NULL
 						AND sibling.started_at IS NOT NULL
-					ORDER BY seconds ASC
+					ORDER BY timeout ASC
 					LIMIT 1
 				),
 				timed_out AS (
-					SELECT (timeout_at - unixepoch('subsec')) as seconds
+					SELECT (timeout_at) as timeout
 					FROM ${tasksTable}
 					WHERE
 						queue = @queue
 						AND status IN ('pending', 'stalled')
 						AND timeout_at IS NOT NULL
-					ORDER BY seconds ASC
+					ORDER BY timeout ASC
 					LIMIT 1
 				),
 				step_timed_out AS (
-					SELECT (step.timeout_at - unixepoch('subsec')) as seconds
+					SELECT (step.timeout_at) as timeout
 					FROM ${tasksTable} task
 					LEFT JOIN ${stepsTable} step
 					ON step.task_id = task.id
@@ -444,20 +444,20 @@ export class SQLiteStorage implements Storage {
 						AND task.status IN ('pending', 'stalled')
 						AND step.status IN ('stalled', 'waiting')
 						AND step.timeout_at IS NOT NULL
-					ORDER BY seconds ASC
+					ORDER BY timeout ASC
 					LIMIT 1
 				)
-			SELECT CEIL(MIN(seconds) * 1000) as ms
+			SELECT CEIL((MIN(timeout) - unixepoch('subsec')) * 1000) as ms
 			FROM (
-				SELECT seconds FROM pending
+				SELECT timeout FROM pending
 				UNION ALL
-				SELECT seconds FROM sleeping
+				SELECT timeout FROM sleeping
 				UNION ALL
-				SELECT seconds FROM throttled
+				SELECT timeout FROM throttled
 				UNION ALL
-				SELECT seconds FROM timed_out
+				SELECT timeout FROM timed_out
 				UNION ALL
-				SELECT seconds FROM step_timed_out
+				SELECT timeout FROM step_timed_out
 			) AS combined
 			LIMIT 1
 		`)
@@ -544,8 +544,8 @@ export class SQLiteStorage implements Storage {
 			WHERE
 				queue = @queue
 				AND rate_limit_id = @rate_limit_id
-				AND created_at + @rate_limit_duration > unixepoch('subsec')
-			ORDER BY ms DESC
+				AND created_at > unixepoch('subsec') - @rate_limit_duration
+			ORDER BY created_at DESC
 			LIMIT 1
 		`)
 

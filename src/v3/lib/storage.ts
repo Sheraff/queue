@@ -224,11 +224,25 @@ export class SQLiteStorage implements Storage {
 				data JSON
 			);
 		
+			-- base
 			CREATE UNIQUE INDEX IF NOT EXISTS ${tasksTable}_job_key ON ${tasksTable} (queue, job, key);
-			CREATE INDEX IF NOT EXISTS ${tasksTable}_debounce_index ON ${tasksTable} (queue, debounce_id);
-			CREATE INDEX IF NOT EXISTS ${tasksTable}_throttle_index ON ${tasksTable} (queue, throttle_id);
-			CREATE INDEX IF NOT EXISTS ${tasksTable}_rate_limit_index ON ${tasksTable} (queue, rate_limit_id);
-		
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_sort ON ${tasksTable} (queue, status, priority DESC, created_at ASC);
+
+			-- future
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_future_pending ON ${tasksTable} (queue, status) WHERE status = 'pending';
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_future_sleep ON ${tasksTable} (queue, status, sleep_until ASC) WHERE sleep_until IS NOT NULL AND status = 'stalled';
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_future_throttled ON ${tasksTable} (queue, throttle_id, status, started_at, throttle_duration) WHERE throttle_id IS NOT NULL AND started_at IS NULL AND status = 'stalled';
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_future_timed_out ON ${tasksTable} (queue, timeout_at ASC, status) WHERE timeout_at IS NOT NULL AND status IN ('pending', 'stalled'); -- next too
+			-- missing some index for "sibling" in future>throttled
+
+			-- next
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_next_throttled_sibling ON ${tasksTable} (queue, throttle_id, started_at) WHERE throttle_id IS NOT NULL AND started_at IS NOT NULL;
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_next_throttled_id ON ${tasksTable} (queue, throttle_id, started_at, priority DESC, created_at ASC) WHERE throttle_id IS NOT NULL AND started_at IS NULL;
+
+			-- other
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_debounce_index ON ${tasksTable} (queue, debounce_id, started_at, status) WHERE status = 'stalled' AND started_at IS NULL AND debounce_id IS NOT NULL;
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_rate_limit_index ON ${tasksTable} (queue, rate_limit_id, created_at DESC) WHERE rate_limit_id IS NOT NULL;
+
 			CREATE TABLE IF NOT EXISTS ${stepsTable} (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				task_id INTEGER NOT NULL,
@@ -250,7 +264,8 @@ export class SQLiteStorage implements Storage {
 			);
 		
 			CREATE UNIQUE INDEX IF NOT EXISTS ${stepsTable}_job_key_step ON ${stepsTable} (queue, job, key, step);
-			CREATE INDEX IF NOT EXISTS ${stepsTable}_task_id ON ${stepsTable} (task_id);
+			CREATE INDEX IF NOT EXISTS ${stepsTable}_sleep ON ${stepsTable} (task_id, status, sleep_until ASC) WHERE sleep_until IS NOT NULL AND status = 'stalled'; -- future>pending
+			CREATE INDEX IF NOT EXISTS ${stepsTable}_task_id ON ${stepsTable} (task_id, status, timeout_at ASC) WHERE timeout_at IS NOT NULL AND status IN ('stalled', 'waiting'); -- future>step_timed_out, next>step_timed_out
 		
 			CREATE TABLE IF NOT EXISTS ${eventsTable} (
 				queue TEXT NOT NULL,
@@ -261,6 +276,7 @@ export class SQLiteStorage implements Storage {
 			);
 		
 			CREATE INDEX IF NOT EXISTS ${eventsTable}_key ON ${eventsTable} (queue, key);
+			CREATE INDEX IF NOT EXISTS ${eventsTable}_sort ON ${eventsTable} (created_at);
 		`)
 
 		this.#getTaskStmt = this.#db.prepare<{ queue: string, job: string, key: string }, Task | undefined>(/* sql */ `
@@ -737,6 +753,9 @@ export class SQLiteStorage implements Storage {
 			FROM ${eventsTable} event
 			LEFT JOIN step ON event.queue = step.queue AND event.key = step.wait_for
 			WHERE (
+				-- TODO: we could use 'wait_from' (set to 0 for 'retroactive'), 
+				-- that way, it is possible to update the value when "we've searched everything so far and no match"
+				-- to avoid re-scanning the same events over and over (events is a huge table, and we're doing a recursive json filter on it)
 				CASE step.wait_retroactive
 				WHEN TRUE THEN 1
 				ELSE event.created_at >= step.created_at

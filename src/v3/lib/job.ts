@@ -393,6 +393,7 @@ export class Job<
 			executionContext.cancelled = true
 		}
 		this.#emitter.prependListener('cancel', onCancel)
+		this.#emitter.setMaxListeners(this.#emitter.getMaxListeners() + 1)
 
 		const promise = execution.run(executionContext, async () => {
 			if (!task.started_at) {
@@ -440,6 +441,7 @@ export class Job<
 						.then(() => new Promise(setImmediate)) // allow multiple jobs finishing a step on the same tick to continue in priority order
 						.then(() => {
 							this.#emitter.off('cancel', onCancel)
+							this.#emitter.setMaxListeners(this.#emitter.getMaxListeners() - 1)
 							if (executionContext.cancelled) return
 							syncOrPromise<void>(resolve => {
 								registrationContext.requeueTask(task, resolve)
@@ -447,6 +449,7 @@ export class Job<
 						})
 				} else {
 					this.#emitter.off('cancel', onCancel)
+					this.#emitter.setMaxListeners(this.#emitter.getMaxListeners() - 1)
 					if (executionContext.cancelled) return
 					return syncOrPromise<void>(resolve => {
 						registrationContext.resolveTask(task, 'failed', error, resolve)
@@ -456,6 +459,7 @@ export class Job<
 				}
 			}
 			this.#emitter.off('cancel', onCancel)
+			this.#emitter.setMaxListeners(this.#emitter.getMaxListeners() - 1)
 			if (executionContext.cancelled) return
 			return syncOrPromise<void>(resolve => {
 				registrationContext.resolveTask(task, 'completed', output, resolve)

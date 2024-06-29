@@ -163,6 +163,10 @@ export class SQLiteStorage implements Storage {
 		if (!db || typeof db === 'string') {
 			this.#db = new BetterSqlite3(db)
 			this.#db.pragma('journal_mode = WAL')
+			this.#db.pragma('busy_timeout = 100')
+			this.#db.pragma('synchronous = NORMAL')
+			this.#db.pragma('cache_size = 2000')
+			this.#db.pragma('temp_store = MEMORY')
 			this.#externalDb = false
 		} else {
 			this.#db = db
@@ -230,7 +234,6 @@ export class SQLiteStorage implements Storage {
 			CREATE INDEX IF NOT EXISTS ${stepsTable}_task_id ON ${stepsTable} (task_id);
 		
 			CREATE TABLE IF NOT EXISTS ${eventsTable} (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				queue TEXT NOT NULL,
 				key TEXT NOT NULL,
 				created_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
@@ -854,7 +857,9 @@ export class SQLiteStorage implements Storage {
 	}
 
 	close() {
-		if (!this.#externalDb)
+		if (!this.#externalDb) {
+			this.#db.pragma('optimize')
 			this.#db.close()
+		}
 	}
 }

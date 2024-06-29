@@ -216,7 +216,7 @@ export class Queue<
 					if (done.has(str)) return
 					done.add(str)
 					setImmediate(() => job.dispatch({ date: date.toISOString() }))
-					setTimeout(() => done.delete(str), 10).unref()
+					setTimeout(() => done.delete(str), 1000).unref()
 				}))
 			}
 		}

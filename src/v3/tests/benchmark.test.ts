@@ -3,7 +3,6 @@ import { Job, Pipe, Queue, SQLiteStorage } from "../lib"
 import assert from "node:assert"
 import { invoke } from "./utils"
 import Database from "better-sqlite3"
-import { z } from "zod"
 import type { Task } from "../lib/storage"
 
 test.describe('benchmark', {
@@ -63,12 +62,17 @@ test.describe('benchmark', {
 		await queue.close()
 		performance.clearMarks()
 	})
+
 	test('combinatorics', async (t) => {
 		const hello = new Job({
 			id: 'hello',
-			input: z.object({ branch: z.string(), depth: z.number() }),
-			output: z.object({ treasure: z.number() })
-		}, async ({ branch, depth }): Promise<{ treasure: number }> => {
+		}, async ({
+			branch,
+			depth
+		}: {
+			branch: string,
+			depth: number
+		}): Promise<{ treasure: number }> => {
 			if (depth === 6) {
 				return { treasure: 1 }
 			}
@@ -110,6 +114,48 @@ test.describe('benchmark', {
 
 	})
 
+	test('many wait for pipe', async (t) => {
+		const pipe = new Pipe({
+			id: 'pipe',
+			in: {} as { num: number },
+		})
+
+		const hello = new Job({
+			id: 'hello',
+		}, async ({ }: { i: number }): Promise<{ res: number }> => {
+			const { num } = await Job.waitFor(pipe, {})
+			return { res: num }
+		})
+
+		const queue = new Queue({
+			id: 'benchmark',
+			jobs: { hello },
+			pipes: { pipe },
+			storage: new SQLiteStorage(),
+		})
+
+		let count = 0
+		queue.jobs.hello.emitter.on('trigger', () => count++)
+		const allDone = new Promise<{ res: number } | null>((resolve) => queue.jobs.hello.emitter.on('settled', ({ result }) => {
+			count--
+			if (count === 0) resolve(result)
+		}))
+
+		for (let i = 0; i < 100; i++) {
+			queue.jobs.hello.dispatch({ i })
+		}
+
+		await new Promise((resolve) => setTimeout(resolve, 10))
+
+		queue.pipes.pipe.dispatch({ num: 42 })
+
+		const res = await allDone
+		t.diagnostic(`Many wait for pipe result: ${res?.res}`)
+		assert(res?.res === 42, `Expected 42, got ${res?.res}`)
+
+		await queue.close()
+	})
+
 	test('many parallel', async (t) => {
 		const hello = new Job({
 			id: 'hello',
@@ -131,7 +177,7 @@ test.describe('benchmark', {
 			if (count === 0) resolve(null)
 		}))
 		performance.mark('start')
-		Array.from({ length: 100 }, (_, k) => queue.jobs.hello.dispatch({ k }))
+		Array.from({ length: 100 }, (_, k) => queue.jobs.hello.dispatch({ k })) // TODO: 1000 jobs take 15s, this is not normal !!!
 		await promise
 		performance.mark('end')
 		const duration = performance.measure('hello', 'start', 'end').duration

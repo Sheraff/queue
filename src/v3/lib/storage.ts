@@ -78,6 +78,7 @@ export type Step = {
 
 	wait_for?: string | null // 'job/aaa/settled' | 'pipe/bbb'
 	wait_filter?: string | null // '{"input":{},"error":null}'
+	/** used on write (actual stored value is `wait_from` as a timestamp) */
 	wait_retroactive?: boolean | null
 
 	data: string | null
@@ -259,13 +260,14 @@ export class SQLiteStorage implements Storage {
 				timeout_at REAL,
 				wait_for TEXT,
 				wait_filter JSON,
-				wait_retroactive BOOLEAN,
+				wait_from REAL,
 				data JSON
 			);
 		
 			CREATE UNIQUE INDEX IF NOT EXISTS ${stepsTable}_job_key_step ON ${stepsTable} (queue, job, key, step);
 			CREATE INDEX IF NOT EXISTS ${stepsTable}_sleep ON ${stepsTable} (task_id, status, sleep_until ASC) WHERE sleep_until IS NOT NULL AND status = 'stalled'; -- future>pending
 			CREATE INDEX IF NOT EXISTS ${stepsTable}_task_id ON ${stepsTable} (task_id, status, timeout_at ASC) WHERE timeout_at IS NOT NULL AND status IN ('stalled', 'waiting'); -- future>step_timed_out, next>step_timed_out
+
 		
 			CREATE TABLE IF NOT EXISTS ${eventsTable} (
 				queue TEXT NOT NULL,
@@ -275,8 +277,11 @@ export class SQLiteStorage implements Storage {
 				data JSON
 			);
 		
-			CREATE INDEX IF NOT EXISTS ${eventsTable}_key ON ${eventsTable} (queue, key);
-			CREATE INDEX IF NOT EXISTS ${eventsTable}_sort ON ${eventsTable} (created_at);
+			-- TODO: is it overkill to put the whole row in the index?
+			-- queue/key/created_at is likely to be unique,
+			-- so input and data shouldn't add in complexity when computing the index
+			-- and this allows us to ge a covering index on the hot path
+			CREATE INDEX IF NOT EXISTS ${eventsTable}_key ON ${eventsTable} (queue, key, created_at ASC, input, data);
 		`)
 
 		this.#getTaskStmt = this.#db.prepare<{ queue: string, job: string, key: string }, Task | undefined>(/* sql */ `
@@ -370,46 +375,6 @@ export class SQLiteStorage implements Storage {
 								status = 'waiting'
 								AND wait_for IS NOT NULL
 								AND wait_filter IS NOT NULL
-								AND NOT EXISTS (
-									WITH filter AS ( -- parse the filter JSON into a table
-										SELECT *
-										FROM json_tree(wait_filter)
-										WHERE type != 'null'
-									)
-									SELECT 1 FROM ${eventsTable} event
-									WHERE event.queue = step.queue
-									AND event.key = step.wait_for
-									AND (
-										CASE step.wait_retroactive
-										WHEN TRUE THEN 1
-										ELSE event.created_at >= step.created_at
-										END
-									)
-									AND NOT EXISTS ( -- check if all filter conditions are met (reverse checking: if a single mismatch, then it's not a match)
-										SELECT 1
-										FROM filter
-										WHERE (
-											filter.type = 'object'
-											AND (
-												json_extract(event.input, filter.fullKey) IS NULL
-												OR json_type(json_extract(event.input, filter.fullKey)) != 'object'
-											)
-										) OR (
-											filter.type = 'array'
-											AND (
-												json_extract(event.input, filter.fullKey) IS NULL
-												OR json_type(json_extract(event.input, filter.fullKey)) != 'array'
-											)
-										) OR (
-											filter.type NOT IN ('object', 'array')
-											AND (
-												json_extract(event.input, filter.fullKey) IS NULL
-												OR json_extract(event.input, filter.fullKey) != filter.value
-											)
-										)
-										LIMIT 1
-									)
-								)
 							))
 						LIMIT 1
 					)
@@ -528,30 +493,21 @@ export class SQLiteStorage implements Storage {
 		`)
 
 		this.#getNextTaskTx = this.#db.transaction((queue: string) => {
+			resolveAllStepEventsStmt.get({ queue })
 			const [task, next] = getNextTaskStmt.all({ queue })
 			if (!task) return
 			reserveTaskStmt.run(task)
 			const steps = getTaskStepDataStmt.all(task)
 			for (let i = 0; i < steps.length; i++) {
 				const step = steps[i]!
-				if (step.status === 'waiting') {
-					const event = matchStepEventStmt.get({ step_id: step.id })
-					if (!event) continue
-					// @ts-ignore -- TODO: the types of Step in, Step out are a mess
-					steps[i] = this.#recordStepStmt.get({
-						...step,
-						sleep_for: null,
-						timeout: null,
-						status: 'completed',
-						data: event.data,
-					})
-				} else if (step.status === 'stalled' && step.sleep_done) {
+				if (step.status === 'stalled' && step.sleep_done) {
 					if (!step.next_status) continue
 					// @ts-ignore -- TODO: the types of Step in, Step out are a mess
 					steps[i] = this.#recordStepStmt.get({
 						...step,
 						sleep_for: null,
 						timeout: null,
+						wait_retroactive: null,
 						status: step.next_status,
 					})
 				}
@@ -686,6 +642,7 @@ export class SQLiteStorage implements Storage {
 			wait_for: string | null
 			wait_filter: string | null
 			wait_retroactive: number | null
+			wait_from: number | null
 			data: string | null
 		}>(/* sql */ `
 			INSERT INTO ${stepsTable} (
@@ -701,7 +658,7 @@ export class SQLiteStorage implements Storage {
 				timeout_at,
 				wait_for,
 				wait_filter,
-				wait_retroactive,
+				wait_from,
 				data
 			)
 			VALUES (
@@ -717,7 +674,7 @@ export class SQLiteStorage implements Storage {
 				CASE @timeout WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @timeout) END,
 				@wait_for,
 				@wait_filter,
-				@wait_retroactive,
+				CASE @wait_retroactive WHEN TRUE THEN 0 ELSE (unixepoch('subsec')) END,
 				@data
 			)
 			ON CONFLICT (queue, job, key, step)
@@ -736,57 +693,78 @@ export class SQLiteStorage implements Storage {
 			VALUES (@queue, @key, @input, @data)
 		`)
 
-		const matchStepEventStmt = this.#db.prepare<{ step_id: number }, { data: string } | undefined>(/* sql */ `
-			WITH step AS (
-				SELECT *
-				FROM ${stepsTable}
-				WHERE id = @step_id
+		/**
+		 * update all steps that are waiting for an event.
+		 */
+		const resolveAllStepEventsStmt = this.#db.prepare<{ queue: string }, {}>(/* sql */ `
+			WITH filter AS ( -- expand all filter of all waiting steps into a big table
+				SELECT
+					step.id AS step_id,
+					json_tree.*
+				FROM ${stepsTable} step, json_tree(step.wait_filter)
+				WHERE step.status = 'waiting'
+					AND step.queue = @queue
+					AND step.wait_for IS NOT NULL
+					AND step.wait_filter IS NOT NULL
+					AND json_tree.type != 'null'
 			),
-			filter AS ( -- parse the filter JSON into a table
-				SELECT *
-				FROM json_tree(wait_filter)
-				WHERE type != 'null'
+			matched_steps AS (
+				SELECT
+					event.created_at AS event_id,
+					event.data AS event_data,
+					step.id AS step_id
+				FROM ${stepsTable} step
+				LEFT JOIN ${eventsTable} event
+					ON event.queue = step.queue
+					AND event.key = step.wait_for
+					AND event.created_at >= step.wait_from
+				WHERE step.status = 'waiting'
+					AND step.queue = @queue
+					AND step.wait_for IS NOT NULL
+					AND NOT EXISTS (
+						SELECT 1
+						FROM filter
+						WHERE filter.step_id = step.id AND (
+							-- looking for any mismatch between filter and event
+							(
+								filter.type = 'object'
+								AND (
+									json_extract(event.input, filter.fullKey) IS NULL
+									OR json_type(json_extract(event.input, filter.fullKey)) != 'object'
+								)
+							) OR (
+								filter.type = 'array'
+								AND (
+									json_extract(event.input, filter.fullKey) IS NULL
+									OR json_type(json_extract(event.input, filter.fullKey)) != 'array'
+								)
+							) OR (
+								filter.type NOT IN ('object', 'array')
+								AND (
+									json_extract(event.input, filter.fullKey) IS NULL
+									OR json_extract(event.input, filter.fullKey) != filter.value
+								)
+							)
+						)
+						LIMIT 1
+					)
 			)
-			SELECT
-				event.data data,
-				abs(event.created_at - step.created_at) time_distance
-			FROM ${eventsTable} event
-			LEFT JOIN step ON event.queue = step.queue AND event.key = step.wait_for
-			WHERE (
-				-- TODO: we could use 'wait_from' (set to 0 for 'retroactive'), 
-				-- that way, it is possible to update the value when "we've searched everything so far and no match"
-				-- to avoid re-scanning the same events over and over (events is a huge table, and we're doing a recursive json filter on it)
-				CASE step.wait_retroactive
-				WHEN TRUE THEN 1
-				ELSE event.created_at >= step.created_at
+			UPDATE ${stepsTable}
+			SET status = CASE
+					WHEN matched_steps.event_id IS NOT NULL THEN 'completed'
+					ELSE status
+				END,
+				data = CASE
+					WHEN matched_steps.event_id IS NOT NULL THEN matched_steps.event_data
+					ELSE data
+				END,
+				wait_from = CASE
+					WHEN matched_steps.event_id IS NOT NULL THEN unixepoch('subsec')
+					ELSE (unixepoch('subsec') - 1) -- update timestamp so we don't re-check past events next loop
 				END
-			)
-			AND NOT EXISTS ( -- check if all filter conditions are met (reverse checking: if a single mismatch, then it's not a match)
-				SELECT 1
-				FROM filter
-				WHERE (
-					filter.type = 'object'
-					AND (
-						json_extract(event.input, filter.fullKey) IS NULL
-						OR json_type(json_extract(event.input, filter.fullKey)) != 'object'
-					)
-				) OR (
-					filter.type = 'array'
-					AND (
-						json_extract(event.input, filter.fullKey) IS NULL
-						OR json_type(json_extract(event.input, filter.fullKey)) != 'array'
-					)
-				) OR (
-					filter.type NOT IN ('object', 'array')
-					AND (
-						json_extract(event.input, filter.fullKey) IS NULL
-						OR json_extract(event.input, filter.fullKey) != filter.value
-					)
-				)
-				LIMIT 1
-			)
-			ORDER BY time_distance ASC
-			LIMIT 1
+			FROM matched_steps
+			WHERE matched_steps.step_id = ${stepsTable}.id
+			RETURNING 1
 		`)
 	}
 
@@ -821,6 +799,7 @@ export class SQLiteStorage implements Storage {
 		wait_for: string | null
 		wait_filter: string | null
 		wait_retroactive: number | null
+		wait_from: number | null
 		data: string | null
 	}>
 	#recordEventStmt!: BetterSqlite3.Statement<{ queue: string, key: string, input: string, data: string }>
@@ -884,6 +863,7 @@ export class SQLiteStorage implements Storage {
 			wait_for: step.wait_for ?? null,
 			wait_filter: step.wait_filter ?? null,
 			wait_retroactive: Number(step.wait_retroactive) ?? null,
+			wait_from: null,
 			step: step.step
 		})
 		return cb()

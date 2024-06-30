@@ -160,7 +160,7 @@ test.describe('cancel', () => {
 		const promise = invoke(queue.jobs.aaa, {}).catch(err => err)
 		await new Promise(r => setTimeout(r, 10))
 		queue.jobs.aaa.cancel({}, { type: 'explicit' })
-		await new Promise(r => setImmediate(r))
+		await new Promise(r => setTimeout(r, 10))
 		queue.pipes.pipe.dispatch({ hello: 'world' })
 		const result = await promise
 		assert.strictEqual(done, false)

@@ -185,7 +185,9 @@ test.describe('benchmark', {
 			if (count === 0) resolve(null)
 		}))
 		performance.mark('start')
-		Array.from({ length: 100 }, (_, k) => queue.jobs.hello.dispatch({ k })) // TODO: 1000 jobs take 15s, this is not normal !!!
+		for (let k = 0; k < 100; k++) { // TODO: 1000 jobs take 8s, this is not normal!!!
+			queue.jobs.hello.dispatch({ k })
+		}
 		await promise
 		performance.mark('end')
 		const duration = performance.measure('hello', 'start', 'end').duration

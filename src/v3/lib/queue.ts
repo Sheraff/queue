@@ -153,7 +153,7 @@ export class Queue<
 	#sleepTimeout: NodeJS.Timeout | null = null
 
 	/** @returns `true` if it managed to drain the queue */
-	#drain(): boolean | Promise<boolean> {
+	#drain(batch = 0): boolean | Promise<boolean> {
 		return this.storage.startNextTask(this.id, (result) => {
 			if (!result) return true
 
@@ -173,7 +173,14 @@ export class Queue<
 			if (this.#running.size >= this.parallel) return false
 			if (this.#closed) return false
 
-			return this.#drain()
+			if (batch > 20) { // number "tuned" manually, is there a better way to determine this?
+				return new Promise((resolve) => {
+					setImmediate(() => {
+						resolve(this.#drain())
+					})
+				})
+			}
+			return this.#drain(batch + 1)
 		}) as boolean | Promise<boolean>
 	}
 

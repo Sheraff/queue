@@ -773,7 +773,6 @@ export class SQLiteStorage implements Storage {
 					ELSE data
 				END,
 				wait_from = unixepoch('subsec') -- update timestamp so we don't re-check past events next loop
-				END
 			FROM results
 			WHERE
 				results.id = ${stepsTable}.id

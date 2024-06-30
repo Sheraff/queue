@@ -224,21 +224,21 @@ export class SQLiteStorage implements Storage {
 				updated_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
 				data JSON
 			);
-		
+
 			-- base
 			CREATE UNIQUE INDEX IF NOT EXISTS ${tasksTable}_job_key ON ${tasksTable} (queue, job, key);
-			CREATE INDEX IF NOT EXISTS ${tasksTable}_sort ON ${tasksTable} (queue, status, priority DESC, created_at ASC);
+			CREATE UNIQUE INDEX IF NOT EXISTS ${tasksTable}_sibling ON ${tasksTable} (queue, id);
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_sort ON ${tasksTable} (queue, priority DESC, created_at ASC);
 
 			-- future
 			CREATE INDEX IF NOT EXISTS ${tasksTable}_future_pending ON ${tasksTable} (queue, status) WHERE status = 'pending';
 			CREATE INDEX IF NOT EXISTS ${tasksTable}_future_sleep ON ${tasksTable} (queue, status, sleep_until ASC) WHERE sleep_until IS NOT NULL AND status = 'stalled';
 			CREATE INDEX IF NOT EXISTS ${tasksTable}_future_throttled ON ${tasksTable} (queue, throttle_id, status, started_at, throttle_duration) WHERE throttle_id IS NOT NULL AND started_at IS NULL AND status = 'stalled';
-			CREATE INDEX IF NOT EXISTS ${tasksTable}_future_timed_out ON ${tasksTable} (queue, timeout_at ASC, status) WHERE timeout_at IS NOT NULL AND status IN ('pending', 'stalled'); -- next too
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_future_timed_out ON ${tasksTable} (queue, timeout_at ASC, status) WHERE timeout_at IS NOT NULL AND status IN ('pending', 'stalled');
 			-- missing some index for "sibling" in future>throttled
 
 			-- next
 			CREATE INDEX IF NOT EXISTS ${tasksTable}_next_throttled_sibling ON ${tasksTable} (queue, throttle_id, started_at) WHERE throttle_id IS NOT NULL AND started_at IS NOT NULL;
-			CREATE INDEX IF NOT EXISTS ${tasksTable}_next_throttled_id ON ${tasksTable} (queue, throttle_id, started_at, priority DESC, created_at ASC) WHERE throttle_id IS NOT NULL AND started_at IS NULL;
 
 			-- other
 			CREATE INDEX IF NOT EXISTS ${tasksTable}_debounce_index ON ${tasksTable} (queue, debounce_id, started_at, status) WHERE status = 'stalled' AND started_at IS NULL AND debounce_id IS NOT NULL;
@@ -266,8 +266,9 @@ export class SQLiteStorage implements Storage {
 		
 			CREATE UNIQUE INDEX IF NOT EXISTS ${stepsTable}_job_key_step ON ${stepsTable} (queue, job, key, step);
 			CREATE INDEX IF NOT EXISTS ${stepsTable}_sleep ON ${stepsTable} (task_id, status, sleep_until ASC) WHERE sleep_until IS NOT NULL AND status = 'stalled'; -- future>pending
-			CREATE INDEX IF NOT EXISTS ${stepsTable}_task_id ON ${stepsTable} (task_id, status, timeout_at ASC) WHERE timeout_at IS NOT NULL AND status IN ('stalled', 'waiting'); -- future>step_timed_out, next>step_timed_out
+			CREATE INDEX IF NOT EXISTS ${stepsTable}_task_id ON ${stepsTable} (task_id, status, timeout_at ASC) WHERE timeout_at IS NOT NULL AND status IN ('stalled', 'waiting'); -- future>step_timed_out
 			CREATE INDEX IF NOT EXISTS ${stepsTable}_wait_for ON ${stepsTable} (queue, wait_filter) WHERE wait_for IS NOT NULL AND status = 'waiting'; 
+			CREATE INDEX IF NOT EXISTS ${stepsTable}_blocking_sub_steps ON ${stepsTable} (status, task_id, timeout_at, sleep_until, wait_for, wait_filter) WHERE status IN ('stalled', 'waiting'); -- next>sub_steps
 
 		
 			CREATE TABLE IF NOT EXISTS ${eventsTable} (
@@ -298,88 +299,90 @@ export class SQLiteStorage implements Storage {
 		`)
 
 		const getNextTaskStmt = this.#db.prepare<{ queue: string }, Task>(/* sql */ `
+			WITH queue_tasks AS (
+				SELECT
+					*
+				FROM ${tasksTable}
+				WHERE queue = @queue
+					AND status IN ('pending', 'stalled')
+			),
+			sub_steps AS (
+				SELECT
+					task.id,
+					SUM(
+						step.timeout_at IS NOT NULL
+						AND step.timeout_at <= unixepoch('subsec')
+					) > 0 AS step_timed_out,
+					SUM(
+						step.status = 'stalled'
+						AND step.sleep_until IS NOT NULL
+						AND (step.sleep_until > unixepoch('subsec'))
+					) > 0 AS step_sleeping,
+					SUM(
+						step.status = 'waiting'
+						AND step.wait_for IS NOT NULL
+						AND step.wait_filter IS NOT NULL
+					) > 0 AS step_waiting
+				FROM queue_tasks task
+				LEFT JOIN ${stepsTable} step
+					ON step.task_id = task.id
+				WHERE step.status IN ('stalled', 'waiting')
+				GROUP BY task.id
+			),
+			throttle_sibling AS (
+				SELECT
+					task.id,
+					COUNT(sibling.id) > 0 AS is_throttled
+				FROM queue_tasks task
+				LEFT JOIN ${tasksTable} sibling
+					ON sibling.queue = task.queue
+					AND sibling.throttle_id = task.throttle_id
+					AND sibling.id != task.id
+				WHERE task.throttle_id IS NOT NULL
+					AND task.status = 'stalled'
+					AND sibling.started_at IS NOT NULL
+					AND sibling.started_at > unixepoch('subsec') - task.throttle_duration
+				GROUP BY task.id
+			)
+
 			SELECT
-				*,
+				task.*,
 				CASE
 					WHEN timeout_at IS NULL THEN NULL
 					WHEN (timeout_at <= unixepoch('subsec')) THEN TRUE
 					ELSE FALSE
 				END timed_out
-			FROM ${tasksTable} task
-			WHERE
+			FROM queue_tasks task
+			LEFT JOIN sub_steps ON sub_steps.id = task.id
+			LEFT JOIN throttle_sibling ON throttle_sibling.id = task.id
+			WHERE (
+				-- task timed out, resolve it
+				timeout_at IS NOT NULL
+				AND timeout_at <= unixepoch('subsec')
+			) OR (
+				-- step timed out, resolve it
+				step_timed_out = 1
+			) OR (
 				(
-					-- task timed out
-					queue = @queue
-					AND status IN ('pending', 'stalled')
-					AND timeout_at IS NOT NULL
-					AND timeout_at <= unixepoch('subsec')
-				) OR (
-					-- step timed out
-					queue = @queue
-					AND status IN ('pending', 'stalled')
-					AND EXISTS (
-						SELECT 1
-						FROM ${stepsTable} step
-						WHERE
-							step.task_id = task.id
-							AND step.status IN ('stalled', 'waiting')
-							AND step.timeout_at IS NOT NULL
-							AND step.timeout_at <= unixepoch('subsec')
+					status = 'pending'
+					OR (
+						-- task was sleeping, e.g. debounced
+						sleep_until IS NOT NULL
+						AND sleep_until <= unixepoch('subsec')
 					)
-				) OR (
-					queue = @queue
-					AND (
-						status = 'pending'
-						OR (
-							-- task is sleeping, e.g. debounced
-							status = 'stalled'
-							AND sleep_until IS NOT NULL
-							AND sleep_until <= unixepoch('subsec')
-						) OR (
-							-- task is throttled
-							status = 'stalled'
-							AND throttle_id IS NOT NULL
-							AND NOT EXISTS (
-								SELECT 1
-								FROM ${tasksTable} sibling
-								WHERE sibling.queue = task.queue
-									AND sibling.throttle_id = task.throttle_id
-									AND sibling.id != task.id
-									AND sibling.started_at IS NOT NULL
-									AND sibling.started_at > unixepoch('subsec') - task.throttle_duration
-								LIMIT 1
-							)
-							AND id = (
-								SELECT id
-								FROM ${tasksTable}
-								WHERE queue = task.queue
-								AND throttle_id = task.throttle_id
-								AND started_at IS NULL
-								ORDER BY priority DESC, created_at ASC
-								LIMIT 1
-							)
-						)
+					OR (
+						-- task was throttled
+						throttle_id IS NOT NULL
+						AND task.throttle_id IS NOT NULL
+						AND task.status = 'stalled'
+						AND (is_throttled IS NULL OR is_throttled = 0)
 					)
-					AND NOT EXISTS (
-						-- check for blocking steps (TODO: maybe this check is only necessary if started_at is not null? It would be a perf improvement for all throttled / debounced tasks)
-						SELECT 1
-						FROM ${stepsTable} step
-						WHERE
-							task_id = task.id
-							AND ((
-								-- step is stalled and sleep timer is not expired
-								status = 'stalled'
-								AND sleep_until IS NOT NULL
-								AND (sleep_until > unixepoch('subsec'))
-							) OR (
-								-- step is waiting for an event
-								status = 'waiting'
-								AND wait_for IS NOT NULL
-								AND wait_filter IS NOT NULL
-							))
-						LIMIT 1
-					)
+				) AND (
+					-- no steps are blocking (sleeping, waiting)
+					(step_sleeping IS NULL OR step_sleeping = 0)
+					AND (step_waiting IS NULL OR step_waiting = 0)
 				)
+			)
 			ORDER BY
 				priority DESC,
 				created_at ASC

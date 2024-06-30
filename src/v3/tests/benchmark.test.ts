@@ -7,7 +7,7 @@ import type { Task } from "../lib/storage"
 
 test.describe('benchmark', {
 	skip: !!process.env.CI,
-	timeout: 1000
+	timeout: 5000
 }, () => {
 	test('synchronous', async (t) => {
 		const hello = new Job({
@@ -64,7 +64,7 @@ test.describe('benchmark', {
 	})
 
 	test('combinatorics', async (t) => {
-		const DEPTH = 5
+		const DEPTH = 7
 		const hello = new Job({
 			id: 'hello',
 		}, async ({
@@ -99,15 +99,15 @@ test.describe('benchmark', {
 			if (count === 0) resolve(result)
 		}))
 
-		performance.mark('start')
+		performance.mark('com-start')
 		queue.jobs.hello.dispatch({ branch: 'root', depth: 0 })
 		const res = await allDone
-		performance.mark('end')
+		performance.mark('com-end')
 
 		t.diagnostic(`Depth: ${DEPTH}`)
 
-		const duration = performance.measure('hello', 'start', 'end').duration
-		t.diagnostic(`Combinatorics took ${duration.toFixed(2)}ms (~6s for depth 8, ~2s for depth 7, <500ms for depth 6, <100ms for depth 5)`)
+		const duration = performance.measure('hello', 'com-start', 'com-end').duration
+		t.diagnostic(`Combinatorics took ${duration.toFixed(2)}ms (~2s for depth 8, ~600ms for depth 7, <200ms for depth 6, <50ms for depth 5)`)
 
 		t.diagnostic(`Combinatorics result: ${res?.treasure}`)
 		assert(res?.treasure === (2 ** DEPTH), `Expected ${2 ** (DEPTH)} treasures, got ${res?.treasure}`)
@@ -135,9 +135,16 @@ test.describe('benchmark', {
 			return { res: num }
 		})
 
+		const pollution = new Job({
+			id: 'pollution',
+		}, async ({ }: { i: number }): Promise<{ res: number }> => {
+			const { num } = await Job.waitFor(pipe, { filter: { num: -1 } })
+			return { res: num }
+		})
+
 		const queue = new Queue({
 			id: 'benchmark',
-			jobs: { hello },
+			jobs: { hello, pollution },
 			pipes: { pipe },
 			storage: new SQLiteStorage(),
 		})
@@ -149,15 +156,25 @@ test.describe('benchmark', {
 			if (count === 0) resolve(result)
 		}))
 
-		for (let i = 0; i < 100; i++) {
-			queue.jobs.hello.dispatch({ i })
+		const COUNT = 250
+		for (let i = 0; i < COUNT * 2; i++) {
+			if (i % 2 === 0)
+				queue.jobs.pollution.dispatch({ i })
+			else
+				queue.jobs.hello.dispatch({ i })
 		}
 
 		await new Promise((resolve) => setTimeout(resolve, 10))
 
+		performance.mark('pipe-start')
 		queue.pipes.pipe.dispatch({ num: 42 })
-
 		const res = await allDone
+		performance.mark('pipe-end')
+
+		const duration = performance.measure('hello', 'pipe-start', 'pipe-end').duration
+		t.diagnostic(`Many wait for pipe took ${duration.toFixed(2)}ms (< 100ms) for ${COUNT} steps with ${COUNT} unrelated tasks in the database`)
+		t.diagnostic(`Overall: ${(duration / COUNT).toFixed(2)} ms/step`)
+
 		t.diagnostic(`Many wait for pipe result: ${res?.res}`)
 		assert(res?.res === 42, `Expected 42, got ${res?.res}`)
 
@@ -185,15 +202,16 @@ test.describe('benchmark', {
 			if (count === 0) resolve(null)
 		}))
 		performance.mark('start')
-		for (let k = 0; k < 100; k++) { // TODO: 1000 jobs take 8s, this is not normal!!!
+		const COUNT = 1000
+		for (let k = 0; k < COUNT; k++) {
 			queue.jobs.hello.dispatch({ k })
 		}
 		await promise
 		performance.mark('end')
 		const duration = performance.measure('hello', 'start', 'end').duration
-		t.diagnostic(`100 parallel jobs took ${duration.toFixed(2)}ms (< 100ms)`)
-		t.diagnostic(`Overall: ${(duration * 10).toFixed(2)} µs/step`)
-		assert(duration < 100, `Benchmark took ${duration}ms, expected less than 100ms`)
+		t.diagnostic(`${COUNT} parallel jobs took ${duration.toFixed(2)}ms (< ${COUNT}ms)`)
+		t.diagnostic(`Overall: ${(duration / COUNT * 1000).toFixed(2)} µs/step`)
+		assert(duration < COUNT, `Benchmark took ${duration}ms, expected less than ${COUNT}ms`)
 
 		await queue.close()
 		performance.clearMarks()

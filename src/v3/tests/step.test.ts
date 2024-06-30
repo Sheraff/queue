@@ -121,7 +121,7 @@ test('wait for pipe event', { timeout: 500 }, async (t) => {
 		output: z.object({ foo: z.number() })
 	}, async (input) => {
 		const inner = await Job.run('simple', () => Number(input.in))
-		const data = await Job.waitFor(pipe)
+		const data = await Job.waitFor(pipe, { filter: { in: 2 } })
 		done = true
 		return { foo: inner + data.in }
 	})
@@ -137,8 +137,11 @@ test('wait for pipe event', { timeout: 500 }, async (t) => {
 	await new Promise(r => setTimeout(r, 20))
 	assert.equal(done, false, 'Job aaa should not be done yet')
 
-	queue.pipes.pipe.dispatch({ in: 2 })
+	queue.pipes.pipe.dispatch({ in: 1 })
+	await new Promise(r => setTimeout(r, 20))
+	assert.equal(done, false, 'Job aaa should not be done yet')
 
+	queue.pipes.pipe.dispatch({ in: 2 })
 	const result = await a
 
 	assert.equal(done, true, 'Job aaa should be done')

@@ -1,18 +1,24 @@
-# Queue
+# Asynchronous Task Queue System with TypeScript
 
-Queue is a robust, TypeScript-based task queue system designed to efficiently manage and process jobs across various services. It leverages modern JavaScript features and provides a flexible API to handle tasks with ease, including retries, backoff strategies, and event-driven orchestration.
+*Background jobs, asynchronous queue, task scheduling, durable execution, TypeScript, event-driven orchestration, self-hosted, sqlite, human-in-the-loop*
+
+This project provides a flexible and efficient task queue system for managing asynchronous jobs and workflows. It is built with TypeScript and designed to handle complex job orchestration, event-driven workflows, and durable execution of tasks. The system supports parallel execution, retries, timeouts, and customizable backoff strategies, making it suitable for a wide range of applications.
+
+It is heavily inspired by [Inngest](https://www.inngest.com/), and far inferior to it in every way.
 
 ## Features
 - Flexible Job Handling: Supports retries with customizable backoff strategies.
 - Event-Driven Orchestration: Listen to and trigger events based on job execution results.
 - Type Safety: Built with TypeScript, ensuring type safety across the board.
 - Customizable Execution Context: Tailor the execution context to fit the needs of each job.
-- Efficient Storage Management: Utilizes better-sqlite3 for fast and reliable storage of jobs and their states.
+- Efficient Storage Management: Utilizes better-sqlite3* for fast and reliable storage of jobs and their states.
+
+*Note: copilot wrote this, but really the storage part is abstracted and can be swapped out for other implementations, including asynchronous like redis, or even over-the-network like a REST API or a Postgres database.
 
 ## Core Concepts
 
 ### Queue
-The [`Queue`](src/lib/queue.ts) class is the heart of the task queue system. It manages the lifecycle of jobs and pipes, ensuring that tasks are executed efficiently and in order. A `Queue`instance can handle multiple jobs and pipes simultaneously, supporting parallel execution and sophisticated scheduling strategies. It also interacts with the storage system to persist job states and outcomes.
+The [`Queue`](src/lib/queue.ts) class is the heart of the task queue system. It manages the lifecycle of jobs and pipes, ensuring that tasks are executed efficiently and in order. A `Queue` instance can handle multiple jobs and pipes simultaneously, supporting parallel execution and sophisticated scheduling strategies. It also interacts with the storage system to persist job states and outcomes.
 
 Key Features:
 - Parallel execution of jobs with configurable concurrency limits.
@@ -21,22 +27,21 @@ Key Features:
 - Flexible job and pipe registration system.
 
 ### Job
-The [`Job`](src/lib/job.ts) class represents a unit of work within the queue system. Each job has a unique identifier and a set of triggers that can initiate its execution. Jobs can be configured with retry strategies, timeouts, and other execution parameters. The `Job` class also provides methods for interacting with the queue, such as scheduling future tasks or waiting for the completion of other jobs.
+The [`Job`](src/lib/job.ts) class represents a workflow / task within the queue system. Each job has a unique identifier and a set of triggers that can initiate its execution (including explicitly calling it from application code). Jobs can be configured with various orchestration settings (timeout, debounce, rate-limit, ...). Within a job, we use static `Job` class methods to schedule units of work, wait for other jobs or events, and manage the job's lifecycle.
 
 Key Features:
 - Unique identification and configurable execution context.
-- Support for retries, timeouts, and backoff strategies.
+- Support for orchestration strategies.
 - Ability to wait for other jobs or external events before proceeding.
 - Integration with the `Pipe` system for event-driven orchestration.
 
 ### Pipe
-The [`Pipe`](src/lib/pipe.ts) class facilitates communication and data flow between jobs. It acts as a conduit, allowing jobs to pass data to each other in a decoupled manner. Pipes can be used to trigger jobs based on the completion of other jobs, enabling complex workflows and dependencies to be managed with ease.
+The [`Pipe`](src/lib/pipe.ts) class facilitates communication and data flow between jobs. It acts as a conduit, allowing jobs to pass data to each other in a decoupled type-safe manner. Pipes can be used to trigger jobs based on the completion of other jobs, enabling complex workflows and dependencies to be managed with ease.
 
 Key Features:
 - Decouples job execution and data dependencies.
 - Enables event-driven job orchestration.
 - Supports type-safe data passing between jobs.
-- Integrates seamlessly with the `Queue` and `Job` classes for streamlined workflow management.
 
 ## Example Usage
 
@@ -101,7 +106,7 @@ This setup demonstrates a basic workflow where `producerJob` sends a message to 
 
 ### Job Steps
 
-Jobs can perform various actions during their execution, such as running other jobs, waiting for events, or dispatching new jobs. Here's an example of a more complex job that demonstrates these capabilities:
+A Job represents a linear piece of work. It is just meant as an orchestration container for smaller units of work using the various `Job` static methods. Here's an example of a complex job that uses these methods to script a workflow:
 
 ```ts
 const complexJob = new Job({
@@ -201,51 +206,4 @@ const runResult = await Job.run({
 ```
 
 These options provide a flexible way to manage the execution of jobs, especially in scenarios where tasks might fail and require retries with a sensible backoff strategy.
-
-## Running the Project
-
-To see this example in action, ensure you have followed the installation steps in the README. Then, add the above code to a file in your project, and run it using Node.js:
-
-```sh
-node your_example_file.js
-```
-
-You should see the output from `consumerJob` indicating it has received the message from `producerJob`.
-
-This example illustrates the flexibility and power of using `Queue`, `Job`, and `Pipe` to orchestrate complex workflows in an asynchronous and decoupled manner.
-
-
-## Getting Started
-### Prerequisites
-Node.js (version 22.3 or higher recommended)
-pnpm (version 9.3 or higher)
-### Installation
-1. Clone the repository:
-```sh
-git clone https://github.com/your-repository/queue.git
-cd queue
-```
-2. Install dependencies using pnpm:
-```sh
-pnpm i
-```
-### Running the Project
-To start the project in development mode, run:
-```sh
-pnpm dev
-```
-To run unit tests:
-```sh
-pnpm test
-```
-
-## Documentation
-For detailed documentation on how to define and manage jobs, please refer to the source code in the src/lib directory, especially:
-
-- Job: Core class for job definition and management.
-- Storage: Handles storage and retrieval of job states.
-- ms: Utilities for managing time units and durations.
-
-## Contributing
-Contributions are welcome! Please feel free to submit pull requests or open issues to discuss potential improvements or features.
 

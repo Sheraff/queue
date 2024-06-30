@@ -157,8 +157,9 @@ test.describe('benchmark', {
 		}))
 
 		const COUNT = 250
-		for (let i = 0; i < COUNT * 2; i++) {
-			if (i % 2 === 0)
+		const pollutionRatio = 2
+		for (let i = 0; i < COUNT * pollutionRatio; i++) {
+			if (i % pollutionRatio === 0)
 				queue.jobs.pollution.dispatch({ i })
 			else
 				queue.jobs.hello.dispatch({ i })
@@ -172,7 +173,7 @@ test.describe('benchmark', {
 		performance.mark('pipe-end')
 
 		const duration = performance.measure('hello', 'pipe-start', 'pipe-end').duration
-		t.diagnostic(`Many wait for pipe took ${duration.toFixed(2)}ms (< 100ms) for ${COUNT} steps with ${COUNT} unrelated tasks in the database`)
+		t.diagnostic(`Many wait for pipe took ${duration.toFixed(2)}ms (< 100ms) for ${COUNT} steps with ${COUNT * pollutionRatio - COUNT} unrelated tasks in the database`)
 		t.diagnostic(`Overall: ${(duration / COUNT).toFixed(2)} ms/step`)
 
 		t.diagnostic(`Many wait for pipe result: ${res?.res}`)

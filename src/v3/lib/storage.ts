@@ -701,7 +701,16 @@ export class SQLiteStorage implements Storage {
 		 * update all steps that are waiting for an event.
 		 */
 		const resolveAllStepEventsStmt = this.#db.prepare<{ queue: string }, {}>(/* sql */ `
-			WITH base AS (
+			WITH waiting_steps AS (
+				SELECT
+					queue, status, wait_for, wait_filter, wait_from, id
+				FROM ${stepsTable} step
+				WHERE step.status = 'waiting'
+					AND step.queue = @queue
+					AND step.wait_for IS NOT NULL
+					AND step.wait_filter IS NOT NULL
+			),
+			base AS (
 				SELECT
 					step.id AS step_id,
 					step.wait_for,
@@ -711,13 +720,9 @@ export class SQLiteStorage implements Storage {
 					filter.type,
 					filter.fullKey,
 					filter.value
-				FROM ${stepsTable} step
+				FROM waiting_steps step
 				INNER JOIN json_tree(step.wait_filter) filter
 					ON filter.type != 'null'
-				WHERE step.status = 'waiting'
-					AND step.queue = @queue
-					AND step.wait_for IS NOT NULL
-					AND step.wait_filter IS NOT NULL
 			),
 			matches AS (
 				SELECT
@@ -731,7 +736,7 @@ export class SQLiteStorage implements Storage {
 					ON event.queue = @queue
 					AND event.key = base.wait_for
 					AND event.created_at >= base.wait_from
-					AND CASE base.type
+				WHERE CASE base.type
 					WHEN 'object' THEN (
 						json_extract(event.input, base.fullKey) IS NOT NULL
 						AND json_type(json_extract(event.input, base.fullKey)) = 'object'
@@ -753,15 +758,9 @@ export class SQLiteStorage implements Storage {
 					step.id,
 					matches.key,
 					matches.data as event_data
-				FROM ${stepsTable} step
+				FROM waiting_steps step
 				LEFT JOIN matches
 				ON step.id = matches.step_id
-				WHERE
-					-- TODO the conditions are repeated, maybe take steps out in their own reused CTE
-					step.status = 'waiting'
-					AND step.queue = @queue
-					AND step.wait_for IS NOT NULL
-					AND step.wait_filter IS NOT NULL
 			)
 			UPDATE ${stepsTable}
 			SET status = CASE
@@ -778,7 +777,7 @@ export class SQLiteStorage implements Storage {
 				results.id = ${stepsTable}.id
 				AND (
 					results.key IS NOT NULL
-					OR wait_from < unixepoch('subsec') - 0.01 -- if no event found, only update 'wait_from' in increments of 10ms minimum
+					OR wait_from < unixepoch('subsec') - 0.05 -- if no event found, only update 'wait_from' in increments of 50ms minimum
 				)
 			RETURNING 1
 		`)

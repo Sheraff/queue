@@ -267,6 +267,7 @@ export class SQLiteStorage implements Storage {
 			CREATE UNIQUE INDEX IF NOT EXISTS ${stepsTable}_job_key_step ON ${stepsTable} (queue, job, key, step);
 			CREATE INDEX IF NOT EXISTS ${stepsTable}_sleep ON ${stepsTable} (task_id, status, sleep_until ASC) WHERE sleep_until IS NOT NULL AND status = 'stalled'; -- future>pending
 			CREATE INDEX IF NOT EXISTS ${stepsTable}_task_id ON ${stepsTable} (task_id, status, timeout_at ASC) WHERE timeout_at IS NOT NULL AND status IN ('stalled', 'waiting'); -- future>step_timed_out, next>step_timed_out
+			CREATE INDEX IF NOT EXISTS ${stepsTable}_wait_for ON ${stepsTable} (queue, wait_filter) WHERE wait_for IS NOT NULL AND status = 'waiting'; 
 
 		
 			CREATE TABLE IF NOT EXISTS ${eventsTable} (
@@ -697,73 +698,81 @@ export class SQLiteStorage implements Storage {
 		 * update all steps that are waiting for an event.
 		 */
 		const resolveAllStepEventsStmt = this.#db.prepare<{ queue: string }, {}>(/* sql */ `
-			WITH filter AS ( -- expand all filter of all waiting steps into a big table
+			WITH base AS (
 				SELECT
 					step.id AS step_id,
-					json_tree.*
-				FROM ${stepsTable} step, json_tree(step.wait_filter)
-				WHERE step.status = 'waiting'
+					step.wait_for,
+					step.wait_from,
+					step.status,
+					count(*) OVER (PARTITION BY step.id) AS count,
+					filter.*
+				FROM ${stepsTable} step
+				INNER JOIN json_tree(step.wait_filter) filter
+					ON step.status = 'waiting'
 					AND step.queue = @queue
 					AND step.wait_for IS NOT NULL
 					AND step.wait_filter IS NOT NULL
-					AND json_tree.type != 'null'
+					AND filter.type != 'null'
 			),
-			matched_steps AS (
+			matches AS (
 				SELECT
-					event.created_at AS event_id,
-					event.data AS event_data,
-					step.id AS step_id
-				FROM ${stepsTable} step
+					base.step_id,
+					event.key,
+					event.created_at,
+					event.queue,
+					event.data
+				FROM base
 				LEFT JOIN ${eventsTable} event
-					ON event.queue = step.queue
-					AND event.key = step.wait_for
-					AND event.created_at >= step.wait_from
-				WHERE step.status = 'waiting'
+					ON event.queue = @queue
+					AND event.key = base.wait_for
+					AND event.created_at >= base.wait_from
+					AND CASE base.type
+					WHEN 'object' THEN (
+						json_extract(event.input, base.fullKey) IS NOT NULL
+						AND json_type(json_extract(event.input, base.fullKey)) = 'object'
+					)
+					WHEN 'array' THEN (
+						json_extract(event.input, base.fullKey) IS NOT NULL
+						AND json_type(json_extract(event.input, base.fullKey)) = 'array'
+					)
+					ELSE (
+						json_extract(event.input, base.fullKey) IS NOT NULL
+						AND json_extract(event.input, base.fullKey) = base.value
+					)
+					END
+				GROUP BY base.step_id, event.key, event.created_at, event.queue, event.data
+				HAVING count(*) = base.count
+			),
+			results AS (
+				SELECT
+					step.id,
+					matches.key,
+					matches.data as event_data
+				FROM ${stepsTable} step
+				LEFT JOIN matches
+				ON step.id = matches.step_id
+				WHERE
+					-- TODO the conditions are repeated, maybe take steps out in their own reused CTE
+					step.status = 'waiting'
 					AND step.queue = @queue
 					AND step.wait_for IS NOT NULL
-					AND NOT EXISTS (
-						SELECT 1
-						FROM filter
-						WHERE filter.step_id = step.id AND (
-							-- looking for any mismatch between filter and event
-							(
-								filter.type = 'object'
-								AND (
-									json_extract(event.input, filter.fullKey) IS NULL
-									OR json_type(json_extract(event.input, filter.fullKey)) != 'object'
-								)
-							) OR (
-								filter.type = 'array'
-								AND (
-									json_extract(event.input, filter.fullKey) IS NULL
-									OR json_type(json_extract(event.input, filter.fullKey)) != 'array'
-								)
-							) OR (
-								filter.type NOT IN ('object', 'array')
-								AND (
-									json_extract(event.input, filter.fullKey) IS NULL
-									OR json_extract(event.input, filter.fullKey) != filter.value
-								)
-							)
-						)
-						LIMIT 1
-					)
+					AND step.wait_filter IS NOT NULL
 			)
 			UPDATE ${stepsTable}
 			SET status = CASE
-					WHEN matched_steps.event_id IS NOT NULL THEN 'completed'
+					WHEN results.key IS NOT NULL THEN 'completed'
 					ELSE status
 				END,
 				data = CASE
-					WHEN matched_steps.event_id IS NOT NULL THEN matched_steps.event_data
+					WHEN results.key IS NOT NULL THEN results.event_data
 					ELSE data
 				END,
 				wait_from = CASE
-					WHEN matched_steps.event_id IS NOT NULL THEN unixepoch('subsec')
+					WHEN results.key IS NOT NULL THEN unixepoch('subsec')
 					ELSE (unixepoch('subsec') - 1) -- update timestamp so we don't re-check past events next loop
 				END
-			FROM matched_steps
-			WHERE matched_steps.step_id = ${stepsTable}.id
+			FROM results
+			WHERE results.id = ${stepsTable}.id
 			RETURNING 1
 		`)
 	}

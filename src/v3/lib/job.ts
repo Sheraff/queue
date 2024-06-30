@@ -301,7 +301,9 @@ export class Job<
 		const serialized = serialize(_input)
 		const key = hash(serialized)
 		const registrationContext = getRegistrationContext(this)
-		this.#emitter.emit('trigger', { input: _input }, { input: serialized, key, queue: registrationContext.queue.id })
+		setImmediate(() => {
+			this.#emitter.emit('trigger', { input: _input }, { input: serialized, key, queue: registrationContext.queue.id })
+		})
 		return key
 	}
 
@@ -314,7 +316,9 @@ export class Job<
 		const serialized = serialize(_input)
 		const key = hash(serialized)
 		const registrationContext = getRegistrationContext(this)
-		this.#emitter.emit('cancel', { input: _input, reason }, { input: serialized, key, queue: registrationContext.queue.id })
+		setImmediate(() => {
+			this.#emitter.emit('cancel', { input: _input, reason }, { input: serialized, key, queue: registrationContext.queue.id })
+		})
 		return key
 	}
 
@@ -721,8 +725,9 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		}
 		const promise = waitFor(job, 'settled', { ...options, filter: input })
 		await dispatch(job, input)
-		const { result, error } = (await promise) as { result: Data, error: unknown }
+		const { result, error, reason } = (await promise) as { result: Data, error: unknown, reason: CancelReason }
 		if (error) throw error
+		if (reason) throw new NonRecoverableError(`Job was cancelled "${reason.type}"`)
 		return result
 	}
 

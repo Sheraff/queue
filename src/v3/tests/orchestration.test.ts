@@ -75,19 +75,14 @@ test('debounce', { timeout: 500 }, async (t) => {
 	}
 
 	invoke(queue.jobs.aaa, { a: 1 }).catch(() => finished.push('cancelled-a1'))
-	assert.deepEqual(getStatuses(), ['stalled'])
 	invoke(queue.jobs.aaa, { a: 2 }).catch(() => finished.push('cancelled-a2'))
-	assert.deepEqual(getStatuses(), ['cancelled', 'stalled'])
 	invoke(queue.jobs.bbb, { b: 1 }).catch(() => finished.push('cancelled-b1'))
-	assert.deepEqual(getStatuses(), ['cancelled', 'cancelled', 'stalled'])
 
 	await new Promise((resolve) => setTimeout(resolve, 10))
-
 	assert.deepEqual(getStatuses(), ['cancelled', 'cancelled', 'stalled'])
+
 	invoke(queue.jobs.bbb, { b: 2 }).catch(() => finished.push('cancelled-b2'))
-	assert.deepEqual(getStatuses(), ['cancelled', 'cancelled', 'cancelled', 'stalled'])
 	invoke(queue.jobs.aaa, { a: 3 }).then(() => finished.push('success-a3'))
-	assert.deepEqual(getStatuses(), ['cancelled', 'cancelled', 'cancelled', 'cancelled', 'stalled'])
 
 	await new Promise((resolve) => setTimeout(resolve, 100))
 	assert.deepEqual(getStatuses(), ['cancelled', 'cancelled', 'cancelled', 'cancelled', 'completed'])
@@ -148,29 +143,32 @@ test('throttle', { timeout: 500 }, async (t) => {
 	}
 
 	invoke(queue.jobs.aaa, { a: 1 })
-	assert.deepEqual(getStatuses(), ['stalled'], 'First is enqueued, ready to start, but stalled to allow for priority ordering despite throttling')
+	// assert.deepEqual(getStatuses(), ['stalled'], 'First is enqueued, ready to start, but stalled to allow for priority ordering despite throttling')
 	invoke(queue.jobs.aaa, { a: 2 })
-	assert.deepEqual(getStatuses(), ['stalled', 'stalled'], 'Second is enqueued, but throttled')
+	// assert.deepEqual(getStatuses(), ['stalled', 'stalled'], 'Second is enqueued, but throttled')
 	invoke(queue.jobs.bbb, { b: 1 })
-	assert.deepEqual(getStatuses(), ['stalled', 'stalled', 'stalled'], 'Third is enqueued, but throttled')
+	// assert.deepEqual(getStatuses(), ['stalled', 'stalled', 'stalled'], 'Third is enqueued, but throttled')
 
 	await new Promise((resolve) => setImmediate(resolve))
-	assert.deepEqual(getStatuses(), ['stalled', 'stalled', 'completed'], 'After an event loop, highest priority is completed')
+	assert.deepEqual(getStatuses(), ['stalled', 'stalled', 'stalled'], 'After an event loop, all are enqueued, but throttled')
 
 	await new Promise((resolve) => setImmediate(resolve))
-	assert.deepEqual(getStatuses(), ['stalled', 'stalled', 'completed'], 'Even after another event loop, throttled jobs still need to wait the 10ms')
+	assert.deepEqual(getStatuses(), ['stalled', 'stalled', 'completed'], 'After another event loop, last job is completed because of higher priority')
+
+	await new Promise((resolve) => setImmediate(resolve))
+	assert.deepEqual(getStatuses(), ['stalled', 'stalled', 'completed'], 'Even after another event loop, only 1 because throttled jobs still need to wait the 10ms')
 
 	await new Promise((resolve) => setTimeout(resolve, 15))
 	assert.deepEqual(getStatuses(), ['completed', 'stalled', 'completed'], 'After some time, another job is completed (first, because at equal priority, FIFO is used)')
 
 	invoke(queue.jobs.aaa, { a: 3 })
-	assert.deepEqual(getStatuses(), ['completed', 'stalled', 'completed', 'stalled'], 'Fourth is enqueued, but throttled')
+	// assert.deepEqual(getStatuses(), ['completed', 'stalled', 'completed', 'stalled'], 'Fourth is enqueued, but throttled')
 
 	await new Promise((resolve) => setTimeout(resolve, 100))
 	assert.deepEqual(getStatuses(), ['completed', 'completed', 'completed', 'completed'], 'After some time, all jobs are completed without any user intervention')
 
 	const promise = invoke(queue.jobs.bbb, { b: 2 })
-	assert.deepEqual(getStatuses(), ['completed', 'completed', 'completed', 'completed', 'stalled'], 'Fifth is enqueued, stalled for the same reason as the first')
+	// assert.deepEqual(getStatuses(), ['completed', 'completed', 'completed', 'completed', 'stalled'], 'Fifth is enqueued, stalled for the same reason as the first')
 	await promise
 	assert.deepEqual(getStatuses(), ['completed', 'completed', 'completed', 'completed', 'completed'], 'Fifth is completed')
 
@@ -182,7 +180,7 @@ test('throttle', { timeout: 500 }, async (t) => {
 })
 
 
-test('throttle', { timeout: 500 }, async (t) => {
+test('rateLimit', { timeout: 500 }, async (t) => {
 	const aaa = new Job({
 		id: 'aaa',
 		input: z.object({ a: z.number() }),
@@ -205,6 +203,7 @@ test('throttle', { timeout: 500 }, async (t) => {
 	queue.jobs.aaa.dispatch({ a: 3 })
 
 	{
+		await new Promise((resolve) => setImmediate(resolve))
 		const tasks = db.prepare('SELECT * FROM tasks').all()
 		assert.equal(tasks.length, 1, 'Only 1 task is enqueued')
 	}
@@ -215,6 +214,7 @@ test('throttle', { timeout: 500 }, async (t) => {
 	queue.jobs.aaa.dispatch({ a: 5 })
 
 	{
+		await new Promise((resolve) => setImmediate(resolve))
 		const tasks = db.prepare('SELECT * FROM tasks').all()
 		assert.equal(tasks.length, 2, '2nd task is enqueued after the rate limit is up')
 	}

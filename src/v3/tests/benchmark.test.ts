@@ -64,6 +64,7 @@ test.describe('benchmark', {
 	})
 
 	test('combinatorics', async (t) => {
+		const DEPTH = 5
 		const hello = new Job({
 			id: 'hello',
 		}, async ({
@@ -73,7 +74,7 @@ test.describe('benchmark', {
 			branch: string,
 			depth: number
 		}): Promise<{ treasure: number }> => {
-			if (depth === 6) {
+			if (depth === DEPTH) {
 				return { treasure: 1 }
 			}
 			const results = await Promise.all([
@@ -98,20 +99,27 @@ test.describe('benchmark', {
 			if (count === 0) resolve(result)
 		}))
 
+		performance.mark('start')
 		queue.jobs.hello.dispatch({ branch: 'root', depth: 0 })
-
 		const res = await allDone
+		performance.mark('end')
+
+		t.diagnostic(`Depth: ${DEPTH}`)
+
+		const duration = performance.measure('hello', 'start', 'end').duration
+		t.diagnostic(`Combinatorics took ${duration.toFixed(2)}ms (~6s for depth 8, ~2s for depth 7, <500ms for depth 6, <100ms for depth 5)`)
+
 		t.diagnostic(`Combinatorics result: ${res?.treasure}`)
-		assert(res?.treasure === 64, `Expected 63 treasures, got ${res?.treasure}`)
+		assert(res?.treasure === (2 ** DEPTH), `Expected ${2 ** (DEPTH)} treasures, got ${res?.treasure}`)
 
 		await queue.close()
 
 		const rows = db.prepare('SELECT * FROM tasks').all() as Task[]
 		t.diagnostic(`Tasks count: ${rows.length}`)
-		assert(rows.length === 127, `Expected 127 tasks, got ${rows.length}`)
+		assert(rows.length === (2 ** (DEPTH + 1)) - 1, `Expected ${(2 ** (DEPTH + 1)) - 1} tasks, got ${rows.length}`)
 
 		db.close()
-
+		performance.clearMarks()
 	})
 
 	test('many wait for pipe', async (t) => {

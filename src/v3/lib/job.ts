@@ -120,6 +120,7 @@ export class Job<
 			 * - It can be an object with the `id` and `ms` properties
 			 * - If it's a function, it will be called with the input data, and should return a value or an object as described above.
 			 */
+			// TODO: add 'timeout' option to debounce so it doesn't reset the timer forever
 			debounce?: NoInfer<OrchestrationTimer<In>>
 			/**
 			 * Throttle configuration.

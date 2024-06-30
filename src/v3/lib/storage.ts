@@ -361,7 +361,7 @@ export class SQLiteStorage implements Storage {
 				AND timeout_at <= unixepoch('subsec')
 			) OR (
 				-- step timed out, resolve it
-				step_timed_out = 1
+				step_timed_out IS 1
 			) OR (
 				(
 					status = 'pending'
@@ -375,12 +375,12 @@ export class SQLiteStorage implements Storage {
 						throttle_id IS NOT NULL
 						AND task.throttle_id IS NOT NULL
 						AND task.status = 'stalled'
-						AND (is_throttled IS NULL OR is_throttled = 0)
+						AND (is_throttled IS NOT 1)
 					)
 				) AND (
 					-- no steps are blocking (sleeping, waiting)
-					(step_sleeping IS NULL OR step_sleeping = 0)
-					AND (step_waiting IS NULL OR step_waiting = 0)
+					step_sleeping IS NOT 1
+					AND step_waiting IS NOT 1
 				)
 			)
 			ORDER BY

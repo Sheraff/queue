@@ -107,7 +107,7 @@ test.describe('benchmark', {
 		t.diagnostic(`Depth: ${DEPTH}`)
 
 		const duration = performance.measure('hello', 'com-start', 'com-end').duration
-		t.diagnostic(`Combinatorics took ${duration.toFixed(2)}ms (~2s for depth 8, ~600ms for depth 7, <200ms for depth 6, <50ms for depth 5)`)
+		t.diagnostic(`Combinatorics took ${duration.toFixed(2)}ms (~1.5s for depth 8, ~400ms for depth 7, ~150ms for depth 6, <50ms for depth 5)`)
 
 		t.diagnostic(`Combinatorics result: ${res?.treasure}`)
 		assert(res?.treasure === (2 ** DEPTH), `Expected ${2 ** (DEPTH)} treasures, got ${res?.treasure}`)

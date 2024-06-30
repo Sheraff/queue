@@ -267,7 +267,7 @@ export class SQLiteStorage implements Storage {
 			CREATE UNIQUE INDEX IF NOT EXISTS ${stepsTable}_job_key_step ON ${stepsTable} (queue, job, key, step);
 			CREATE INDEX IF NOT EXISTS ${stepsTable}_sleep ON ${stepsTable} (task_id, status, sleep_until ASC) WHERE sleep_until IS NOT NULL AND status = 'stalled'; -- future>pending
 			CREATE INDEX IF NOT EXISTS ${stepsTable}_task_id ON ${stepsTable} (task_id, status, timeout_at ASC) WHERE timeout_at IS NOT NULL AND status IN ('stalled', 'waiting'); -- future>step_timed_out
-			CREATE INDEX IF NOT EXISTS ${stepsTable}_wait_for ON ${stepsTable} (queue, wait_filter) WHERE wait_for IS NOT NULL AND status = 'waiting'; 
+			CREATE INDEX IF NOT EXISTS ${stepsTable}_resolve_step_event_covering on ${stepsTable} (queue, status, wait_for, wait_filter, wait_from, id) WHERE status = 'waiting' AND wait_for IS NOT NULL; -- resolve step events
 			CREATE INDEX IF NOT EXISTS ${stepsTable}_blocking_sub_steps ON ${stepsTable} (status, task_id, timeout_at, sleep_until, wait_for, wait_filter) WHERE status IN ('stalled', 'waiting'); -- next>sub_steps
 
 		
@@ -708,14 +708,16 @@ export class SQLiteStorage implements Storage {
 					step.wait_from,
 					step.status,
 					count(*) OVER (PARTITION BY step.id) AS count,
-					filter.*
+					filter.type,
+					filter.fullKey,
+					filter.value
 				FROM ${stepsTable} step
 				INNER JOIN json_tree(step.wait_filter) filter
-					ON step.status = 'waiting'
+					ON filter.type != 'null'
+				WHERE step.status = 'waiting'
 					AND step.queue = @queue
 					AND step.wait_for IS NOT NULL
 					AND step.wait_filter IS NOT NULL
-					AND filter.type != 'null'
 			),
 			matches AS (
 				SELECT
@@ -770,12 +772,15 @@ export class SQLiteStorage implements Storage {
 					WHEN results.key IS NOT NULL THEN results.event_data
 					ELSE data
 				END,
-				wait_from = CASE
-					WHEN results.key IS NOT NULL THEN unixepoch('subsec')
-					ELSE (unixepoch('subsec') - 1) -- update timestamp so we don't re-check past events next loop
+				wait_from = unixepoch('subsec') -- update timestamp so we don't re-check past events next loop
 				END
 			FROM results
-			WHERE results.id = ${stepsTable}.id
+			WHERE
+				results.id = ${stepsTable}.id
+				AND (
+					results.key IS NOT NULL
+					OR wait_from < unixepoch('subsec') - 0.01 -- if no event found, only update 'wait_from' in increments of 10ms minimum
+				)
 			RETURNING 1
 		`)
 	}

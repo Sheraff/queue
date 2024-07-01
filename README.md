@@ -33,8 +33,8 @@ const processSong = new Job({
   // Jobs are cached, so they won't be re-run if the same ID is processed again
   const all = await Promise.all([
     Job.invoke(spotifyData, { id }),
-    Job.invoke(lastFmData, { id })
-    Job.invoke(audioDbData, { id })
+    Job.invoke(lastFmData, { id }),
+    Job.invoke(audioDbData, { id }),
   ])
   const metadata = parseMetadata(all)
   
@@ -76,6 +76,7 @@ const musicBrainz = new Job({
     return response.json()
   })
   const id = parseMusicbrainzData(data)
+  return id
 })
 
 // other jobs not shown for brevity

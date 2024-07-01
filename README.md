@@ -185,20 +185,20 @@ This setup demonstrates a basic workflow where `producerJob` sends a message to 
 
 ### Job Steps
 
-A Job represents a linear piece of work. It is just meant as an orchestration container for smaller units of work using the various `Job` static methods. Here's an example of a complex job that uses these methods to script a workflow:
+A Job represents a linear piece of work. It is just meant as an orchestration container for smaller units of work represented by the various `Job` static methods. Here's an example of a complex job that uses these methods to script a workflow:
 
 ```ts
 const complexJob = new Job({
   id: 'complexJob',
 }, async () => {
-  // Job.run: Executes a function or another job immediately and waits for its completion.
+  // Job.run: Executes a function immediately, with retries and backoff.
   const runResult = await Job.run('subTask', () => {
     // ...
     return 'Sub-task completed'
   })
 
   // Job.sleep: Pauses the job execution for a specified duration.
-  await Job.sleep(1000) // Sleep for 1000 milliseconds (1 second)
+  await Job.sleep("1s") // Sleep for 1 second
 
   // Job.waitFor: Waits for another job to reach a specific state before continuing.
   // Assuming there's another job 'preliminaryJob' that we wait to finish.

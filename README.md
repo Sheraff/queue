@@ -80,9 +80,9 @@ const musicBrainz = new Job({
 
 // other jobs not shown for brevity
 const extractPalette = new Job(...) // sharp image processing throttled based on CPU
-const spotifyData = new Job(...) // fetch jobs throttled based on API rate limits
-const lastFmData = new Job(...) // fetch jobs throttled based on API rate limits
-const audioDbData = new Job(...) // fetch jobs throttled based on API rate limits
+const spotifyData = new Job(...) // fetch job throttled based on API rate limits
+const lastFmData = new Job(...) // fetch job throttled based on API rate limits
+const audioDbData = new Job(...) // fetch job throttled based on API rate limits
 ```
 
 ## Features

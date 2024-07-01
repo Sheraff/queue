@@ -77,14 +77,14 @@ export const registration = new AsyncLocalStorage<RegistrationContext>()
 
 
 export interface ExecutionContext {
-	run<Out extends Data>(options: RunOptions, fn: (utils: { signal?: AbortSignal }) => Out | Promise<Out>): Promise<Out>
+	run<Out extends Data>(options: RunOptions, fn: (utils: { signal: AbortSignal }) => Out | Promise<Out>): Promise<Out>
 	sleep(ms: number): Promise<void> | void
 	waitFor(instance: Job | Pipe, event: string, options: WaitForOptions<InputData>): Promise<Data> | void
 	invoke(job: Job, data: InputData, options?: Omit<WaitForOptions<InputData>, 'filter' | 'retroactive'>): Promise<Data>
 	dispatch(instance: Job | Pipe, data: InputData): Promise<void>
 	cancel(instance: Job, input: InputData, reason: CancelReason): Promise<void>
 	promises: Promise<unknown>[]
-	cancelled: boolean
+	controller: AbortController
 }
 
 /**

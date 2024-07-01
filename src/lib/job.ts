@@ -336,10 +336,9 @@ export class Job<
 	 * @description
 	 * The `signal` property of the `utils` object is only provided when the options contain a `timeout`.
 	 */
-	// TODO: make the types actually reflect the presence / absence of the signal
-	static async run<Out extends Data>(id: string, fn: (utils: { signal?: AbortSignal }) => Out | Promise<Out>): Promise<Out>
-	static async run<Out extends Data>(opts: RunOptions, fn: (utils: { signal?: AbortSignal }) => Out | Promise<Out>): Promise<Out>
-	static async run<Out extends Data>(optsOrId: string | RunOptions, fn: (utils: { signal?: AbortSignal }) => Out | Promise<Out>): Promise<Out> {
+	static async run<Out extends Data>(id: string, fn: (utils: { signal: AbortSignal }) => Out | Promise<Out>): Promise<Out>
+	static async run<Out extends Data>(opts: RunOptions, fn: (utils: { signal: AbortSignal }) => Out | Promise<Out>): Promise<Out>
+	static async run<Out extends Data>(optsOrId: string | RunOptions, fn: (utils: { signal: AbortSignal }) => Out | Promise<Out>): Promise<Out> {
 		const e = getExecutionContext()
 		const opts: RunOptions = typeof optsOrId === 'string' ? { id: optsOrId } : optsOrId
 		return e.run(opts, fn)
@@ -402,7 +401,7 @@ export class Job<
 
 		const onCancel: Listener<In, Out, 'cancel'> = (_, { key }) => {
 			if (task.key !== key) return
-			executionContext.cancelled = true
+			executionContext.controller.abort()
 		}
 		this.#emitter.prependListener('cancel', onCancel)
 		this.#emitter.setMaxListeners(this.#emitter.getMaxListeners() + 1)
@@ -454,7 +453,7 @@ export class Job<
 						.then(() => {
 							this.#emitter.off('cancel', onCancel)
 							this.#emitter.setMaxListeners(this.#emitter.getMaxListeners() - 1)
-							if (executionContext.cancelled) return
+							if (executionContext.controller.signal.aborted) return
 							syncOrPromise<void>(resolve => {
 								registrationContext.requeueTask(task, resolve)
 							})
@@ -462,7 +461,7 @@ export class Job<
 				} else {
 					this.#emitter.off('cancel', onCancel)
 					this.#emitter.setMaxListeners(this.#emitter.getMaxListeners() - 1)
-					if (executionContext.cancelled) return
+					if (executionContext.controller.signal.aborted) return
 					return syncOrPromise<void>(resolve => {
 						registrationContext.resolveTask(task, 'failed', error, resolve)
 					}, () => {
@@ -472,7 +471,7 @@ export class Job<
 			}
 			this.#emitter.off('cancel', onCancel)
 			this.#emitter.setMaxListeners(this.#emitter.getMaxListeners() - 1)
-			if (executionContext.cancelled) return
+			if (executionContext.controller.signal.aborted) return
 			return syncOrPromise<void>(resolve => {
 				registrationContext.resolveTask(task, 'completed', output, resolve)
 			}, () => {
@@ -485,7 +484,7 @@ export class Job<
 }
 
 function makeExecutionContext(registrationContext: RegistrationContext, task: Task, steps: Step[]): ExecutionContext {
-	let cancelled = false
+	const controller = new AbortController()
 
 	const promises: Promise<any>[] = []
 
@@ -502,7 +501,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 	}
 
 	const run: ExecutionContext['run'] = (options, fn) => {
-		if (cancelled) {
+		if (controller.signal.aborted) {
 			return Promise.reject(interrupt)
 		}
 		const index = getIndex(options.id, options[system] ?? false)
@@ -542,7 +541,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 			})
 		}
 		const onError = (error: unknown) => {
-			if (cancelled) canRetry = false
+			if (controller.signal.aborted) canRetry = false
 			else if (error instanceof NonRecoverableError) canRetry = false
 			else {
 				const retry = options.retry ?? 3
@@ -574,19 +573,21 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		}
 
 		try {
-			const timeout = resolveStepTimeout(options.timeout)
-			const controller = timeout !== null ? new AbortController() : null
-			const utils = controller ? { signal: controller.signal } : {}
+			const runController = new AbortController()
+			const utils = { signal: runController.signal }
 			const maybePromise = execution.run(task.id, () => fn(utils))
 			if (isPromise(maybePromise)) {
+				const timeout = resolveStepTimeout(options.timeout)
+				const forwardAbort = () => runController.abort()
+				controller.signal.addEventListener('abort', forwardAbort)
 				let id: NodeJS.Timeout | null = null
-				const promise = controller
+				const promise = timeout !== null
 					? Promise.race([
 						new Promise<void>((_, reject) =>
 							id = setTimeout(() => {
-								controller.abort()
+								runController.abort()
 								reject(new TimeoutError('Step timed out'))
-							}, timeout! * 1000)
+							}, timeout * 1000)
 						),
 						maybePromise
 					])
@@ -601,6 +602,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 					.then(onSuccess)
 					.catch(onError)
 					.finally(() => {
+						controller.signal.removeEventListener('abort', forwardAbort)
 						if (id) clearTimeout(id)
 					})
 				)
@@ -631,7 +633,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 	}
 
 	const sleep: ExecutionContext['sleep'] = (ms) => {
-		if (cancelled) {
+		if (controller.signal.aborted) {
 			return Promise.reject(interrupt)
 		}
 		const index = getIndex('sleep', true)
@@ -660,7 +662,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 	}
 
 	const waitFor: ExecutionContext['waitFor'] = (instance, event, options) => {
-		if (cancelled) {
+		if (controller.signal.aborted) {
 			return Promise.reject(interrupt)
 		}
 		const name = `waitFor::${instance.type}::${instance.id}::${event}`
@@ -715,7 +717,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 	}
 
 	const dispatch: ExecutionContext['dispatch'] = (instance, data) => {
-		if (cancelled) {
+		if (controller.signal.aborted) {
 			return Promise.reject(interrupt)
 		}
 		return run({
@@ -728,7 +730,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 	}
 
 	const invoke: ExecutionContext['invoke'] = async (job, input, options?: Omit<WaitForOptions<InputData>, 'retroactive' | 'filter'>) => {
-		if (cancelled) {
+		if (controller.signal.aborted) {
 			return Promise.reject(interrupt)
 		}
 		const promise = waitFor(job, 'settled', { ...options, filter: input })
@@ -740,7 +742,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 	}
 
 	const cancel: ExecutionContext['cancel'] = (instance, data, reason) => {
-		if (cancelled) {
+		if (controller.signal.aborted) {
 			return Promise.reject(interrupt)
 		}
 		return run({
@@ -760,8 +762,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		invoke,
 		cancel,
 		promises,
-		get cancelled() { return cancelled },
-		set cancelled(value) { cancelled = value },
+		controller,
 	}
 }
 

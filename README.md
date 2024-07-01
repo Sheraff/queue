@@ -6,6 +6,73 @@ This project provides a flexible and efficient task queue system for managing as
 
 It is heavily inspired by [Inngest](https://www.inngest.com/), and far inferior to it in every way.
 
+## Example
+
+```ts
+const processSong = new Job({
+	id: 'processSong',
+	input: z.object({ path: z.string() }),
+}, async ({ path }) => {
+	const fingerprint = await Job.run('fpcalc', async () => {
+		return new Promise(resolve => {
+			const child = spawn('fpcalc', [path])
+			child.stdout.on('data', data => {
+				resolve(data.toString().trim())
+			})
+		})
+	})
+	
+	const id = await Job.invoke(musicBrainz, { fingerprint })
+
+	const all = await Promise.all([
+		Job.invoke(spotifyData, { id }),
+		Job.invoke(lastFmData, { id })
+		Job.invoke(audioDbData, { id })
+	])
+	const metadata = parseMetadata(all)
+	
+	const coverArtPath = await Job.run('downloadCoverArt', async () => {
+		const { path } = await download(metadata.coverArtUrl)
+		return path
+	})
+
+	const palette = await Job.invoke(extractPalette, { path: coverArtPath })
+
+	await Job.run('storeSong', async () => {
+		await db.run('INSERT INTO songs VALUES (?, ?, ?, ?, ?)', [
+			id,
+			metadata.title,
+			metadata.artist,
+			coverArtPath,
+			palette
+		])
+	})
+
+	await Job.run('notifyUser', async () => {
+		await sendNotification('Song processed', `Song ${metadata.title} by ${metadata.artist} has been processed`)
+	})
+})
+
+const musicBrainz = new Job({
+	id: 'musicBrainz',
+	input: z.object({ fingerprint: z.string() }),
+	output: z.string(),
+	throttle: "1 per second", // rate limit of API
+}, async ({ fingerprint }) => {
+	const data = await Job.run('musicBrainzApi', async () => {
+		const response = await fetch(`https://musicbrainz.org/api/${fingerprint}`)
+		return response.json()
+	})
+	const id = parseMusicbrainzData(data)
+})
+
+// other jobs not shown for brevity
+const extractPalette = new Job(...) // sharp image processing throttled based on CPU availability
+const spotifyData = new Job(...) // fetch jobs throttled based on API rate limits
+const lastFmData = new Job(...) // fetch jobs throttled based on API rate limits
+const audioDbData = new Job(...) // fetch jobs throttled based on API rate limits
+```
+
 ## Features
 - Flexible Job Handling: Supports retries with customizable backoff strategies.
 - Event-Driven Orchestration: Listen to and trigger events based on job execution results.

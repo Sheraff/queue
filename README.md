@@ -10,60 +10,60 @@ It is heavily inspired by [Inngest](https://www.inngest.com/), and far inferior 
 
 ```ts
 const processSong = new Job({
-	id: 'processSong',
-	input: z.object({ path: z.string() }),
+  id: 'processSong',
+  input: z.object({ path: z.string() }),
 }, async ({ path }) => {
-	const fingerprint = await Job.run('fpcalc', async () => {
-		return new Promise(resolve => {
-			const child = spawn('fpcalc', [path])
-			child.stdout.on('data', data => {
-				resolve(data.toString().trim())
-			})
-		})
-	})
-	
-	const id = await Job.invoke(musicBrainz, { fingerprint })
+  const fingerprint = await Job.run('fpcalc', async () => {
+    return new Promise(resolve => {
+      const child = spawn('fpcalc', [path])
+      child.stdout.on('data', data => {
+        resolve(data.toString().trim())
+      })
+    })
+  })
+  
+  const id = await Job.invoke(musicBrainz, { fingerprint })
 
-	const all = await Promise.all([
-		Job.invoke(spotifyData, { id }),
-		Job.invoke(lastFmData, { id })
-		Job.invoke(audioDbData, { id })
-	])
-	const metadata = parseMetadata(all)
-	
-	const coverArtPath = await Job.run('downloadCoverArt', async () => {
-		const { path } = await download(metadata.coverArtUrl)
-		return path
-	})
+  const all = await Promise.all([
+    Job.invoke(spotifyData, { id }),
+    Job.invoke(lastFmData, { id })
+    Job.invoke(audioDbData, { id })
+  ])
+  const metadata = parseMetadata(all)
+  
+  const coverArtPath = await Job.run('downloadCoverArt', async () => {
+    const { path } = await download(metadata.coverArtUrl)
+    return path
+  })
 
-	const palette = await Job.invoke(extractPalette, { path: coverArtPath })
+  const palette = await Job.invoke(extractPalette, { path: coverArtPath })
 
-	await Job.run('storeSong', async () => {
-		await db.run('INSERT INTO songs VALUES (?, ?, ?, ?, ?)', [
-			id,
-			metadata.title,
-			metadata.artist,
-			coverArtPath,
-			palette
-		])
-	})
+  await Job.run('storeSong', async () => {
+    await db.run('INSERT INTO songs VALUES (?, ?, ?, ?, ?)', [
+      id,
+      metadata.title,
+      metadata.artist,
+      coverArtPath,
+      palette
+    ])
+  })
 
-	await Job.run('notifyUser', async () => {
-		await sendNotification('Song processed', `Song ${metadata.title} by ${metadata.artist} has been processed`)
-	})
+  await Job.run('notifyUser', async () => {
+    await sendNotification('Song processed', `Song ${metadata.title} by ${metadata.artist} has been processed`)
+  })
 })
 
 const musicBrainz = new Job({
-	id: 'musicBrainz',
-	input: z.object({ fingerprint: z.string() }),
-	output: z.string(),
-	throttle: "1 per second", // rate limit of API
+  id: 'musicBrainz',
+  input: z.object({ fingerprint: z.string() }),
+  output: z.string(),
+  throttle: "1 per second", // rate limit of API
 }, async ({ fingerprint }) => {
-	const data = await Job.run('musicBrainzApi', async () => {
-		const response = await fetch(`https://musicbrainz.org/api/${fingerprint}`)
-		return response.json()
-	})
-	const id = parseMusicbrainzData(data)
+  const data = await Job.run('musicBrainzApi', async () => {
+    const response = await fetch(`https://musicbrainz.org/api/${fingerprint}`)
+    return response.json()
+  })
+  const id = parseMusicbrainzData(data)
 })
 
 // other jobs not shown for brevity
@@ -123,27 +123,27 @@ import { Job, Pipe, Queue } from './src/lib'
 
 // Define a pipe to pass data between jobs
 const dataPipe = new Pipe({
-	id: 'dataPipe',
-	in: {} as { message: string },
+  id: 'dataPipe',
+  in: {} as { message: string },
 })
 
 // Define a job that sends data to the pipe
 const producerJob = new Job({
-	id: 'producerJob',
+  id: 'producerJob',
 }, async () => {
-	const message = 'Hello from producer!'
-	Job.dispatch(dataPipe, { message })
-	return 'Producer job completed'
+  const message = 'Hello from producer!'
+  Job.dispatch(dataPipe, { message })
+  return 'Producer job completed'
 })
 
 // Define a job that receives data from the pipe
 const consumerJob = new Job({
-	id: 'consumerJob',
-	triggers: [dataPipe.into(({ message }) => ({ str: message }))],
-	input: z.object({ str: z.string() }),
+  id: 'consumerJob',
+  triggers: [dataPipe.into(({ message }) => ({ str: message }))],
+  input: z.object({ str: z.string() }),
 }, async (input) => {
-	console.log(`Consumer received message: ${input.str}`)
-	return 'Consumer job completed'
+  console.log(`Consumer received message: ${input.str}`)
+  return 'Consumer job completed'
 })
 ```
 
@@ -154,9 +154,9 @@ Next, set up a `Queue` to manage these jobs and start processing tasks.
 ```ts
 // Create a queue with the defined jobs and pipe
 const queue = new Queue({
-	jobs: { producerJob, consumerJob },
-	pipes: { dataPipe },
-	storage: new SqliteStorage()
+  jobs: { producerJob, consumerJob },
+  pipes: { dataPipe },
+  storage: new SqliteStorage()
 })
 
 // Wait for the queue to be ready
@@ -177,36 +177,36 @@ A Job represents a linear piece of work. It is just meant as an orchestration co
 
 ```ts
 const complexJob = new Job({
-	id: 'complexJob',
+  id: 'complexJob',
 }, async () => {
-	// Job.run: Executes a function or another job immediately and waits for its completion.
-	const runResult = await Job.run('subTask', () => {
-		// ...
-		return 'Sub-task completed'
-	})
+  // Job.run: Executes a function or another job immediately and waits for its completion.
+  const runResult = await Job.run('subTask', () => {
+    // ...
+    return 'Sub-task completed'
+  })
 
-	// Job.sleep: Pauses the job execution for a specified duration.
-	await Job.sleep(1000) // Sleep for 1000 milliseconds (1 second)
+  // Job.sleep: Pauses the job execution for a specified duration.
+  await Job.sleep(1000) // Sleep for 1000 milliseconds (1 second)
 
-	// Job.waitFor: Waits for another job to reach a specific state before continuing.
-	// Assuming there's another job 'preliminaryJob' that we wait to finish.
-	const preliminaryResult = await Job.waitFor(preliminaryJob, 'success')
+  // Job.waitFor: Waits for another job to reach a specific state before continuing.
+  // Assuming there's another job 'preliminaryJob' that we wait to finish.
+  const preliminaryResult = await Job.waitFor(preliminaryJob, 'success')
 
-	// Job.waitFor: Can also be used to wait for a Pipe to receive data.
-	// Assuming there's a Pipe 'dataPipe' that we wait to receive data.
-	const data = await Job.waitFor(dataPipe)
+  // Job.waitFor: Can also be used to wait for a Pipe to receive data.
+  // Assuming there's a Pipe 'dataPipe' that we wait to receive data.
+  const data = await Job.waitFor(dataPipe)
 
-	// Job.invoke: Invokes another job with the provided input and waits for its completion.
-	const invokeResult = await Job.invoke(anotherJob, { somekey: 'data' })
+  // Job.invoke: Invokes another job with the provided input and waits for its completion.
+  const invokeResult = await Job.invoke(anotherJob, { somekey: 'data' })
 
-	// Job.dispatch: Dispatches another job for execution without waiting for its completion.
-	Job.dispatch(asyncJob, { startData: 'start' })
+  // Job.dispatch: Dispatches another job for execution without waiting for its completion.
+  Job.dispatch(asyncJob, { startData: 'start' })
 
-	// Job.cancel: Attempts to cancel another job.
-	// Assuming 'longRunningJob' is a job that might still be running.
-	await Job.cancel(longRunningJob, { input: 'foo' })
+  // Job.cancel: Attempts to cancel another job.
+  // Assuming 'longRunningJob' is a job that might still be running.
+  await Job.cancel(longRunningJob, { input: 'foo' })
 
-	return { runResult, preliminaryResult, invokeResult }
+  return { runResult, preliminaryResult, invokeResult }
 })
 ```
 
@@ -230,17 +230,17 @@ When creating a Job, you can customize its behavior by passing various options. 
 Example:
 ```ts
 const job = new Job({
-	id: 'job',
-	input: z.object({ data: z.string() }),
-	output: z.object({ result: z.string() }),
-	triggers: [pipe.into(({ foo }) => ({ data: foo }))],
-	priority: 10,
-	cron: '0 * 1 * *',
-	throttle: '1 per minute',
-	timeout: '1h',
+  id: 'job',
+  input: z.object({ data: z.string() }),
+  output: z.object({ result: z.string() }),
+  triggers: [pipe.into(({ foo }) => ({ data: foo }))],
+  priority: 10,
+  cron: '0 * 1 * *',
+  throttle: '1 per minute',
+  timeout: '1h',
 }, async ({ data }) => {
-	// Job logic here
-	return { result: 'Job completed' }
+  // Job logic here
+  return { result: 'Job completed' }
 })
 ```
 
@@ -262,13 +262,13 @@ When using the `Job.run` method, you can customize its behavior by passing an ob
 Example:
 ```ts
 const runResult = await Job.run({
-	id: 'subTask',
-	retry: 5,
-	backoff: '1s',
-	timeout: '5s',
+  id: 'subTask',
+  retry: 5,
+  backoff: '1s',
+  timeout: '5s',
 }, async () => {
-	// Step logic here
-	return 'Sub-task completed'
+  // Step logic here
+  return 'Sub-task completed'
 })
 ```
 

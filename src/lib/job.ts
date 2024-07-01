@@ -48,6 +48,12 @@ export type RunOptions = {
 	 */
 	backoff?: number | Duration | ((attempt: number) => number | Duration) | number[] | Duration[]
 	timeout?: number | Duration
+	/*
+	 * concurrency is a setting at the step level,
+	 * but can be overridden by the content of the step itself.
+	 * e.g. to handle 429 errors: if the step fails with a 429, throw a special error that will force a specific delay before retrying.
+	 * all steps with the same concurrency id will be delayed by this single error.
+	 */
 	// TODO: concurrency
 	// ...
 }
@@ -158,6 +164,7 @@ export class Job<
 			 * @default "1 hour" 
 			 */
 			timeout?: number | Duration | ((input: NoInfer<In>) => number | Duration)
+			// TODO: ttl => if Xms after the trigger the job hasn't started (e.g. because of a throttle), it will be cancelled
 			onTrigger?: (params: { input: In }) => void
 			onStart?: (params: { input: In }) => void
 			onSuccess?: (params: { input: In, result: Out }) => void

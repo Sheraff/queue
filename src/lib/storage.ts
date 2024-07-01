@@ -497,11 +497,19 @@ export class SQLiteStorage implements Storage {
 		`)
 
 		this.#getNextTaskTx = this.#db.transaction((queue: string) => {
+			// performance.mark('st-start')
 			resolveAllStepEventsStmt.get({ queue })
+			// performance.mark('st-events')
 			const [task, next] = getNextTaskStmt.all({ queue })
-			if (!task) return
+			// performance.mark('st-tasks')
+			if (!task) {
+				// console.log('no task')
+				return
+			}
 			reserveTaskStmt.run(task)
+			// performance.mark('st-reserve')
 			const steps = getTaskStepDataStmt.all(task)
+			// performance.mark('st-steps')
 			for (let i = 0; i < steps.length; i++) {
 				const step = steps[i]!
 				if (step.status === 'stalled' && step.sleep_done) {
@@ -515,6 +523,22 @@ export class SQLiteStorage implements Storage {
 						status: step.next_status,
 					})
 				}
+			}
+			// performance.mark('st-update')
+			{
+				// const events = performance.measure('events', 'st-start', 'st-events').duration
+				// const tasks = performance.measure('tasks', 'st-events', 'st-tasks').duration
+				// const reserve = performance.measure('reserve', 'st-tasks', 'st-reserve').duration
+				// const steps = performance.measure('steps', 'st-reserve', 'st-steps').duration
+				// const update = performance.measure('update', 'st-steps', 'st-update').duration
+				// console.log(`events: ${events.toFixed(2)}ms, tasks: ${tasks.toFixed(2)}ms, reserve: ${reserve.toFixed(2)}ms, steps: ${steps.toFixed(2)}ms, update: ${update.toFixed(2)}ms`)
+				// performance.clearMarks('st-start')
+				// performance.clearMarks('st-events')
+				// performance.clearMarks('st-tasks')
+				// performance.clearMarks('st-reserve')
+				// performance.clearMarks('st-steps')
+				// performance.clearMarks('st-update')
+				// performance.clearMeasures()
 			}
 			return [task, steps, !!next] as [Task, Step[], boolean]
 		})

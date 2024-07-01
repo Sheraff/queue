@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx --watch src/userland/main.ts",
-    "foo": "tsx --watch --test src/v3/tests/**",
-    "bar": "tsx --watch --test src/v3/tests/ms.test.ts",
+    "foo": "tsx --test src/tests/**",
+    "bar": "tsx --watch --test src/tests/benchmark.test.ts",
     "test": "tsx --watch --test",
     "test:cov": "tsx --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=lcov.info",
     "tsc": "tsc --noEmit"

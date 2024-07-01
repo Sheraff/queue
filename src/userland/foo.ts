@@ -1,11 +1,28 @@
-import { z } from "zod"
-import { createProgram } from '../queue.js'
+import { Job, Pipe } from "../lib"
 
-export const foo = createProgram({
+export const fooBarPipe = new Pipe({
+	id: 'fooBarPipe',
+	in: {} as { id: number },
+})
+
+export const otherPipe = new Pipe({
+	id: 'otherPipe',
+	in: {} as { id: string },
+})
+
+export const foo = new Job({
 	id: 'foo',
-	input: z.object({ fa: z.string() }),
-	output: z.object({ fi: z.string() }),
-	triggers: { event: ['foo-trigger', 'poke'] }
-}, async (input) => {
-	return { fi: input.fa }
+	triggers: [otherPipe.into(({ id }) => ({ id: Number(id) }))],
+}, async (input: { id: number }) => {
+
+	const a = await Job.run('a', async () => {
+		await new Promise((resolve) => setTimeout(resolve, 10))
+		return 'abc'
+	})
+
+	const data = await Job.waitFor(fooBarPipe)
+
+	await Job.sleep("1s")
+
+	return a
 })

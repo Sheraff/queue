@@ -1,24 +1,21 @@
-import { Queue } from '../queue.js'
-import { foo } from "./foo.js"
-import { pokemon } from "./pokemon.js"
+import Database from "better-sqlite3"
+import { Queue, SQLiteStorage } from "../lib"
+import { bar } from "./bar"
+import { foo, fooBarPipe, otherPipe } from "./foo"
 
-// const registry = registerPrograms({
-// 	pokemon,
-// 	foo,
-// })
 
-// declare global {
-// 	interface Registry2 {
-// 		registry: typeof queue.registry
-// 	}
-// }
 
-export const queue = new Queue({
-	pokemon,
-	foo,
-}, {
-	dbName: 'woop.db'
+const queue = new Queue({
+	id: 'foo',
+	jobs: {
+		foo,
+		bar,
+	},
+	pipes: {
+		fooBarPipe,
+		otherPipe,
+	},
+	storage: new SQLiteStorage({
+		db: new Database('foo.db')
+	})
 })
-
-queue.registry.pokemon.invoke({ id: 25 }).catch(() => { })
-// pokemon.invoke({ id: 25 }).catch(() => { })

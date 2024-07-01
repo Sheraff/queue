@@ -8,11 +8,15 @@ It is heavily inspired by [Inngest](https://www.inngest.com/), and far inferior 
 
 ## Example
 
+Here's an example of a complex job that processes a song file, extracting metadata, cover art, and color palette, and then stores the information in a database. The job uses other jobs to fetch data from various APIs, extract color information from the cover art, and notify the user upon completion.
+
 ```ts
+// Define the main job that processes a song file, will be explicitly triggered by application code
 const processSong = new Job({
   id: 'processSong',
   input: z.object({ path: z.string() }),
 }, async ({ path }) => {
+  // Run a binary to extract audio fingerprint from the song file
   const fingerprint = await Job.run('fpcalc', async () => {
     return new Promise(resolve => {
       const child = spawn('fpcalc', [path])
@@ -22,8 +26,11 @@ const processSong = new Job({
     })
   })
   
+  // Invoke the musicBrainz job to get the song ID
   const id = await Job.invoke(musicBrainz, { fingerprint })
 
+  // Fetch data from various APIs in parallel, each with its own rate limit
+  // Jobs are cached, so they won't be re-run if the same ID is processed again
   const all = await Promise.all([
     Job.invoke(spotifyData, { id }),
     Job.invoke(lastFmData, { id })
@@ -31,13 +38,16 @@ const processSong = new Job({
   ])
   const metadata = parseMetadata(all)
   
+  // Download the cover art
   const coverArtPath = await Job.run('downloadCoverArt', async () => {
     const { path } = await download(metadata.coverArtUrl)
     return path
   })
 
+  // Extract the color palette, this task is expensive so it's done in a separate job and throttled accordingly
   const palette = await Job.invoke(extractPalette, { path: coverArtPath })
 
+  // Store the song information in the database
   await Job.run('storeSong', async () => {
     await db.run('INSERT INTO songs VALUES (?, ?, ?, ?, ?)', [
       id,
@@ -48,6 +58,7 @@ const processSong = new Job({
     ])
   })
 
+  // Send a push notification to the user
   await Job.run('notifyUser', async () => {
     await sendNotification('Song processed', `Song ${metadata.title} by ${metadata.artist} has been processed`)
   })

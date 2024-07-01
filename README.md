@@ -44,7 +44,8 @@ const processSong = new Job({
     return path
   })
 
-  // Extract the color palette, this task is expensive so it's done in a separate job and throttled accordingly
+  // Extract the color palette
+  // This is CPU intensive so it's done in a separate job and throttled accordingly
   const palette = await Job.invoke(extractPalette, { path: coverArtPath })
 
   // Store the song information in the database
@@ -78,7 +79,7 @@ const musicBrainz = new Job({
 })
 
 // other jobs not shown for brevity
-const extractPalette = new Job(...) // sharp image processing throttled based on CPU availability
+const extractPalette = new Job(...) // sharp image processing throttled based on CPU
 const spotifyData = new Job(...) // fetch jobs throttled based on API rate limits
 const lastFmData = new Job(...) // fetch jobs throttled based on API rate limits
 const audioDbData = new Job(...) // fetch jobs throttled based on API rate limits

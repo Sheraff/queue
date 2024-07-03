@@ -1,4 +1,4 @@
-import { Job } from "../lib"
+import { Job } from "../../lib/src"
 import { foo, fooBarPipe } from "./foo"
 
 

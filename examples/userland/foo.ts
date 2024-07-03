@@ -1,4 +1,4 @@
-import { Job, Pipe } from "../lib"
+import { Job, Pipe } from "../../lib/src"
 
 export const fooBarPipe = new Pipe({
 	id: 'fooBarPipe',

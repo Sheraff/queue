@@ -1,5 +1,5 @@
 import test from "node:test"
-import { Job, Pipe, Queue, SQLiteStorage } from "../lib"
+import { Job, Pipe, Queue, SQLiteStorage } from "../src"
 import { z } from "zod"
 import assert from "node:assert"
 

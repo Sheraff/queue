@@ -1,5 +1,5 @@
 import test from "node:test"
-import { parseDuration, parsePeriod } from '../lib/ms'
+import { parseDuration, parsePeriod } from '../src/ms'
 import assert from "node:assert"
 
 test.describe('parseDuration', () => {

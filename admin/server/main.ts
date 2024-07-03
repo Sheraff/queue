@@ -1,10 +1,17 @@
 // Import the necessary module using ES Module syntax
 import http from 'http'
-import { Queue } from "./queue"
-import { SQLiteStorage, type Step, type Task, type Event } from "./storage"
-import { Job } from "./job"
+import {
+	Queue,
+	SQLiteStorage,
+	// type Step, type Task, type Event, 
+	Job
+} from "queue"
 import Database from "better-sqlite3"
 import { z } from "zod"
+
+type Step = object
+type Task = object
+type Event = object
 
 
 const foo = new Job({
@@ -49,6 +56,8 @@ const getData = (queue: Queue, origin: number) => {
 // Create an HTTP server
 const server = http.createServer((req, res) => {
 	const url = new URL(req.url || '', `http://${req.headers.host}`)
+
+	console.log(url.pathname)
 
 	if (url.pathname === '/api') {
 		const param = url.searchParams.get('cursor')
@@ -114,7 +123,7 @@ const server = http.createServer((req, res) => {
 })
 
 // Define the port to listen on
-const PORT = 3000
+const PORT = 3001
 
 // Start the server
 server.listen(PORT, () => {

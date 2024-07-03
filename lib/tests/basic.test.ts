@@ -1,9 +1,9 @@
 import test, { mock } from "node:test"
-import { Job, Queue, SQLiteStorage } from "../lib"
+import { Job, Queue, SQLiteStorage } from "../src"
 import { z } from "zod"
 import assert from "assert"
 import Database from "better-sqlite3"
-import type { Step, Task } from "../lib/storage"
+import type { Step, Task } from "../src/storage"
 import { invoke } from "./utils"
 
 test('simple sync job', { timeout: 500 }, async (t) => {

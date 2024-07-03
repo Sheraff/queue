@@ -1,9 +1,9 @@
 import test from "node:test"
-import { Job, Pipe, Queue, SQLiteStorage } from "../lib"
+import { Job, Pipe, Queue, SQLiteStorage } from "../src"
 import assert from "node:assert"
 import { invoke } from "./utils"
 import Database from "better-sqlite3"
-import type { Task } from "../lib/storage"
+import type { Task } from "../src/storage"
 
 test.describe('benchmark', {
 	skip: !!process.env.CI,

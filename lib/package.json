@@ -1,0 +1,40 @@
+{
+  "name": "queue",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.ts",
+  "type": "module",
+  "scripts": {
+    "bar": "tsx --watch --test tests/benchmark.test.ts",
+    "test": "tsx --watch --test",
+    "test:cov": "tsx --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=lcov.info",
+    "tsc": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "better-sqlite3": "^11.1.2",
+    "serialize-error": "^11.0.3",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.14.9",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "4.16.2",
+    "typescript": "5.5.3"
+  },
+  "peerDependencies": {
+    "node-cron": ">=3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "node-cron": {
+      "optional": true
+    }
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    ".": "./src/index.ts"
+  }
+}

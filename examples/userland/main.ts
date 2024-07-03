@@ -1,5 +1,5 @@
 import Database from "better-sqlite3"
-import { Queue, SQLiteStorage } from "../lib"
+import { Queue, SQLiteStorage } from "../../lib/src"
 import { bar } from "./bar"
 import { foo, fooBarPipe, otherPipe } from "./foo"
 

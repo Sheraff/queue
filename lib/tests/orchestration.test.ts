@@ -1,10 +1,10 @@
 import test from "node:test"
-import { Job, Queue, SQLiteStorage } from "../lib"
+import { Job, Queue, SQLiteStorage } from "../src"
 import { z } from "zod"
 import assert from "assert"
 import { invoke } from "./utils"
 import Database from "better-sqlite3"
-import type { Task } from "../lib/storage"
+import type { Task } from "../src/storage"
 
 test('priority', { timeout: 500 }, async (t) => {
 	const aaa = new Job({

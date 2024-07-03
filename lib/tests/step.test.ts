@@ -1,11 +1,11 @@
 import test from "node:test"
-import { Job, Pipe, Queue, SQLiteStorage } from "../lib"
+import { Job, Pipe, Queue, SQLiteStorage } from "../src"
 import { invoke } from "./utils"
 import assert from "node:assert"
 import Database from "better-sqlite3"
-import type { Step } from "../lib/storage"
+import type { Step } from "../src/storage"
 import { z } from "zod"
-import { TimeoutError } from "../lib/utils"
+import { TimeoutError } from "../src/utils"
 
 test('sleep', { timeout: 500 }, async (t) => {
 

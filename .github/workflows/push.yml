@@ -56,10 +56,11 @@ jobs:
       - name: 🚦 Run tests
         run: pnpm test:cov
         timeout-minutes: 2
+        working-directory: lib
 
       - name: ☂️ Coverage
         if: always() && github.event_name == 'pull_request'
         uses: romeovs/lcov-reporter-action@v0.4.0
         with:
-          lcov-file: ./lcov.info
+          lcov-file: ./lib/lcov.info
           delete-old-comments: true

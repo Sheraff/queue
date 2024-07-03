@@ -31,7 +31,7 @@ export class Queue<
 		id: string,
 		jobs: Jobs & SafeKeys<keyof Jobs & string>,
 		pipes?: Pipes & SafeKeys<keyof Pipes & string>,
-		storage: Storage // TODO: default to in-memory pure JS storage? 
+		storage: Storage // TODO: default to in-memory pure JS storage?
 		/** how many jobs can be started in parallel, defaults to `Infinity` */
 		parallel?: number
 		/** Any simple cron scheduler can be used, if not provided here, the `node-cron` package will be used instead. */

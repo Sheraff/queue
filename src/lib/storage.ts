@@ -84,6 +84,14 @@ export type Step = {
 	data: string | null
 }
 
+export type Event = {
+	queue: string,
+	key: string,
+	created_at: number,
+	input: string,
+	data: string,
+}
+
 export interface Storage {
 	/** sets up the db, useful for async version of storage as a continuation of the constructor */
 	init(): void | Promise<void>

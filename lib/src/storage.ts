@@ -25,7 +25,7 @@ export type Task = {
 	timeout_at: number | null
 	timed_out?: boolean | null
 	status: TaskStatus
-	runs: number
+	loop: number
 	created_at: number
 	updated_at: number
 	started_at: number | null
@@ -61,6 +61,7 @@ export type Step = {
 	next_status?: StepStatus | null
 	runs: number
 	created_at: number
+	discovered_on: number
 
 	/** used on write to set a sleep timer */
 	sleep_for?: number | null
@@ -228,7 +229,7 @@ export class SQLiteStorage implements Storage {
 				
 				status TEXT NOT NULL,
 				started_at REAL,
-				runs INTEGER NOT NULL DEFAULT 0,
+				loop INTEGER NOT NULL DEFAULT 0,
 				created_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
 				updated_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
 				data JSON
@@ -266,6 +267,7 @@ export class SQLiteStorage implements Storage {
 				runs INTEGER NOT NULL DEFAULT 0,
 				created_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
 				updated_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+				discovered_on INTEGER NOT NULL,
 				sleep_until REAL,
 				timeout_at REAL,
 				wait_for TEXT,
@@ -484,7 +486,8 @@ export class SQLiteStorage implements Storage {
 			SET
 				status = 'running',
 				started_at = CASE WHEN started_at IS NULL THEN unixepoch('subsec') ELSE started_at END,
-				updated_at = unixepoch('subsec')
+				updated_at = unixepoch('subsec'),
+				loop = loop + 1
 			WHERE id = @id
 		`)
 
@@ -681,6 +684,7 @@ export class SQLiteStorage implements Storage {
 			wait_filter: string | null
 			wait_retroactive: number | null
 			wait_from: number | null
+			discovered_on: number | null
 			data: string | null
 		}>(/* sql */ `
 			INSERT INTO ${stepsTable} (
@@ -697,6 +701,7 @@ export class SQLiteStorage implements Storage {
 				wait_for,
 				wait_filter,
 				wait_from,
+				discovered_on,
 				data
 			)
 			VALUES (
@@ -713,6 +718,7 @@ export class SQLiteStorage implements Storage {
 				@wait_for,
 				@wait_filter,
 				CASE @wait_retroactive WHEN TRUE THEN 0 ELSE (unixepoch('subsec')) END,
+				@discovered_on,
 				@data
 			)
 			ON CONFLICT (queue, job, key, step)
@@ -849,6 +855,7 @@ export class SQLiteStorage implements Storage {
 		wait_filter: string | null
 		wait_retroactive: number | null
 		wait_from: number | null
+		discovered_on: number | null
 		data: string | null
 	}>
 	#recordEventStmt!: BetterSqlite3.Statement<{ queue: string, key: string, input: string, data: string }>
@@ -894,7 +901,7 @@ export class SQLiteStorage implements Storage {
 		return cb() as T
 	}
 
-	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'next_status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & {
+	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'next_status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs' | 'discovered_on'> & {
 		sleep_for?: number
 		timeout?: number
 	}, cb: () => T): T {
@@ -913,6 +920,7 @@ export class SQLiteStorage implements Storage {
 			wait_filter: step.wait_filter ?? null,
 			wait_retroactive: Number(step.wait_retroactive) ?? null,
 			wait_from: null,
+			discovered_on: step.discovered_on,
 			step: step.step
 		})
 		return cb()

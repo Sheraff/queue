@@ -40,7 +40,7 @@ export interface RegistrationContext {
 	): T | Promise<T>
 	recordStep<T>(
 		task: Task,
-		step: Pick<Step, 'step' | 'status' | 'next_status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & {
+		step: Pick<Step, 'step' | 'status' | 'next_status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs' | 'discovered_on'> & {
 			sleep_for?: number | null
 			timeout?: number | null
 		},

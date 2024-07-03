@@ -549,7 +549,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 			return syncOrPromise<void>(resolve => {
 				registrationContext.recordStep(
 					task,
-					{ step, status: 'completed', data: JSON.stringify(data), runs },
+					{ step, status: 'completed', data: JSON.stringify(data), runs, discovered_on: task.loop },
 					resolve
 				)
 			})
@@ -566,7 +566,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				if (!canRetry) {
 					return registrationContext.recordStep(
 						task,
-						{ step, status: 'failed', data: serializeError(error), runs },
+						{ step, status: 'failed', data: serializeError(error), runs, discovered_on: task.loop },
 						resolve
 					)
 				}
@@ -574,13 +574,13 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				if (!delay) {
 					return registrationContext.recordStep(
 						task,
-						{ step, status: 'pending', data: null, runs },
+						{ step, status: 'pending', data: null, runs, discovered_on: task.loop },
 						resolve
 					)
 				}
 				registrationContext.recordStep(
 					task,
-					{ step, status: 'stalled', data: null, runs, sleep_for: delay / 1000, next_status: 'pending' },
+					{ step, status: 'stalled', data: null, runs, sleep_for: delay / 1000, next_status: 'pending', discovered_on: task.loop },
 					resolve
 				)
 			})
@@ -610,7 +610,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				promises.push(new Promise<Data>(resolve =>
 					registrationContext.recordStep(
 						task,
-						{ step, status: 'running', data: null, runs },
+						{ step, status: 'running', data: null, runs, discovered_on: task.loop },
 						() => resolve(promise)
 					))
 					.then(onSuccess)
@@ -708,7 +708,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		const maybePromise = syncOrPromise<void>(resolve => {
 			registrationContext.recordStep(
 				task,
-				{ step, status, data: null, sleep_for: ms / 1000, runs: 0, next_status: 'completed' },
+				{ step, status, data: null, sleep_for: ms / 1000, runs: 0, next_status: 'completed', discovered_on: task.loop },
 				resolve
 			)
 		})
@@ -763,6 +763,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 					wait_filter: options.filter ? JSON.stringify(options.filter) : '{}', // TODO: query might be more performant if we supported the null filter case
 					runs: 0,
 					timeout,
+					discovered_on: task.loop
 				},
 				resolve
 			)

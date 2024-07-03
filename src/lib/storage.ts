@@ -113,6 +113,7 @@ export interface Storage {
 	) => T): T | Promise<T>
 	/**
 	 * Exclusive transaction to:
+	 * - resolve all step events that are waiting for a specific event to happen;
 	 * - retrieve the next task to run immediately, if none, return undefined;
 	 * - update that next task's status to 'running' (to avoid another worker picking up the same one) and set `started_at` to now (to trigger the start event);
 	 * - retrieve all steps for that task (if any);
@@ -238,6 +239,7 @@ export class SQLiteStorage implements Storage {
 			-- missing some index for "sibling" in future>throttled
 
 			-- next
+			CREATE INDEX IF NOT EXISTS ${tasksTable}_next_main ON ${tasksTable} (queue, id, status, throttle_id, throttle_duration) WHERE status IN ('pending', 'stalled');
 			CREATE INDEX IF NOT EXISTS ${tasksTable}_next_throttled_sibling ON ${tasksTable} (queue, throttle_id, started_at) WHERE throttle_id IS NOT NULL AND started_at IS NOT NULL;
 
 			-- other

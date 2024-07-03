@@ -5,7 +5,7 @@ import { Task } from "./Task"
 export function Job({ job }: { job: string }) {
 	const [task, setTask] = useState<number | null>(null)
 
-	const { data } = useQuery({
+	const { data, isFetching } = useQuery({
 		queryKey: ['jobs', job],
 		queryFn: async () => {
 			const res = await fetch(`/api/jobs/${job}`)
@@ -13,24 +13,26 @@ export function Job({ job }: { job: string }) {
 			return json as { id: number, status: string, created_at: number, input: string }[]
 		},
 		select: (data) => data.sort((a, b) => a.created_at - b.created_at),
-		refetchInterval: 1000
+		refetchInterval: 5000,
 	})
+
+	const jobData = task && data?.find(t => t.id === task)
 
 	return (
 		<>
-			<h1>{job}</h1>
+			<h1>{job}{isFetching && ' - fetching'}</h1>
 			<div style={{ display: 'flex' }}>
 				<ul>
 					{data?.map((task) => (
 						<li key={task.id}>
-							<button type="button" onClick={() => setTask(task.id)}>
+							<button type="button" onClick={() => setTask(t => t === task.id ? null : task.id)}>
 								{task.status} - {new Date(task.created_at * 1000).toLocaleString()}
 								<pre>{JSON.stringify(JSON.parse(task.input), null, 2)}</pre>
 							</button>
 						</li>
 					))}
 				</ul>
-				{task && <Task id={task} job={data?.find(t => t.id === task)} />}
+				{jobData && <Task id={task} job={jobData} />}
 			</div>
 		</>
 	)

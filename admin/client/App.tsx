@@ -20,7 +20,7 @@ function App() {
         <ul>
           {data?.map((job) => (
             <li key={job}>
-              <button type="button" onClick={() => setJob(job)}>{job}</button>
+              <button type="button" onClick={() => setJob(j => j === job ? null : job)}>{job}</button>
             </li>
           ))}
         </ul>

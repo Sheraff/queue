@@ -79,10 +79,23 @@ const server = http.createServer((req, res) => {
 
 	const task = url.pathname.match(/^\/api\/tasks\/(.+)$/)
 	if (task) {
-		res.writeHead(200, { 'Content-Type': 'application/json' })
 		const id = Number(task[1])
+		const data = db.prepare('SELECT * FROM tasks WHERE id = @id').get({ id })
+		if (!data) {
+			res.writeHead(404, { 'Content-Type': 'application/json' })
+			res.end(JSON.stringify({ error: 'not found' }, null, '\t'))
+			return
+		}
+		res.writeHead(200, { 'Content-Type': 'application/json' })
+
 		const steps = db.prepare('SELECT * FROM steps WHERE task_id = @id').all({ id })
-		res.end(JSON.stringify({ steps }, null, '\t'))
+
+		const events = db.prepare('SELECT * FROM events WHERE queue = @queue AND input = @input AND key LIKE @key').all({
+			queue: queue.id,
+			input: data.input,
+			key: `job/${data.job}/%`
+		})
+		res.end(JSON.stringify({ steps, events }, null, '\t'))
 		return
 	}
 

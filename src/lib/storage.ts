@@ -311,20 +311,20 @@ export class SQLiteStorage implements Storage {
 			sub_steps AS (
 				SELECT
 					task.id,
-					SUM(
+					MAX(
 						step.timeout_at IS NOT NULL
 						AND step.timeout_at <= unixepoch('subsec')
-					) > 0 AS step_timed_out,
-					SUM(
+					) AS step_timed_out,
+					MAX(
 						step.status = 'stalled'
 						AND step.sleep_until IS NOT NULL
 						AND (step.sleep_until > unixepoch('subsec'))
-					) > 0 AS step_sleeping,
-					SUM(
+					) AS step_sleeping,
+					MAX(
 						step.status = 'waiting'
 						AND step.wait_for IS NOT NULL
 						AND step.wait_filter IS NOT NULL
-					) > 0 AS step_waiting
+					) AS step_waiting
 				FROM queue_tasks task
 				LEFT JOIN ${stepsTable} step
 					ON step.task_id = task.id

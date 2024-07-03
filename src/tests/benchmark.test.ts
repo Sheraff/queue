@@ -160,9 +160,9 @@ test.describe('benchmark', {
 		const pollutionRatio = 2
 		for (let i = 0; i < COUNT * pollutionRatio; i++) {
 			if (i % pollutionRatio === 0)
-				queue.jobs.pollution.dispatch({ i })
-			else
 				queue.jobs.hello.dispatch({ i })
+			else
+				queue.jobs.pollution.dispatch({ i })
 		}
 
 		await new Promise((resolve) => setTimeout(resolve, 10))

@@ -546,6 +546,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		let syncError: unknown
 
 		const onSuccess = (data: Data) => {
+			registrationContext.recordEvent(`step/${task.job}/${step}/success`, task.input, JSON.stringify({ data, runs }))
 			return syncOrPromise<void>(resolve => {
 				registrationContext.recordStep(
 					task,
@@ -562,6 +563,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				if (typeof retry === 'number') canRetry = runs < retry
 				else canRetry = retry(runs, error)
 			}
+			registrationContext.recordEvent(`step/${task.job}/${step}/error`, task.input, JSON.stringify({ error: serializeError(error), runs }))
 			return syncOrPromise<void>(resolve => {
 				if (!canRetry) {
 					return registrationContext.recordStep(

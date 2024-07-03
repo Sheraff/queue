@@ -32,7 +32,7 @@ export function Job({ job }: { job: string }) {
 						</li>
 					))}
 				</ul>
-				{jobData && <Task id={task} job={jobData} />}
+				{jobData && <Task id={task} job={jobData} setJob={setTask} />}
 			</div>
 		</>
 	)

@@ -6,7 +6,7 @@ const refetch = {
 	stalled: 10000,
 }
 
-export function Task({ id, job }: { id: number, job: object }) {
+export function Task({ id, job, setJob }: { id: number, job: object, setJob: (job: number) => void }) {
 
 	const { data, isFetching } = useQuery({
 		queryKey: ['tasks', id],
@@ -21,6 +21,7 @@ export function Task({ id, job }: { id: number, job: object }) {
 	return (
 		<div>
 			<h2>Task {job.input}{isFetching && ' - fetching'}</h2>
+			{job.parent_id && <button type="button" onClick={() => setJob(job.parent_id)}>parent</button>}
 			<pre>
 				{JSON.stringify(job, null, 2)}
 			</pre>

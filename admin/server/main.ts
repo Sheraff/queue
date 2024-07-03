@@ -90,10 +90,11 @@ const server = http.createServer((req, res) => {
 
 		const steps = db.prepare('SELECT * FROM steps WHERE task_id = @id').all({ id })
 
-		const events = db.prepare('SELECT * FROM events WHERE queue = @queue AND input = @input AND key LIKE @key').all({
+		const events = db.prepare('SELECT * FROM events WHERE queue = @queue AND input = @input AND (key LIKE @job OR key LIKE @step)').all({
 			queue: queue.id,
 			input: data.input,
-			key: `job/${data.job}/%`
+			job: `job/${data.job}/%`,
+			step: `step/${data.job}/%`,
 		})
 		res.end(JSON.stringify({ steps, events }, null, '\t'))
 		return

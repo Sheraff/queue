@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "async_hooks"
 import type { Queue } from "./queue"
 import type { Pipe } from "./pipe"
-import type { CancelReason, Job, RunOptions, WaitForOptions } from "./job"
+import type { CancelReason, Job, RunOptions, ThreadOptions, WaitForOptions } from "./job"
 import type { Data, InputData } from "./types"
 import type { Step, Task } from "./storage"
 
@@ -78,6 +78,14 @@ export const registration = new AsyncLocalStorage<RegistrationContext>()
 
 export interface ExecutionContext {
 	run<Out extends Data>(options: RunOptions, fn: (utils: { signal: AbortSignal }) => Out | Promise<Out>): Promise<Out>
+	thread<
+		Out extends Data,
+		In extends Data = undefined
+	>(
+		options: ThreadOptions,
+		fn: (input: In, utils: { signal: AbortSignal }) => Out | Promise<Out>,
+		input?: In
+	): Promise<Out>
 	sleep(ms: number): Promise<void> | void
 	waitFor(instance: Job | Pipe, event: string, options: WaitForOptions<InputData>): Promise<Data> | void
 	invoke(job: Job, data: InputData, options?: Omit<WaitForOptions<InputData>, 'filter' | 'retroactive'>): Promise<Data>

@@ -1,6 +1,6 @@
 # Asynchronous Task Queue System with TypeScript
 
-*Background jobs, asynchronous queue, task scheduling, durable execution, TypeScript, event-driven orchestration, self-hosted, sqlite, human-in-the-loop*
+*Background jobs, asynchronous queue, task scheduling, durable execution, type-safe, event-driven orchestration, self-hosted, sqlite, human-in-the-loop*
 
 This project provides a flexible and efficient task queue system for managing asynchronous jobs and workflows. It is built with TypeScript and designed to handle complex job orchestration, event-driven workflows, and durable execution of tasks. The system supports parallel execution, retries, timeouts, and customizable backoff strategies, making it suitable for a wide range of applications.
 
@@ -45,8 +45,9 @@ const processSong = new Job({
   })
 
   // Extract the color palette
-  // This is CPU intensive so it's done in a separate job and throttled accordingly
-  const palette = await Job.invoke(extractPalette, { path: coverArtPath })
+  const palette = await Job.thread('extractPalette', ({ path }) => {
+    // This is a CPU-intensive operation, so we run it in a separate thread
+  }, { path: coverArtPath })
 
   // Store the song information in the database
   await Job.run('storeSong', async () => {
@@ -80,7 +81,6 @@ const musicBrainz = new Job({
 })
 
 // other jobs not shown for brevity
-const extractPalette = new Job(...) // sharp image processing throttled based on CPU
 const spotifyData = new Job(...) // fetch job throttled based on API rate limits
 const lastFmData = new Job(...) // fetch job throttled based on API rate limits
 const audioDbData = new Job(...) // fetch job throttled based on API rate limits
@@ -197,6 +197,12 @@ const complexJob = new Job({
     // ...
     return 'Sub-task completed'
   })
+
+  // Job.thread: Similar to Job.run, but runs the function in a separate thread.
+  const threadResult = await Job.thread('heavyTask', ({ arg }) => {
+    // ...
+    return 'Heavy task completed'
+  }, { arg })
 
   // Job.sleep: Pauses the job execution for a specified duration.
   await Job.sleep("1s") // Sleep for 1 second

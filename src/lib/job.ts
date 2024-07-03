@@ -5,6 +5,8 @@ import { execution, type ExecutionContext, type RegistrationContext } from "./co
 import type { Step, Task } from "./storage"
 import { getRegistrationContext, hash, hydrateError, interrupt, isInterrupt, isPromise, NonRecoverableError, serialize, serializeError, TimeoutError } from "./utils"
 import { parseDuration, parsePeriod, type Duration, type Frequency } from './ms'
+import { type ResourceLimits, SHARE_ENV, Worker } from "worker_threads"
+import { transferableAbortSignal } from "util"
 
 export type CancelReason =
 	| { type: 'timeout' }
@@ -56,6 +58,10 @@ export type RunOptions = {
 	 */
 	// TODO: concurrency
 	// ...
+}
+
+export type ThreadOptions = RunOptions & {
+	resourceLimits?: ResourceLimits
 }
 
 export type WaitForOptions<Filter extends InputData> = {
@@ -342,6 +348,14 @@ export class Job<
 		const e = getExecutionContext()
 		const opts: RunOptions = typeof optsOrId === 'string' ? { id: optsOrId } : optsOrId
 		return e.run(opts, fn)
+	}
+
+	static async thread<Out extends Data, In extends Data = undefined>(id: string, fn: (input: In, utils: { signal: AbortSignal }) => Out | Promise<Out>, input?: In): Promise<Out>
+	static async thread<Out extends Data, In extends Data = undefined>(opts: ThreadOptions, fn: (input: In, utils: { signal: AbortSignal }) => Out | Promise<Out>, input?: In): Promise<Out>
+	static async thread<Out extends Data, In extends Data = undefined>(optsOrId: string | ThreadOptions, fn: (input: In, utils: { signal: AbortSignal }) => Out | Promise<Out>, input?: In): Promise<Out> {
+		const e = getExecutionContext()
+		const opts: RunOptions = typeof optsOrId === 'string' ? { id: optsOrId } : optsOrId
+		return e.thread(opts, fn, input)
 	}
 
 	/** @public */
@@ -632,6 +646,49 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		return syncResult
 	}
 
+	const thread: ExecutionContext['thread'] = (options, fn, input) => {
+		return run(options, async ({ signal }) => {
+			const workerFn = `
+				const { parentPort, workerData } = require('worker_threads')
+				try {
+					Promise.resolve((${fn.toString()})(workerData.input, { signal: workerData.signal }))
+						.then(result => parentPort.postMessage({ result }))
+						.catch(err => parentPort.postMessage({ error: err }))
+				} catch (error) {
+					parentPort.postMessage({ error })
+				}
+			`
+			return new Promise((resolve, reject) => {
+				const transferableSignal = transferableAbortSignal(signal)
+				const worker = new Worker(workerFn, {
+					eval: true,
+					workerData: {
+						input,
+						signal: transferableSignal
+					},
+					transferList: [
+						// @ts-expect-error -- this is transferable
+						transferableSignal
+					],
+					env: SHARE_ENV,
+					name: options.id,
+					resourceLimits: options.resourceLimits
+				})
+				worker.on('message', (value) => {
+					if ('error' in value) return reject(value.error)
+					resolve(value.result)
+				})
+				worker.on('error', (err) => {
+					reject(err)
+				})
+				worker.on('exit', (code) => {
+					if (code !== 0)
+						reject(new Error(`Worker stopped with exit code ${code}`))
+				})
+			})
+		})
+	}
+
 	const sleep: ExecutionContext['sleep'] = (ms) => {
 		if (controller.signal.aborted) {
 			return Promise.reject(interrupt)
@@ -756,6 +813,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 
 	return {
 		run,
+		thread,
 		sleep,
 		waitFor,
 		dispatch,

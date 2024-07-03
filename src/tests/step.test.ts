@@ -342,3 +342,37 @@ test.describe('timeout in job step', { timeout: 500 }, () => {
 		await queue.close()
 	})
 })
+
+test('thread', async (t) => {
+	const aaa = new Job({
+		id: 'aaa',
+		input: z.object({ in: z.number() }),
+		output: z.object({ foo: z.number() })
+	}, async (input) => {
+		const foo = await Job.thread({
+			id: 'foo',
+			retry: 0,
+		}, async ({ a, b }, { signal }) => {
+			await new Promise(resolve => setTimeout(resolve, 200))
+			if (signal.aborted) throw new Error('Aborted')
+			return a + b
+		}, { a: input.in, b: 2 })
+		return { foo }
+	})
+
+	const queue = new Queue({
+		id: 'thread',
+		jobs: { aaa },
+		storage: new SQLiteStorage()
+	})
+
+	const a = invoke(queue.jobs.aaa, { in: 1 })
+	const b = invoke(queue.jobs.aaa, { in: 2 })
+
+	await new Promise(r => setTimeout(r, 10))
+	queue.jobs.aaa.cancel({ in: 2 }, { type: 'explicit' })
+
+	await assert.rejects(b, { type: 'explicit' })
+	assert.deepEqual(await a, { foo: 3 })
+
+})

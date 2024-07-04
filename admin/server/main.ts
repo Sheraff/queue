@@ -18,10 +18,24 @@ const foo = new Job({
 	id: 'foo',
 	input: z.object({ k: z.number() }),
 }, async ({ k }) => {
-	for (let i = 0; i < 10; i++) {
-		await Job.sleep("1s")
-		const a = await Job.run('some-task', async () => 3)
+	const iter = await Job.run('random-iter', () => Math.ceil(Math.random() * 10))
+	for (let i = 0; i < iter; i++) {
+		await Job.sleep("5s")
+		await Promise.all([
+			Job.run({ id: 'some-task', retry: 40, backoff: "10s" }, async () => {
+				await new Promise(resolve => setTimeout(resolve, 500))
+				if (Math.random() < 0.5) {
+					throw new Error("random error")
+				}
+				return 3
+			}),
+			Job.sleep("1s").then(() => Job.run('other-task', async () => {
+				await new Promise(resolve => setTimeout(resolve, 900))
+				return 3
+			}))
+		])
 	}
+	await Job.sleep("5s")
 	Job.dispatch(foo, { k: k + 1 })
 	return 2
 })
@@ -36,9 +50,9 @@ const queue = new Queue({
 
 queue.jobs.foo.dispatch({ k: 0 })
 
-const tasksStmt = db.prepare<{ queue: string, origin: number }, Task>('SELECT * FROM tasks WHERE queue = @queue AND updated_at > @origin')
-const stepsStmt = db.prepare<{ queue: string, origin: number }, Step>('SELECT * FROM steps WHERE queue = @queue AND updated_at > @origin')
-const eventsStmt = db.prepare<{ queue: string, origin: number }, Event>('SELECT * FROM events WHERE queue = @queue AND created_at > @origin')
+const tasksStmt = db.prepare<{ queue: string, origin: number }, Task>('SELECT * FROM tasks WHERE queue = @queue AND updated_at > @origin ORDER BY created_at ASC')
+const stepsStmt = db.prepare<{ queue: string, origin: number }, Step>('SELECT * FROM steps WHERE queue = @queue AND updated_at > @origin ORDER BY created_at ASC')
+const eventsStmt = db.prepare<{ queue: string, origin: number }, Event>('SELECT * FROM events WHERE queue = @queue AND created_at > @origin ORDER BY created_at ASC')
 const dateStmt = db.prepare<[], { date: number }>("SELECT (unixepoch('subsec')) date")
 
 const getData = (queue: Queue, origin: number) => {
@@ -72,7 +86,7 @@ const server = http.createServer((req, res) => {
 	if (job) {
 		res.writeHead(200, { 'Content-Type': 'application/json' })
 		const id = job[1]
-		const tasks = db.prepare('SELECT * FROM tasks WHERE queue = @queue AND job = @job').all({ queue: queue.id, job: id })
+		const tasks = db.prepare('SELECT * FROM tasks WHERE queue = @queue AND job = @job ORDER BY created_at ASC').all({ queue: queue.id, job: id })
 		res.end(JSON.stringify(tasks, null, '\t'))
 		return
 	}
@@ -80,7 +94,7 @@ const server = http.createServer((req, res) => {
 	const task = url.pathname.match(/^\/api\/tasks\/(.+)$/)
 	if (task) {
 		const id = Number(task[1])
-		const data = db.prepare('SELECT * FROM tasks WHERE id = @id').get({ id })
+		const data = db.prepare('SELECT * FROM tasks WHERE id = @id ORDER BY created_at ASC').get({ id })
 		if (!data) {
 			res.writeHead(404, { 'Content-Type': 'application/json' })
 			res.end(JSON.stringify({ error: 'not found' }, null, '\t'))
@@ -88,15 +102,18 @@ const server = http.createServer((req, res) => {
 		}
 		res.writeHead(200, { 'Content-Type': 'application/json' })
 
-		const steps = db.prepare('SELECT * FROM steps WHERE task_id = @id').all({ id })
+		const steps = db.prepare('SELECT * FROM steps WHERE task_id = @id ORDER BY created_at ASC').all({ id })
 
-		const events = db.prepare('SELECT * FROM events WHERE queue = @queue AND input = @input AND (key LIKE @job OR key LIKE @step)').all({
+		const events = db.prepare('SELECT * FROM events WHERE queue = @queue AND input = @input AND (key LIKE @job OR key LIKE @step) ORDER BY created_at ASC').all({
 			queue: queue.id,
 			input: data.input,
 			job: `job/${data.job}/%`,
 			step: `step/${data.job}/%`,
 		})
-		res.end(JSON.stringify({ steps, events }, null, '\t'))
+
+		const date = dateStmt.get()!.date as number
+
+		res.end(JSON.stringify({ steps, events, date }, null, '\t'))
 		return
 	}
 

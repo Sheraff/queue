@@ -609,6 +609,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 					])
 					: maybePromise
 
+				registrationContext.recordEvent(`step/${task.job}/${step}/run`, task.input, JSON.stringify({ runs }))
 				promises.push(new Promise<Data>(resolve =>
 					registrationContext.recordStep(
 						task,

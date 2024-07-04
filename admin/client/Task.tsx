@@ -45,17 +45,16 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 							const end = step.status === 'stalled' || step.status === 'waiting' || step.status === 'running' ? endDate : step.updated_at
 							const width = (end - step.created_at) / interval * 100
 							const isHovered = hoveredEvent !== null && cleanEventName(data?.events[hoveredEvent].key).startsWith(step.step)
+							const relatedEvents = data?.events.filter(event => event.key.startsWith(`step/${job.job}/${step.step}`))
 							return (
 								<div key={i} style={{
 									left: `${left}%`,
 									width: `${width}%`,
 									position: 'relative',
-									backgroundColor: isHovered ? 'pink' : step.status === 'completed' ? 'green' : step.status === 'error' ? 'red' : 'gray',
 									whiteSpace: 'nowrap',
-									padding: '0.5em 0',
 									zIndex: 1,
 								}}>
-									<span style={{ padding: '0 0.5em' }}>{step.step}</span>
+									<Step step={step} isHovered={isHovered} events={relatedEvents} start={step.created_at} end={end} />
 								</div>
 							)
 						})}
@@ -88,6 +87,38 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 					</div>
 				</div>
 			</div>
+		</div>
+	)
+}
+
+
+function Step({ step, isHovered, events, start, end }: { step: object, isHovered: boolean, events: object[] }) {
+	const types = events.map(event => event.key.split('/').pop())
+	const bgs = []
+	for (let i = 1; i <= types.length; i++) {
+		// TODO: this is kinda wrong. If we have the events [run, error, run],
+		// the interval between the first two should be red (this run had the error),
+		// and the second two should be gray (this is the backoff delay).
+		const prev = types[i - 1]
+		const event = events[i - 1]
+		const next = i === types.length ? end : events[i].created_at
+		const width = (next - event.created_at) / (end - start) * 100
+		const left = (event.created_at - start) / (end - start) * 100
+		const color = prev === 'error' ? 'red' : prev === 'run' ? 'gray' : prev === 'success' ? 'green' : 'lightgray'
+		bgs.push(
+			<div key={i} style={{ backgroundColor: color, position: 'absolute', top: 0, bottom: 0, left: `${left}%`, width: `${width}%`, zIndex: 0 }} />
+		)
+	}
+	return (
+		<div
+			style={{
+				zIndex: 0,
+				backgroundColor: isHovered ? 'pink' : step.status === 'completed' ? 'green' : step.status === 'error' ? 'red' : 'gray',
+				padding: '0.5em 0',
+			}}
+		>
+			{bgs}
+			<span style={{ padding: '0 0.5em', position: 'relative', zIndex: 1 }}>{step.step}</span>
 		</div>
 	)
 }

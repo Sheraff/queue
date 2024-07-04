@@ -293,3 +293,9 @@ const runResult = await Job.run({
 
 These options provide a flexible way to manage the execution of jobs, especially in scenarios where tasks might fail and require retries with a sensible backoff strategy.
 
+## Observability (WIP)
+
+<img width="1800" alt="Screenshot 2024-07-04 at 21 28 00" src="https://github.com/Sheraff/queue/assets/1325721/7ab8342c-761d-445e-ac96-256db5923219">
+
+
+

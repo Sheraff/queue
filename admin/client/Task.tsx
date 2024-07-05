@@ -39,6 +39,7 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 			<div style={{ display: 'flex' }}>
 				<div style={{ flex: 1 }}>
 					<h3>Steps</h3>
+					{/* TODO: long stretches of time without any event happening should be collapsed (or collapsable) */}
 					<div style={{ maxWidth: '100%', position: 'relative', zIndex: 0 }}>
 						{data?.steps.map((step, i) => {
 							const left = (step.created_at - minDate) / interval * 100

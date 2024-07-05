@@ -386,6 +386,7 @@ export class Job<
 	}
 
 	/** @public */
+	// TODO: add an option to "schedule for later" (e.g. `dispatch(foo, {}, { delay: "1h" })`)
 	static async dispatch<I extends Job | Pipe>(instance: I, data: I['in']): Promise<void> {
 		const e = getExecutionContext()
 		return e.dispatch(instance, data)

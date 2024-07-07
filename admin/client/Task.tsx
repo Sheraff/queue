@@ -59,7 +59,14 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 						{data?.events.map((event, i) => {
 							const name = cleanEventName(event.key, job)
 							return (
-								<div key={i} style={{ backgroundColor: hoveredEvent.includes(i) ? blue : 'transparent' }} onMouseEnter={() => setHoveredEvent([i])}>
+								<div
+									key={i}
+									style={{
+										backgroundColor: hoveredEvent.includes(i) ? blue : 'transparent',
+										transition: 'all 0.2s',
+									}}
+									onMouseEnter={() => setHoveredEvent([i])}
+								>
 									<span>{name}</span>
 								</div>
 							)
@@ -161,6 +168,7 @@ function Graph({
 								position: 'relative',
 								whiteSpace: 'nowrap',
 								zIndex: 1,
+								transition: 'all 0.2s',
 							}}
 							onMouseEnter={() => {
 								fullStep.current = true
@@ -196,6 +204,7 @@ function Graph({
 							bottom: 0,
 							zIndex: 0,
 							padding: `0 min(1rem, ${width / 4}%)`,
+							transition: 'all 0.2s',
 						}}>
 							<div style={{
 								backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 5px, ${borderGray} 5px, ${borderGray} 6px)`,
@@ -215,6 +224,7 @@ function Graph({
 							borderLeft: hoveredEvent.includes(i) ? `1px solid ${accent}` : `1px solid ${borderGray}`,
 							zIndex: hoveredEvent.includes(i) ? 2 : 0,
 							pointerEvents: 'none',
+							transition: 'all 0.2s',
 						}} />
 					)
 				})}
@@ -251,7 +261,16 @@ function Step({
 		const type = types[i]
 		const color = type === 'error' ? red : type === 'run' ? bgGray : type === 'success' ? green : bgGray
 		bgs.push(
-			<div key={i} style={{ backgroundColor: color, position: 'absolute', top: 0, bottom: 0, left: `${left}%`, width: `${width}%`, zIndex: 0 }} />
+			<div key={i} style={{
+				backgroundColor: color,
+				position: 'absolute',
+				top: 0,
+				bottom: 0,
+				left: `${left}%`,
+				width: `${width}%`,
+				zIndex: 0,
+				transition: 'all 0.2s',
+			}} />
 		)
 	}
 	const isSleep = step.step.startsWith('system/sleep#')
@@ -262,6 +281,7 @@ function Step({
 				backgroundColor: isSleep ? bgGray : step.status === 'completed' ? green : step.status === 'failed' ? red : bgGray,
 				color: isHovered ? accent : 'black',
 				height: 'calc(1lh + 1em)',
+				transition: 'all 0.2s',
 			}}
 		>
 			{bgs}

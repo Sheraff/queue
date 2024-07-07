@@ -1,5 +1,5 @@
 export { Queue } from './queue.js'
 export { Job } from './job.js'
 export { Pipe } from './pipe.js'
-export { type Storage, SQLiteStorage } from './storage.js'
+export { type Storage, SQLiteStorage, type Event, type Step, type Task } from './storage.js'
 export type { Data, InputData, Validator } from './types.js'

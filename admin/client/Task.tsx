@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useRef, useState } from "react"
-import type { Step, Event } from 'queue'
+import type { Step, Event, Task } from 'queue'
 import { Button } from "client/components/ui/button"
 import { Code } from "client/components/Code"
 import clsx from "clsx"
@@ -17,7 +17,7 @@ const refetch = {
 const cleanEventName = (name: string, job: { job: string }) => name.replace(new RegExp(`^job\\/${job.job}\\/`), '')
 	.replace(new RegExp(`^step\\/${job.job}\\/`), '')
 
-export function Task({ id, job, setJob }: { id: number, job: object, setJob: (job: number) => void }) {
+export function TaskPage({ id, job, setJob }: { id: number, job: Task, setJob: (job: number) => void }) {
 
 	const { data, isFetching } = useQuery({
 		queryKey: ['tasks', id],
@@ -36,7 +36,7 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 	return (
 		<div className="flex-1">
 			<h2 className="text-xl">Task {job.input}{isFetching && ' - fetching'}</h2>
-			{job.parent_id && <Button type="button" onClick={() => setJob(job.parent_id)}>parent</Button>}
+			{job.parent_id && <Button type="button" onClick={() => setJob(job.parent_id!)}>parent</Button>}
 			<Code language="json">
 				{JSON.stringify(job, null, 2)}
 			</Code>
@@ -81,7 +81,7 @@ function Graph({
 	setHoveredEvent,
 }: {
 	data: Data,
-	job: object,
+	job: Task,
 	hoveredEvent: number[],
 	setHoveredEvent: (event: number[]) => void,
 }) {
@@ -125,10 +125,8 @@ function Graph({
 	const adjustedInterval = adjustedEnd - minDate
 	const fullStep = useRef(false)
 
-	const { theme } = useTheme()
-
 	return (
-		<div className="p-4">
+		<div className="p-4" onMouseLeave={() => setHoveredEvent([])}>
 			<div
 				className="relative overflow-x-auto max-w-full z-0"
 				onMouseMove={(e) => {
@@ -174,7 +172,7 @@ function Graph({
 								fullStep.current = false
 							}}
 						>
-							<Step
+							<StepDisplay
 								step={step}
 								isHovered={isHovered}
 								events={events}
@@ -182,12 +180,11 @@ function Graph({
 								end={end}
 								adjustDate={adjustDate}
 								rtl={start > minDate + adjustedInterval * .75}
-								theme={theme}
 							/>
 						</div>
 					)
 				})}
-				{longIntervals.map(([a, b], i) => {
+				{longIntervals.map(([a], i) => {
 					const start = adjustDate(a)
 					const left = Math.max(0, (start - minDate) / adjustedInterval) * 100
 					const end = start + adjustedLongEvent
@@ -203,7 +200,7 @@ function Graph({
 							}}
 						>
 							<div
-								className={clsx("h-full", theme === 'light' ? 'text-stone-200' : 'text-stone-800')}
+								className="h-full text-stone-200 dark:text-stone-800"
 								style={{
 									backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 10px, currentColor 10px, currentColor 11px)`,
 								}}
@@ -220,8 +217,8 @@ function Graph({
 								"absolute top-0 bottom-0 transition-all pointer-events-none border-l",
 								hoveredEvent.includes(i) ? 'z-20' : 'z-0',
 								hoveredEvent.includes(i)
-									? theme === 'light' ? 'border-fuchsia-500' : 'border-fuchsia-400'
-									: theme === 'light' ? 'border-stone-200' : 'border-stone-800',
+									? 'border-fuchsia-500 dark:border-fuchsia-400'
+									: 'border-stone-200 dark:border-stone-800'
 							)}
 							style={{
 								left: `min(calc(100% - 1px), ${Math.max(0, (time - minDate) / adjustedInterval) * 100 + '%'})`,
@@ -235,7 +232,7 @@ function Graph({
 }
 
 
-function Step({
+function StepDisplay({
 	step,
 	isHovered,
 	events,
@@ -243,7 +240,6 @@ function Step({
 	end,
 	adjustDate,
 	rtl,
-	theme,
 }: {
 	step: Step,
 	isHovered: boolean,
@@ -252,7 +248,6 @@ function Step({
 	end: number,
 	adjustDate: (date: number) => number,
 	rtl: boolean,
-	theme: string,
 }) {
 	const types = events.map(event => event.key.split('/').pop())
 	const bgs = []
@@ -267,9 +262,7 @@ function Step({
 				key={i}
 				className={clsx(
 					"absolute top-0 bottom-0 transition-all z-0",
-					theme === 'light'
-						? type === 'error' ? 'bg-red-500' : type === 'run' ? 'bg-stone-100' : type === 'success' ? 'bg-emerald-600' : 'bg-stone-100'
-						: type === 'error' ? 'bg-red-800' : type === 'run' ? 'bg-stone-900' : type === 'success' ? 'bg-emerald-800' : 'bg-stone-900',
+					type === 'error' ? 'bg-red-500 dark:bg-red-800' : type === 'run' ? 'bg-stone-100 dark:bg-stone-900' : type === 'success' ? 'bg-emerald-600 dark:bg-emerald-800' : 'bg-stone-100 dark:bg-stone-900'
 				)}
 				style={{
 					left: `${left}%`,
@@ -283,10 +276,10 @@ function Step({
 		<div
 			className={clsx(
 				'z-0 transition-all',
-				isHovered && (theme === 'light' ? 'text-fuchsia-500' : 'text-fuchsia-400'),
-				theme === 'light'
-					? isSleep ? 'bg-stone-100' : step.status === 'completed' ? 'bg-emerald-600' : step.status === 'failed' ? 'bg-red-500' : 'bg-stone-100'
-					: isSleep ? 'bg-stone-900' : step.status === 'completed' ? 'bg-emerald-800' : step.status === 'failed' ? 'bg-red-800' : 'bg-stone-900',
+				isHovered && 'text-fuchsia-500 dark:text-fuchsia-400',
+				isSleep
+					? 'bg-stone-100 dark:bg-stone-900'
+					: step.status === 'completed' ? 'bg-emerald-600 dark:bg-emerald-800' : step.status === 'failed' ? 'bg-red-500 dark:bg-red-800' : 'bg-stone-100 dark:bg-stone-900'
 			)}
 			style={{
 				height: 'calc(1lh + 1em)',

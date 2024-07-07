@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { memo, useState } from "react"
-import { Task } from "./Task"
+import { TaskPage } from "./Task"
 import { Button } from "client/components/ui/button"
+import type { Task } from "queue"
 
-const MemoTask = memo(Task)
+const MemoTask = memo(TaskPage)
 
 export function Job({ job }: { job: string }) {
 	const [task, setTask] = useState<number | null>(null)
@@ -13,7 +14,7 @@ export function Job({ job }: { job: string }) {
 		queryFn: async () => {
 			const res = await fetch(`/api/jobs/${job}`)
 			const json = await res.json()
-			return json as { id: number, status: string, created_at: number, input: string }[]
+			return json as Task[]
 		},
 		select: (data) => data.sort((a, b) => a.created_at - b.created_at),
 		refetchInterval: 5000,

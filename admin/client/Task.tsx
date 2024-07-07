@@ -89,8 +89,8 @@ function Graph({
 	hoveredEvent: number[],
 	setHoveredEvent: (event: number[]) => void,
 }) {
-	const minDate = data.steps[0]?.created_at
-	const endDate = job.status in refetch ? data.date : Math.max(data.events[data.events.length - 1].created_at, data.steps[data.steps.length - 1].updated_at)
+	const minDate = job.created_at
+	const endDate = job.status in refetch ? data.date : job.updated_at
 
 	/** all event durations (in seconds) that are greater than 500ms */
 	const intervals: number[] = []
@@ -112,7 +112,13 @@ function Graph({
 		longIntervals.push([a, b])
 	}
 
-	const adjustedLongEvent = stdDev * 3
+	const withoutLong = intervals.filter((val) => val <= longDuration)
+	const sumWithoutLong = withoutLong.reduce((acc, val) => acc + val, 0)
+	const averageWithoutLong = sumWithoutLong / withoutLong.length
+	const stdDevWithoutLong = Math.sqrt(withoutLong.reduce((acc, val) => acc + (val - averageWithoutLong) ** 2, 0) / withoutLong.length)
+	const maxWithoutLong = Math.max(...withoutLong)
+
+	const adjustedLongEvent = Math.max(maxWithoutLong * 1.5, stdDevWithoutLong * 3)
 
 	function adjustDate(date: number) {
 		const before = longIntervals.filter(([, b]) => b <= date)
@@ -207,7 +213,7 @@ function Graph({
 							transition: 'all 0.2s',
 						}}>
 							<div style={{
-								backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 5px, ${borderGray} 5px, ${borderGray} 6px)`,
+								backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 10px, ${borderGray} 10px, ${borderGray} 11px)`,
 								height: '100%',
 							}} />
 						</div>
@@ -273,7 +279,7 @@ function Step({
 			}} />
 		)
 	}
-	const isSleep = step.step.startsWith('system/sleep#')
+	const isSleep = step.step.startsWith('system/sleep')
 	return (
 		<div
 			style={{

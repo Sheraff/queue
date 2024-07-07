@@ -4,7 +4,6 @@ import type { Step, Event, Task } from 'queue'
 import { Button } from "client/components/ui/button"
 import { Code } from "client/components/syntax-highlighter"
 import clsx from "clsx"
-import { useTheme } from "client/components/theme-provider"
 
 type Data = { steps: Step[], events: Event[], date: number }
 
@@ -30,8 +29,6 @@ export function TaskPage({ id, job, setJob }: { id: number, job: Task, setJob: (
 	})
 
 	const [hoveredEvent, setHoveredEvent] = useState<number[]>([])
-
-	const { theme } = useTheme()
 
 	return (
 		<div className="flex-1">
@@ -60,7 +57,7 @@ export function TaskPage({ id, job, setJob }: { id: number, job: Task, setJob: (
 							return (
 								<div
 									key={i}
-									className={clsx("transition-all, px-2 py-1", hoveredEvent.includes(i) && (theme === 'light' ? 'bg-stone-200' : 'bg-stone-800'))}
+									className={clsx("transition-all, px-2 py-1", hoveredEvent.includes(i) && 'bg-stone-200 dark:bg-stone-800')}
 									onMouseEnter={() => setHoveredEvent([i])}
 								>
 									<span>{name}</span>

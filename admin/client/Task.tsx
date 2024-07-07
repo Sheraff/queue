@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useRef, useState } from "react"
 import type { Step, Event } from 'queue'
+import { Button } from "client/components/ui/button"
 
 type Data = { steps: Step[], events: Event[], date: number }
 
@@ -36,15 +37,15 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 
 	return (
 		<div style={{ flex: 1 }}>
-			<h2>Task {job.input}{isFetching && ' - fetching'}</h2>
-			{job.parent_id && <button type="button" onClick={() => setJob(job.parent_id)}>parent</button>}
+			<h2 className="text-xl">Task {job.input}{isFetching && ' - fetching'}</h2>
+			{job.parent_id && <Button type="button" onClick={() => setJob(job.parent_id)}>parent</Button>}
 			<pre>
 				{JSON.stringify(job, null, 2)}
 			</pre>
 			<hr />
-			<div style={{ display: 'flex' }}>
+			<div className="flex">
 				<div style={{ flex: 1 }}>
-					<h3>Steps</h3>
+					<h3 className="text-lg">Steps</h3>
 					{data && <Graph
 						data={data}
 						job={job}

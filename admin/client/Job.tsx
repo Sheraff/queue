@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { memo, useState } from "react"
 import { Task } from "./Task"
+import { Button } from "client/components/ui/button"
 
 const MemoTask = memo(Task)
 
@@ -22,15 +23,15 @@ export function Job({ job }: { job: string }) {
 
 	return (
 		<>
-			<h1>{job}{isFetching && ' - fetching'}</h1>
-			<div style={{ display: 'flex' }}>
-				<ul>
+			<h1 className="text-2xl">{job}{isFetching && ' - fetching'}</h1>
+			<div className="flex gap-4">
+				<ul className="flex flex-col gap-1">
 					{data?.map((task) => (
 						<li key={task.id}>
-							<button type="button" onClick={() => setTask(t => t === task.id ? null : task.id)}>
+							<Button type="button" onClick={() => setTask(t => t === task.id ? null : task.id)}>
 								{task.status} - {new Date(task.created_at * 1000).toLocaleString()}
 								<pre>{JSON.stringify(JSON.parse(task.input), null, 2)}</pre>
-							</button>
+							</Button>
 						</li>
 					))}
 				</ul>

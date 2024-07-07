@@ -23,7 +23,14 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    /* Aliases */
+    "baseUrl": "./client",
+    "paths": {
+      "client/*": [
+        "./*"
+      ]
+    }
   },
   "include": [
     "client"

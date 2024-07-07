@@ -295,7 +295,12 @@ These options provide a flexible way to manage the execution of jobs, especially
 
 ## Observability (WIP)
 
-<img width="1800" alt="Screenshot 2024-07-04 at 21 28 00" src="https://github.com/Sheraff/queue/assets/1325721/7ab8342c-761d-445e-ac96-256db5923219">
+<img width="1128" alt="Screenshot 2024-07-08 at 01 03 25" src="https://github.com/Sheraff/queue/assets/1325721/c1817be6-0257-401d-bffb-8b08a60fb718">
+
+<img width="1210" alt="Screenshot 2024-07-08 at 01 04 06" src="https://github.com/Sheraff/queue/assets/1325721/843540f2-e814-4638-af5b-c80fbaa4f96d">
+
+
+
 
 
 

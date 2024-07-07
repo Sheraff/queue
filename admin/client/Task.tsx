@@ -4,6 +4,7 @@ import type { Step, Event } from 'queue'
 import { Button } from "client/components/ui/button"
 import { Code } from "client/components/Code"
 import clsx from "clsx"
+import { useTheme } from "client/components/theme-provider"
 
 type Data = { steps: Step[], events: Event[], date: number }
 
@@ -12,13 +13,6 @@ const refetch = {
 	running: 300,
 	stalled: 10000,
 }
-
-const red = '#ef4444'
-const green = '#86efac'
-const bgGray = '#f1f5f9'
-const borderGray = '#e2e8f0'
-const blue = '#93c5fd'
-const accent = '#c026d3'
 
 const cleanEventName = (name: string, job: { job: string }) => name.replace(new RegExp(`^job\\/${job.job}\\/`), '')
 	.replace(new RegExp(`^step\\/${job.job}\\/`), '')
@@ -129,6 +123,8 @@ function Graph({
 	const adjustedInterval = adjustedEnd - minDate
 	const fullStep = useRef(false)
 
+	const { theme } = useTheme()
+
 	return (
 		<div className="p-4">
 			<div
@@ -163,13 +159,10 @@ function Graph({
 					return (
 						<div
 							key={i}
+							className="relative z-10 transition-all whitespace-nowrap"
 							style={{
 								left: `${left}%`,
 								width: `${width}%`,
-								position: 'relative',
-								whiteSpace: 'nowrap',
-								zIndex: 1,
-								transition: 'all 0.2s',
 							}}
 							onMouseEnter={() => {
 								fullStep.current = true
@@ -187,6 +180,7 @@ function Graph({
 								end={end}
 								adjustDate={adjustDate}
 								rtl={start > minDate + adjustedInterval * .75}
+								theme={theme}
 							/>
 						</div>
 					)
@@ -197,36 +191,38 @@ function Graph({
 					const end = start + adjustedLongEvent
 					const width = (end - start) / adjustedInterval * 100
 					return (
-						<div key={i} style={{
-							left: `${left}%`,
-							width: `${width}%`,
-							position: 'absolute',
-							top: 0,
-							bottom: 0,
-							zIndex: 0,
-							padding: `0 min(1rem, ${width / 4}%)`,
-							transition: 'all 0.2s',
-						}}>
-							<div style={{
-								backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 10px, ${borderGray} 10px, ${borderGray} 11px)`,
-								height: '100%',
-							}} />
+						<div
+							key={i}
+							className="absolute z-0 top-0 bottom-0 transition-all py-0"
+							style={{
+								left: `${left}%`,
+								width: `${width}%`,
+								paddingInline: `min(1rem, ${width / 4}%)`,
+							}}
+						>
+							<div
+								className={clsx("h-full", theme === 'light' ? 'text-stone-200' : 'text-stone-800')}
+								style={{
+									backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 10px, currentColor 10px, currentColor 11px)`,
+								}}
+							/>
 						</div>
 					)
 				})}
 				{data.events.map((event, i) => {
 					const time = adjustDate(event.created_at)
 					return (
-						<div key={i} style={{
-							left: `min(calc(100% - 1px), ${Math.max(0, (time - minDate) / adjustedInterval) * 100 + '%'})`,
-							position: 'absolute',
-							top: 0,
-							bottom: 0,
-							borderLeft: hoveredEvent.includes(i) ? `1px solid ${accent}` : `1px solid ${borderGray}`,
-							zIndex: hoveredEvent.includes(i) ? 2 : 0,
-							pointerEvents: 'none',
-							transition: 'all 0.2s',
-						}} />
+						<div
+							key={i}
+							className={clsx(
+								"absolute top-0 bottom-0 transition-all pointer-events-none border-l",
+								hoveredEvent.includes(i) ? 'z-20' : 'z-0',
+								hoveredEvent.includes(i) ? 'border-fuchsia-600' : theme === 'light' ? 'border-stone-200' : 'border-stone-800',
+							)}
+							style={{
+								left: `min(calc(100% - 1px), ${Math.max(0, (time - minDate) / adjustedInterval) * 100 + '%'})`,
+							}}
+						/>
 					)
 				})}
 			</div>
@@ -243,6 +239,7 @@ function Step({
 	end,
 	adjustDate,
 	rtl,
+	theme,
 }: {
 	step: Step,
 	isHovered: boolean,
@@ -251,6 +248,7 @@ function Step({
 	end: number,
 	adjustDate: (date: number) => number,
 	rtl: boolean,
+	theme: string,
 }) {
 	const types = events.map(event => event.key.split('/').pop())
 	const bgs = []
@@ -260,40 +258,44 @@ function Step({
 		const width = (eventEnd - eventStart) / (end - start) * 100
 		const left = (eventStart - start) / (end - start) * 100
 		const type = types[i]
-		const color = type === 'error' ? red : type === 'run' ? bgGray : type === 'success' ? green : bgGray
 		bgs.push(
-			<div key={i} style={{
-				backgroundColor: color,
-				position: 'absolute',
-				top: 0,
-				bottom: 0,
-				left: `${left}%`,
-				width: `${width}%`,
-				zIndex: 0,
-				transition: 'all 0.2s',
-			}} />
+			<div
+				key={i}
+				className={clsx(
+					"absolute top-0 bottom-0 transition-all z-0",
+					theme === 'light'
+						? type === 'error' ? 'bg-red-500' : type === 'run' ? 'bg-stone-100' : type === 'success' ? 'bg-emerald-600' : 'bg-stone-100'
+						: type === 'error' ? 'bg-red-800' : type === 'run' ? 'bg-stone-900' : type === 'success' ? 'bg-emerald-800' : 'bg-stone-900',
+				)}
+				style={{
+					left: `${left}%`,
+					width: `${width}%`,
+				}}
+			/>
 		)
 	}
 	const isSleep = step.step.startsWith('system/sleep')
 	return (
 		<div
+			className={clsx(
+				'z-0 transition-all',
+				isHovered && 'text-fuchsia-600',
+				theme === 'light'
+					? isSleep ? 'bg-stone-100' : step.status === 'completed' ? 'bg-emerald-600' : step.status === 'failed' ? 'bg-red-500' : 'bg-stone-100'
+					: isSleep ? 'bg-stone-900' : step.status === 'completed' ? 'bg-emerald-800' : step.status === 'failed' ? 'bg-red-800' : 'bg-stone-900',
+			)}
 			style={{
-				zIndex: 0,
-				backgroundColor: isSleep ? bgGray : step.status === 'completed' ? green : step.status === 'failed' ? red : bgGray,
-				color: isHovered ? accent : 'black',
 				height: 'calc(1lh + 1em)',
-				transition: 'all 0.2s',
 			}}
 		>
 			{bgs}
-			<span style={{
-				display: 'block',
-				top: '0.5em',
-				whiteSpace: 'pre',
-				position: 'relative',
-				zIndex: 1,
-				direction: rtl ? 'rtl' : 'ltr',
-			}}>
+			<span
+				className="relative block z-10 whitespace-pre"
+				style={{
+					top: '0.5em',
+					direction: rtl ? 'rtl' : 'ltr',
+				}}
+			>
 				{` ${step.step} `}
 			</span>
 		</div>

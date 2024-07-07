@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { useRef, useState } from "react"
+import { Fragment, useRef, useState } from "react"
 import type { Step, Event, Task } from 'queue'
 import { Button } from "client/components/ui/button"
 import { Code } from "client/components/syntax-highlighter"
@@ -154,31 +154,35 @@ function Graph({
 					const isHovered = Boolean(hoveredEvent.length) && hoveredEvent.some(i => cleanEventName(data.events[i].key, job).startsWith(step.step))
 					const events = data.events.filter((event) => event.key.startsWith(`step/${job.job}/${step.step}`))
 					return (
-						<div
-							key={i}
-							className="relative z-10 transition-all whitespace-nowrap"
-							style={{
-								left: `${left}%`,
-								width: `${width}%`,
-							}}
-							onMouseEnter={() => {
-								fullStep.current = true
-								setHoveredEvent(events.map((event) => data.events.indexOf(event)))
-							}}
-							onMouseLeave={() => {
-								fullStep.current = false
-							}}
-						>
-							<StepDisplay
-								step={step}
-								isHovered={isHovered}
-								events={events}
-								start={start}
-								end={end}
-								adjustDate={adjustDate}
-								rtl={start > minDate + adjustedInterval * .75}
-							/>
-						</div>
+						<Fragment key={i}>
+							{i > 0 && step.discovered_on !== data.steps[i - 1].discovered_on && (
+								<div className="relative w-full h-px my-2 z-0 bg-stone-200 dark:bg-stone-800" />
+							)}
+							<div
+								className="relative z-10 transition-all whitespace-nowrap my-1"
+								style={{
+									left: `${left}%`,
+									width: `${width}%`,
+								}}
+								onMouseEnter={() => {
+									fullStep.current = true
+									setHoveredEvent(events.map((event) => data.events.indexOf(event)))
+								}}
+								onMouseLeave={() => {
+									fullStep.current = false
+								}}
+							>
+								<StepDisplay
+									step={step}
+									isHovered={isHovered}
+									events={events}
+									start={start}
+									end={end}
+									adjustDate={adjustDate}
+									rtl={start > minDate + adjustedInterval * .75}
+								/>
+							</div>
+						</Fragment>
 					)
 				})}
 				{longIntervals.map(([a], i) => {

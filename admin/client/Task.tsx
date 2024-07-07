@@ -31,6 +31,8 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 
 	const [hoveredEvent, setHoveredEvent] = useState<number[]>([])
 
+	const { theme } = useTheme()
+
 	return (
 		<div className="flex-1">
 			<h2 className="text-xl">Task {job.input}{isFetching && ' - fetching'}</h2>
@@ -51,14 +53,14 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 				</div>
 
 				<div className="max-w-[25vw]">
-					<h3>Events</h3>
+					<h3 className="text-lg">Events</h3>
 					<div onMouseLeave={() => setHoveredEvent([])}>
 						{data?.events.map((event, i) => {
 							const name = cleanEventName(event.key, job)
 							return (
 								<div
 									key={i}
-									className={clsx("transition-all, px-2 py-1", hoveredEvent.includes(i) && 'bg-stone-200')}
+									className={clsx("transition-all, px-2 py-1", hoveredEvent.includes(i) && (theme === 'light' ? 'bg-stone-200' : 'bg-stone-800'))}
 									onMouseEnter={() => setHoveredEvent([i])}
 								>
 									<span>{name}</span>
@@ -217,7 +219,9 @@ function Graph({
 							className={clsx(
 								"absolute top-0 bottom-0 transition-all pointer-events-none border-l",
 								hoveredEvent.includes(i) ? 'z-20' : 'z-0',
-								hoveredEvent.includes(i) ? 'border-fuchsia-600' : theme === 'light' ? 'border-stone-200' : 'border-stone-800',
+								hoveredEvent.includes(i)
+									? theme === 'light' ? 'border-fuchsia-500' : 'border-fuchsia-400'
+									: theme === 'light' ? 'border-stone-200' : 'border-stone-800',
 							)}
 							style={{
 								left: `min(calc(100% - 1px), ${Math.max(0, (time - minDate) / adjustedInterval) * 100 + '%'})`,
@@ -279,7 +283,7 @@ function Step({
 		<div
 			className={clsx(
 				'z-0 transition-all',
-				isHovered && 'text-fuchsia-600',
+				isHovered && (theme === 'light' ? 'text-fuchsia-500' : 'text-fuchsia-400'),
 				theme === 'light'
 					? isSleep ? 'bg-stone-100' : step.status === 'completed' ? 'bg-emerald-600' : step.status === 'failed' ? 'bg-red-500' : 'bg-stone-100'
 					: isSleep ? 'bg-stone-900' : step.status === 'completed' ? 'bg-emerald-800' : step.status === 'failed' ? 'bg-red-800' : 'bg-stone-900',

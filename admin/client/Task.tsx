@@ -8,7 +8,7 @@ import { useTheme } from "client/components/theme-provider"
 
 type Data = { steps: Step[], events: Event[], date: number }
 
-const refetch = {
+const refetch: Record<string, number> = {
 	pending: 2000,
 	running: 300,
 	stalled: 10000,

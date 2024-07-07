@@ -50,9 +50,13 @@ export const columns: ColumnDef<Task>[] = [
 		),
 		cell: ({ getValue }) => {
 			const raw = JSON.parse(getValue() as string)
-			const lines = JSON.stringify(raw, null, 2).split('\n')
+			let lines = JSON.stringify(raw, null, 2).split('\n')
 			lines.pop()
 			lines.shift()
+			if (lines.length > 5) {
+				lines = lines.slice(0, 5)
+				lines.push('  ...')
+			}
 			const str = lines.map(l => l.slice(2)).join('\n')
 
 

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import type { Step, Event } from 'queue'
 
 type Data = { steps: Step[], events: Event[], date: number }
@@ -32,7 +32,7 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 		refetchInterval: refetch[job.status] ?? false
 	})
 
-	const [hoveredEvent, setHoveredEvent] = useState<number | null>(null)
+	const [hoveredEvent, setHoveredEvent] = useState<number[]>([])
 
 	return (
 		<div style={{ flex: 1 }}>
@@ -45,16 +45,21 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 			<div style={{ display: 'flex' }}>
 				<div style={{ flex: 1 }}>
 					<h3>Steps</h3>
-					{data && <Graph data={data} job={job} hoveredEvent={hoveredEvent} />}
+					{data && <Graph
+						data={data}
+						job={job}
+						hoveredEvent={hoveredEvent}
+						setHoveredEvent={setHoveredEvent}
+					/>}
 				</div>
 
 				<div style={{ maxWidth: '25vw' }}>
 					<h3>Events</h3>
-					<div onMouseLeave={() => setHoveredEvent(null)}>
+					<div onMouseLeave={() => setHoveredEvent([])}>
 						{data?.events.map((event, i) => {
 							const name = cleanEventName(event.key, job)
 							return (
-								<div key={i} style={{ backgroundColor: i === hoveredEvent ? blue : 'transparent' }} onMouseEnter={() => setHoveredEvent(i)}>
+								<div key={i} style={{ backgroundColor: hoveredEvent.includes(i) ? blue : 'transparent' }} onMouseEnter={() => setHoveredEvent([i])}>
 									<span>{name}</span>
 								</div>
 							)
@@ -66,7 +71,17 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 	)
 }
 
-function Graph({ data, job, hoveredEvent }: { data: Data, job: object, hoveredEvent: number | null }) {
+function Graph({
+	data,
+	job,
+	hoveredEvent,
+	setHoveredEvent,
+}: {
+	data: Data,
+	job: object,
+	hoveredEvent: number[],
+	setHoveredEvent: (event: number[]) => void,
+}) {
 	const minDate = data.steps[0]?.created_at
 	const endDate = job.status in refetch ? data.date : Math.max(data.events[data.events.length - 1].created_at, data.steps[data.steps.length - 1].updated_at)
 
@@ -99,29 +114,62 @@ function Graph({ data, job, hoveredEvent }: { data: Data, job: object, hoveredEv
 
 	const adjustedEnd = adjustDate(endDate)
 	const adjustedInterval = adjustedEnd - minDate
+	const fullStep = useRef(false)
 
 	return (
 		<div style={{ padding: '1em' }}>
-			<div style={{ maxWidth: '100%', position: 'relative', zIndex: 0, overflowX: 'auto' }}>
+			<div
+				style={{
+					maxWidth: '100%',
+					position: 'relative',
+					zIndex: 0,
+					overflowX: 'auto',
+				}}
+				onMouseMove={(e) => {
+					if (fullStep.current) return
+					const x = e.clientX
+					const left = e.currentTarget.getBoundingClientRect().left
+					const width = e.currentTarget.getBoundingClientRect().width
+					const time = minDate + adjustedInterval * ((x - left) / width)
+					let min = Infinity
+					let i = -1
+					for (let j = 0; j < data.events.length; j++) {
+						const event = data.events[j]
+						const diff = Math.abs(time - event.created_at)
+						if (diff < min) {
+							min = diff
+							i = j
+						}
+					}
+					if (i === -1) return setHoveredEvent([])
+					setHoveredEvent([i])
+				}}
+			>
 				{data.steps.map((step, i) => {
 					const start = adjustDate(step.created_at)
 					const left = (start - minDate) / adjustedInterval * 100
 					const end = adjustDate(step.status === 'stalled' || step.status === 'waiting' || step.status === 'running' ? endDate : step.updated_at)
 					const width = (end - start) / adjustedInterval * 100
-					const isHovered = hoveredEvent !== null && cleanEventName(data.events[hoveredEvent].key, job).startsWith(step.step)
-					const events = data.events.reduce((acc, event, i) => {
-						if (!event.key.startsWith(`step/${job.job}/${step.step}`)) return acc
-						acc.push(event)
-						return acc
-					}, [] as Event[])
+					const isHovered = Boolean(hoveredEvent.length) && hoveredEvent.some(i => cleanEventName(data.events[i].key, job).startsWith(step.step))
+					const events = data.events.filter((event) => event.key.startsWith(`step/${job.job}/${step.step}`))
 					return (
-						<div key={i} style={{
-							left: `${left}%`,
-							width: `${width}%`,
-							position: 'relative',
-							whiteSpace: 'nowrap',
-							zIndex: 1,
-						}}>
+						<div
+							key={i}
+							style={{
+								left: `${left}%`,
+								width: `${width}%`,
+								position: 'relative',
+								whiteSpace: 'nowrap',
+								zIndex: 1,
+							}}
+							onMouseEnter={() => {
+								fullStep.current = true
+								setHoveredEvent(events.map((event) => data.events.indexOf(event)))
+							}}
+							onMouseLeave={() => {
+								fullStep.current = false
+							}}
+						>
 							<Step
 								step={step}
 								isHovered={isHovered}
@@ -164,8 +212,9 @@ function Graph({ data, job, hoveredEvent }: { data: Data, job: object, hoveredEv
 							position: 'absolute',
 							top: 0,
 							bottom: 0,
-							borderLeft: hoveredEvent === i ? `1px solid ${accent}` : `1px solid ${borderGray}`,
-							zIndex: hoveredEvent === i ? 2 : 0
+							borderLeft: hoveredEvent.includes(i) ? `1px solid ${accent}` : `1px solid ${borderGray}`,
+							zIndex: hoveredEvent.includes(i) ? 2 : 0,
+							pointerEvents: 'none',
 						}} />
 					)
 				})}

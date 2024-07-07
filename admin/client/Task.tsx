@@ -287,7 +287,7 @@ function StepDisplay({
 		>
 			{bgs}
 			<span
-				className="relative block z-10 whitespace-pre"
+				className="relative block z-10 whitespace-pre bg-stone-100/20 dark:bg-stone-900/20"
 				style={{
 					top: '0.5em',
 					direction: rtl ? 'rtl' : 'ltr',

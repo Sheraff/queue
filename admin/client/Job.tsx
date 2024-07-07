@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { memo, useState } from "react"
 import { Task } from "./Task"
+
+const MemoTask = memo(Task)
 
 export function Job({ job }: { job: string }) {
 	const [task, setTask] = useState<number | null>(null)
@@ -32,7 +34,7 @@ export function Job({ job }: { job: string }) {
 						</li>
 					))}
 				</ul>
-				{jobData && <Task id={task} job={jobData} setJob={setTask} />}
+				{jobData && <MemoTask id={task} job={jobData} setJob={setTask} />}
 			</div>
 		</>
 	)

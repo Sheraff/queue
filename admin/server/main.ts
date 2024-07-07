@@ -20,7 +20,7 @@ const foo = new Job({
 }, async ({ k }) => {
 	const iter = await Job.run('random-iter', () => Math.ceil(Math.random() * 10))
 	for (let i = 0; i < iter; i++) {
-		await Job.sleep("5s")
+		await Job.sleep(Math.random() * 8_000 + 2_000)
 		await Promise.all([
 			Job.run({ id: 'some-task', retry: 40, backoff: "10s" }, async () => {
 				await new Promise(resolve => setTimeout(resolve, 500))
@@ -30,7 +30,7 @@ const foo = new Job({
 				return 3
 			}),
 			Job.sleep("1s").then(() => Job.run('other-task', async () => {
-				await new Promise(resolve => setTimeout(resolve, 900))
+				await new Promise(resolve => setTimeout(resolve, Math.random() * 500 + 500))
 				return 3
 			}))
 		])

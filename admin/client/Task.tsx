@@ -68,7 +68,7 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 
 function Graph({ data, job, hoveredEvent }: { data: Data, job: object, hoveredEvent: number | null }) {
 	const minDate = data.steps[0]?.created_at
-	const endDate = job.status in refetch ? data.date : data.events[data.events.length - 1].created_at
+	const endDate = job.status in refetch ? data.date : Math.max(data.events[data.events.length - 1].created_at, data.steps[data.steps.length - 1].updated_at)
 
 	/** all event durations (in seconds) that are greater than 500ms */
 	const intervals: number[] = []
@@ -102,7 +102,7 @@ function Graph({ data, job, hoveredEvent }: { data: Data, job: object, hoveredEv
 
 	return (
 		<div style={{ padding: '1em' }}>
-			<div style={{ maxWidth: '100%', position: 'relative', zIndex: 0, overflow: 'hidden' }}>
+			<div style={{ maxWidth: '100%', position: 'relative', zIndex: 0, overflowX: 'auto' }}>
 				{data.steps.map((step, i) => {
 					const start = adjustDate(step.created_at)
 					const left = (start - minDate) / adjustedInterval * 100

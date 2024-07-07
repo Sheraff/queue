@@ -51,7 +51,7 @@ export function TaskPage({ id, job, setJob }: { id: number, job: Task, setJob: (
 
 				<div className="max-w-[25vw]">
 					<h3 className="text-lg">Events</h3>
-					<div onMouseLeave={() => setHoveredEvent([])}>
+					<div onMouseLeave={() => setHoveredEvent([])} className="py-4">
 						{data?.events.map((event, i) => {
 							const name = cleanEventName(event.key, job)
 							return (

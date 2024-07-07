@@ -79,7 +79,8 @@ function Graph({ data, job, hoveredEvent }: { data: Data, job: object, hoveredEv
 		intervals.push(end - start)
 	}
 	const average = intervals.reduce((acc, val) => acc + val, 0) / intervals.length
-	const longDuration = average * 2
+	const stdDev = Math.sqrt(intervals.reduce((acc, val) => acc + (val - average) ** 2, 0) / intervals.length)
+	const longDuration = stdDev * 3
 
 	const longIntervals: [number, number][] = []
 	for (let i = 0; i < data.events.length - 1; i++) {
@@ -89,7 +90,7 @@ function Graph({ data, job, hoveredEvent }: { data: Data, job: object, hoveredEv
 		longIntervals.push([a, b])
 	}
 
-	const adjustedLongEvent = average * 2
+	const adjustedLongEvent = stdDev * 3
 
 	function adjustDate(date: number) {
 		const before = longIntervals.filter(([, b]) => b <= date)

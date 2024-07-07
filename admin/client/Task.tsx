@@ -162,30 +162,29 @@ function Graph({ data, job, hoveredEvent }: { data: Data, job: object, hoveredEv
 function Step({ step, isHovered, events, start, end, adjustDate }: { step: Step, isHovered: boolean, events: Event[], start: number, end: number, adjustDate: (date: number) => number }) {
 	const types = events.map(event => event.key.split('/').pop())
 	const bgs = []
-	for (let i = 0; i < types.length; i++) {
-		// TODO: this is kinda wrong. If we have the events [run, error, run],
-		// the interval between the first two should be red (this run had the error),
-		// and the second two should be gray (this is the backoff delay).
-		const prev = types[i]
-		const event = events[i]
-		const eventStart = adjustDate(event.created_at)
-		const eventEnd = adjustDate(i === types.length - 1 ? end : events[i + 1].created_at)
+	for (let i = 1; i <= types.length; i++) {
+		const eventStart = adjustDate(events[i - 1].created_at)
+		const eventEnd = adjustDate(i === types.length ? end : events[i].created_at)
 		const width = (eventEnd - eventStart) / (end - start) * 100
 		const left = (eventStart - start) / (end - start) * 100
-		const color = prev === 'error' ? 'red' : prev === 'run' ? 'gray' : prev === 'success' ? 'green' : 'lightgray'
+		const type = types[i]
+		const color = type === 'error' ? 'red' : type === 'run' ? 'gray' : type === 'success' ? 'green' : 'lightgray'
 		bgs.push(
 			<div key={i} style={{ backgroundColor: color, position: 'absolute', top: 0, bottom: 0, left: `${left}%`, width: `${width}%`, zIndex: 0 }} />
 		)
 	}
+	const isSleep = step.step.startsWith('system/sleep#')
 	return (
 		<div
 			style={{
 				zIndex: 0,
-				backgroundColor: isHovered ? 'pink' : step.status === 'completed' ? 'green' : step.status === 'failed' ? 'red' : 'gray',
+				backgroundColor: isHovered ? 'pink' : isSleep ? 'gray' : step.status === 'completed' ? 'green' : step.status === 'failed' ? 'red' : 'gray',
 				padding: '0.5em 0',
+				color: isHovered ? 'magenta' : 'black',
 			}}
 		>
 			{bgs}
+			{/* TODO: positioning should be adjusted to not overflow the graph box */}
 			<span style={{ padding: '0 0.5em', position: 'relative', zIndex: 1 }}>{step.step}</span>
 		</div>
 	)

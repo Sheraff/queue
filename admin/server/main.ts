@@ -16,8 +16,13 @@ type Event = object
 
 const foo = new Job({
 	id: 'foo',
-	input: z.object({ k: z.number() }),
-}, async ({ k }) => {
+	input: z.object({
+		k: z.number(),
+		date: z.string().datetime(),
+		parity: z.boolean().optional(),
+	}),
+	priority: () => Math.floor(Math.random() * 10),
+}, async ({ k, parity }) => {
 	const iter = await Job.run('random-iter', () => Math.ceil(Math.random() * 10))
 	for (let i = 0; i < iter; i++) {
 		await Job.sleep(Math.random() * 8_000 + 2_000)
@@ -36,7 +41,10 @@ const foo = new Job({
 		])
 	}
 	await Job.sleep("5s")
-	Job.dispatch(foo, { k: k + 1 })
+	if (parity) {
+		Job.dispatch(foo, { k: k + 1, date: new Date().toISOString(), parity: false })
+		Job.dispatch(foo, { k: k + 1, date: new Date().toISOString(), parity: true })
+	}
 	return 2
 })
 
@@ -48,7 +56,7 @@ const queue = new Queue({
 	jobs: { foo }
 })
 
-queue.jobs.foo.dispatch({ k: 0 })
+queue.jobs.foo.dispatch({ k: 0, date: new Date().toISOString(), parity: true })
 
 const tasksStmt = db.prepare<{ queue: string, origin: number }, Task>('SELECT * FROM tasks WHERE queue = @queue AND updated_at > @origin ORDER BY created_at ASC')
 const stepsStmt = db.prepare<{ queue: string, origin: number }, Step>('SELECT * FROM steps WHERE queue = @queue AND updated_at > @origin ORDER BY created_at ASC')

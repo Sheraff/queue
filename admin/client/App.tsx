@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { Job } from "./Job"
 import { Button } from "client/components/ui/button"
+import { ModeToggle } from "client/components/mode-toggle"
 
 
 function App() {
@@ -18,7 +19,7 @@ function App() {
 
   return (
     <>
-      <nav>
+      <nav className="flex p-2">
         <ul className="flex gap-1">
           {data?.map((job) => (
             <li key={job}>
@@ -26,6 +27,8 @@ function App() {
             </li>
           ))}
         </ul>
+        <div className="flex-1" />
+        <ModeToggle />
       </nav>
       {job && <Job job={job} />}
     </>

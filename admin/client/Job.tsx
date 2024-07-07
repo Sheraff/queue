@@ -23,8 +23,8 @@ export function Job({ job }: { job: string }) {
 
 	return (
 		<>
-			<h1 className="text-2xl">{job}{isFetching && ' - fetching'}</h1>
-			<div className="flex gap-4">
+			<h1 className="text-2xl px-2">{job}{isFetching && ' - fetching'}</h1>
+			<div className="flex gap-4 p-2">
 				<ul className="flex flex-col gap-1">
 					{data?.map((task) => (
 						<li key={task.id}>

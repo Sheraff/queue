@@ -126,7 +126,7 @@ function Graph({
 	const fullStep = useRef(false)
 
 	return (
-		<div className="p-4" onMouseLeave={() => setHoveredEvent([])}>
+		<div className="py-4" onMouseLeave={() => setHoveredEvent([])}>
 			<div
 				className="relative overflow-x-auto max-w-full z-0"
 				onMouseMove={(e) => {
@@ -139,7 +139,7 @@ function Graph({
 					let i = -1
 					for (let j = 0; j < data.events.length; j++) {
 						const event = data.events[j]
-						const diff = Math.abs(time - event.created_at)
+						const diff = Math.abs(time - adjustDate(event.created_at))
 						if (diff < min) {
 							min = diff
 							i = j

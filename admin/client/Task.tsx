@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useRef, useState } from "react"
 import type { Step, Event, Task } from 'queue'
 import { Button } from "client/components/ui/button"
-import { Code } from "client/components/Code"
+import { Code } from "client/components/syntax-highlighter"
 import clsx from "clsx"
 import { useTheme } from "client/components/theme-provider"
 

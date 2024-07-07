@@ -1,76 +1,378 @@
 @tailwind base;
-  @tailwind components;
-  @tailwind utilities;
+@tailwind components;
+@tailwind utilities;
 
-  @layer base {
-    :root {
-      --background: 0 0% 100%;
-      --foreground: 20 14.3% 4.1%;
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 20 14.3% 4.1%;
 
-      --card: 0 0% 100%;
-      --card-foreground: 20 14.3% 4.1%;
+    --card: 0 0% 100%;
+    --card-foreground: 20 14.3% 4.1%;
 
-      --popover: 0 0% 100%;
-      --popover-foreground: 20 14.3% 4.1%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 20 14.3% 4.1%;
 
-      --primary: 24 9.8% 10%;
-      --primary-foreground: 60 9.1% 97.8%;
+    --primary: 24 9.8% 10%;
+    --primary-foreground: 60 9.1% 97.8%;
 
-      --secondary: 60 4.8% 95.9%;
-      --secondary-foreground: 24 9.8% 10%;
+    --secondary: 60 4.8% 95.9%;
+    --secondary-foreground: 24 9.8% 10%;
 
-      --muted: 60 4.8% 95.9%;
-      --muted-foreground: 25 5.3% 44.7%;
+    --muted: 60 4.8% 95.9%;
+    --muted-foreground: 25 5.3% 44.7%;
 
-      --accent: 60 4.8% 95.9%;
-      --accent-foreground: 24 9.8% 10%;
+    --accent: 60 4.8% 95.9%;
+    --accent-foreground: 24 9.8% 10%;
 
-      --destructive: 0 84.2% 60.2%;
-      --destructive-foreground: 60 9.1% 97.8%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 60 9.1% 97.8%;
 
-      --border: 20 5.9% 90%;
-      --input: 20 5.9% 90%;
-      --ring: 20 14.3% 4.1%;
+    --border: 20 5.9% 90%;
+    --input: 20 5.9% 90%;
+    --ring: 20 14.3% 4.1%;
 
-      --radius: 0.5rem;
-    }
-
-    .dark {
-      --background: 20 14.3% 4.1%;
-      --foreground: 60 9.1% 97.8%;
-
-      --card: 20 14.3% 4.1%;
-      --card-foreground: 60 9.1% 97.8%;
-
-      --popover: 20 14.3% 4.1%;
-      --popover-foreground: 60 9.1% 97.8%;
-
-      --primary: 60 9.1% 97.8%;
-      --primary-foreground: 24 9.8% 10%;
-
-      --secondary: 12 6.5% 15.1%;
-      --secondary-foreground: 60 9.1% 97.8%;
-
-      --muted: 12 6.5% 15.1%;
-      --muted-foreground: 24 5.4% 63.9%;
-
-      --accent: 12 6.5% 15.1%;
-      --accent-foreground: 60 9.1% 97.8%;
-
-      --destructive: 0 62.8% 30.6%;
-      --destructive-foreground: 60 9.1% 97.8%;
-
-      --border: 12 6.5% 15.1%;
-      --input: 12 6.5% 15.1%;
-      --ring: 24 5.7% 82.9%;
-    }
+    --radius: 0.5rem;
   }
 
-  @layer base {
-    * {
-      @apply border-border;
+  .dark {
+    --background: 20 14.3% 4.1%;
+    --foreground: 60 9.1% 97.8%;
+
+    --card: 20 14.3% 4.1%;
+    --card-foreground: 60 9.1% 97.8%;
+
+    --popover: 20 14.3% 4.1%;
+    --popover-foreground: 60 9.1% 97.8%;
+
+    --primary: 60 9.1% 97.8%;
+    --primary-foreground: 24 9.8% 10%;
+
+    --secondary: 12 6.5% 15.1%;
+    --secondary-foreground: 60 9.1% 97.8%;
+
+    --muted: 12 6.5% 15.1%;
+    --muted-foreground: 24 5.4% 63.9%;
+
+    --accent: 12 6.5% 15.1%;
+    --accent-foreground: 60 9.1% 97.8%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 60 9.1% 97.8%;
+
+    --border: 12 6.5% 15.1%;
+    --input: 12 6.5% 15.1%;
+    --ring: 24 5.7% 82.9%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  .hljs-comment {
+    @apply text-stone-400;
+  }
+
+  .hljs-quote {
+    @apply text-stone-400;
+  }
+
+  .hljs-variable {
+    @apply text-red-600;
+  }
+
+  .hljs-template-variable {
+    @apply text-red-600;
+  }
+
+  .hljs-tag {
+    @apply text-red-600;
+  }
+
+  .hljs-name {
+    @apply text-red-600;
+  }
+
+  .hljs-selector-id {
+    @apply text-red-600;
+  }
+
+  .hljs-selector-class {
+    @apply text-red-600;
+  }
+
+  .hljs-regexp {
+    @apply text-red-600;
+  }
+
+  .hljs-deletion {
+    @apply text-red-600;
+  }
+
+  .hljs-number {
+    @apply text-orange-500;
+  }
+
+  .hljs-built_in {
+    @apply text-orange-500;
+  }
+
+  .hljs-builtin-name {
+    @apply text-orange-500;
+  }
+
+  .hljs-literal {
+    @apply text-orange-500;
+  }
+
+  .hljs-type {
+    @apply text-orange-500;
+  }
+
+  .hljs-params {
+    @apply text-orange-500;
+  }
+
+  .hljs-meta {
+    @apply text-orange-500;
+  }
+
+  .hljs-link {
+    @apply text-orange-500;
+  }
+
+  .hljs-attribute {
+    @apply text-yellow-500;
+  }
+
+  .hljs-string {
+    @apply text-lime-600;
+  }
+
+  .hljs-symbol {
+    @apply text-lime-600;
+  }
+
+  .hljs-bullet {
+    @apply text-lime-600;
+  }
+
+  .hljs-addition {
+    @apply text-lime-600;
+  }
+
+  .hljs-title {
+    @apply text-slate-500;
+  }
+
+  .hljs-section {
+    @apply text-slate-500;
+  }
+
+  .hljs-keyword {
+    @apply text-fuchsia-600;
+  }
+
+  .hljs-selector-tag {
+    @apply text-fuchsia-600;
+  }
+
+  .hljs {
+    @apply block overflow-x-auto p-4 text-neutral-600;
+  }
+
+  .hljs-emphasis {
+    @apply italic;
+  }
+
+  .hljs-strong {
+    @apply font-bold;
+  }
+
+  .dark {
+    .hljs {
+      @apply block overflow-x-auto p-4 text-zinc-200;
     }
-    body {
-      @apply bg-background text-foreground;
+
+    .hljs-keyword {
+      @apply text-purple-400 italic;
+    }
+
+    .hljs-built_in {
+      @apply text-lime-300 italic;
+    }
+
+    .hljs-type {
+      @apply text-indigo-400;
+    }
+
+    .hljs-literal {
+      @apply text-rose-500;
+    }
+
+    .hljs-number {
+      @apply text-red-400;
+    }
+
+    .hljs-regexp {
+      @apply text-blue-400;
+    }
+
+    .hljs-string {
+      @apply text-orange-300;
+    }
+
+    .hljs-subst {
+      @apply text-red-500;
+    }
+
+    .hljs-symbol {
+      @apply text-indigo-400;
+    }
+
+    .hljs-class {
+      @apply text-amber-200;
+    }
+
+    .hljs-function {
+      @apply text-blue-300;
+    }
+
+    .hljs-title {
+      @apply text-lime-200;
+      @apply italic;
+    }
+
+    .hljs-params {
+      @apply text-emerald-300;
+    }
+
+    .hljs-comment {
+      @apply text-gray-500;
+      @apply italic;
+    }
+
+    .hljs-doctag {
+      @apply text-emerald-300;
+    }
+
+    .hljs-meta {
+      @apply text-indigo-400;
+    }
+
+    .hljs-meta-keyword {
+      @apply text-indigo-400;
+    }
+
+    .hljs-meta-string {
+      @apply text-orange-300;
+    }
+
+    .hljs-section {
+      @apply text-blue-400;
+    }
+
+    .hljs-tag {
+      @apply text-emerald-300;
+    }
+
+    .hljs-name {
+      @apply text-emerald-300;
+    }
+
+    .hljs-builtin-name {
+      @apply text-emerald-300;
+    }
+
+    .hljs-attr {
+      @apply text-emerald-300;
+    }
+
+    .hljs-attribute {
+      @apply text-emerald-200;
+    }
+
+    .hljs-variable {
+      @apply text-lime-300;
+    }
+
+    .hljs-bullet {
+      @apply text-emerald-100;
+    }
+
+    .hljs-code {
+      @apply text-emerald-300;
+    }
+
+    .hljs-emphasis {
+      @apply text-purple-400;
+      @apply italic;
+    }
+
+    .hljs-strong {
+      @apply text-lime-300 font-bold;
+    }
+
+    .hljs-formula {
+      @apply text-purple-400;
+    }
+
+    .hljs-link {
+      @apply text-rose-400;
+    }
+
+    .hljs-quote {
+      @apply text-slate-500;
+      @apply italic;
+    }
+
+    .hljs-selector-tag {
+      @apply text-red-400;
+    }
+
+    .hljs-selector-id {
+      @apply text-amber-400;
+    }
+
+    .hljs-selector-class {
+      @apply text-lime-300;
+      @apply italic;
+    }
+
+    .hljs-selector-attr {
+      @apply text-purple-400;
+      @apply italic;
+    }
+
+    .hljs-selector-pseudo {
+      @apply text-purple-400;
+      @apply italic;
+    }
+
+    .hljs-template-tag {
+      @apply text-purple-400;
+    }
+
+    .hljs-template-variable {
+      @apply text-lime-300;
+    }
+
+    .hljs-addition {
+      @apply text-lime-300;
+      @apply italic;
+    }
+
+    .hljs-deletion {
+      @apply text-red-500/55;
+      @apply italic;
     }
   }
+}

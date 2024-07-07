@@ -3,7 +3,7 @@ import { memo, useState } from "react"
 import { TaskPage } from "./Task"
 import { Button } from "client/components/ui/button"
 import type { Task } from "queue"
-import { Code } from "client/components/Code"
+import { Code } from "client/components/syntax-highlighter"
 
 const MemoTask = memo(TaskPage)
 

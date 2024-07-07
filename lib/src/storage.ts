@@ -61,6 +61,7 @@ export type Step = {
 	next_status?: StepStatus | null
 	runs: number
 	created_at: number
+	updated_at: number
 	discovered_on: number
 
 	/** used on write to set a sleep timer */

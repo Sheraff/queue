@@ -186,7 +186,7 @@
   }
 
   .hljs {
-    @apply block overflow-x-auto p-4 text-neutral-600;
+    @apply block overflow-x-auto text-neutral-600;
   }
 
   .hljs-emphasis {
@@ -199,7 +199,7 @@
 
   .dark {
     .hljs {
-      @apply block overflow-x-auto p-4 text-zinc-200;
+      @apply block overflow-x-auto text-zinc-200;
     }
 
     .hljs-keyword {

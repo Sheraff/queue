@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
-import { Job } from "./Job"
+import { Job } from "./jobs/Job"
 import { Button } from "client/components/ui/button"
 import { ModeToggle } from "client/components/mode-toggle"
 

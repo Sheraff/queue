@@ -10,6 +10,8 @@ import { DataTableFacetedFilter } from "./faceted-filter"
 import { RefreshCw, RefreshCwOff, X } from "lucide-react"
 import { Switch } from "client/components/ui/switch"
 import { Label } from "client/components/ui/label"
+import { Separator } from "client/components/ui/separator"
+import { DataTableIntervalFilter } from "client/jobs/interval-filter"
 
 interface DataTableToolbarProps<TData> {
 	table: Table<TData>
@@ -34,13 +36,12 @@ export function DataTableToolbar<TData>({
 						options={statuses}
 					/>
 				)}
-				{/* {table.getColumn("priority") && (
-					<DataTableFacetedFilter
+				{table.getColumn("priority") && (
+					<DataTableIntervalFilter
 						column={table.getColumn("priority")}
 						title="Priority"
-						options={priorities}
 					/>
-				)} */}
+				)}
 				{isFiltered && (
 					<Button
 						variant="ghost"
@@ -62,6 +63,7 @@ export function DataTableToolbar<TData>({
 					{liveRefresh ? <RefreshCw className="h-4 w-4" /> : <RefreshCwOff className="h-4 w-4" />}
 				</Label>
 			</div>
+			<Separator orientation="vertical" className="mx-2 h-4" />
 			<DataTableViewOptions table={table} />
 		</div>
 	)

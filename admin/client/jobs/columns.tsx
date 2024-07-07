@@ -103,7 +103,11 @@ export const columns: ColumnDef<Task>[] = [
 			)
 		},
 		filterFn: (row, id, value) => {
-			return value.includes(row.getValue(id))
+			if (!value || typeof value !== 'object') return true
+			const cell = row.getValue(id) as number
+			if ('min' in value && cell < value.min) return false
+			if ('max' in value && cell > value.max) return false
+			return true
 		},
 	},
 	{

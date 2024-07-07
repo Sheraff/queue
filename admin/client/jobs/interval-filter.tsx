@@ -1,140 +1,115 @@
 import { Column } from "@tanstack/react-table"
 
-import { cn } from "client/utils"
 import { Badge } from "client/components/ui/badge"
 import { Button } from "client/components/ui/button"
-import {
-	Command,
-	CommandEmpty,
-	CommandGroup,
-	CommandInput,
-	CommandItem,
-	CommandList,
-	CommandSeparator,
-} from "client/components/ui/command"
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
 } from "client/components/ui/popover"
 import { Separator } from "client/components/ui/separator"
-import { Check, CirclePlus } from "lucide-react"
+import { CirclePlus } from "lucide-react"
+import { Input } from "client/components/ui/input"
+import { Label } from "client/components/ui/label"
+import { useId, useState } from "react"
 
-interface DataTableFacetedFilterProps<TData, TValue> {
+
+interface DataTableIntervalFilterProps<TData, TValue> {
 	column?: Column<TData, TValue>
 	title?: string
 }
 
-export function DataTableFacetedFilter<TData, TValue>({
+type IntervalFilter = {
+	min?: number
+	max?: number
+}
+
+export function DataTableIntervalFilter<TData, TValue>({
 	column,
 	title,
-}: DataTableFacetedFilterProps<TData, TValue>) {
-	const facets = column?.getFacetedUniqueValues()
-	const selectedValues = (column?.getFilterValue() ?? []) as number[]
-	selectedValues.sort((a, b) => a - b)
-
+}: DataTableIntervalFilterProps<TData, TValue>) {
+	const filter = (column?.getFilterValue() ?? {}) as IntervalFilter
+	const hasMin = 'min' in filter
+	const hasMax = 'max' in filter
+	const minId = useId()
+	const maxId = useId()
+	const [open, setOpen] = useState(false)
 	return (
-		<Popover>
+		<Popover open={open} onOpenChange={setOpen}>
 			<PopoverTrigger asChild>
 				<Button variant="outline" size="sm" className="h-8 border-dashed">
 					<CirclePlus className="mr-2 h-4 w-4" />
 					{title}
-					{selectedValues.length > 0 && (
+					{(hasMin || hasMax) && (
 						<>
 							<Separator orientation="vertical" className="mx-2 h-4" />
-							<Badge
-								variant="secondary"
-								className="rounded-sm px-1 font-normal lg:hidden"
-							>
-								{selectedValues.length}
-							</Badge>
-							<div className="hidden space-x-1 lg:flex">
-								{selectedValues.length > 2 ? (
+							<div className="flex space-x-1">
+								{hasMin && (
 									<Badge
 										variant="secondary"
 										className="rounded-sm px-1 font-normal"
 									>
-										{selectedValues.size} selected
+										{'≥'}
+										{filter.min}
 									</Badge>
-								) : (
-									options
-										.filter((option) => selectedValues.has(option.value))
-										.map((option) => (
-											<Badge
-												variant="secondary"
-												key={option.value}
-												className="rounded-sm px-1 font-normal"
-											>
-												{option.label}
-											</Badge>
-										))
 								)}
+								{hasMax && (
+									<Badge
+										variant="secondary"
+										className="rounded-sm px-1 font-normal"
+									>
+										{'≤'}
+										{filter.max}
+									</Badge>
+								)}
+
 							</div>
 						</>
 					)}
 				</Button>
 			</PopoverTrigger>
-			<PopoverContent className="w-[200px] p-0" align="start">
-				<Command>
-					<CommandInput placeholder={title} />
-					<CommandList>
-						<CommandEmpty>No results found.</CommandEmpty>
-						<CommandGroup>
-							{options.map((option) => {
-								const isSelected = selectedValues.has(option.value)
-								return (
-									<CommandItem
-										key={option.value}
-										onSelect={() => {
-											if (isSelected) {
-												selectedValues.delete(option.value)
-											} else {
-												selectedValues.add(option.value)
-											}
-											const filterValues = Array.from(selectedValues)
-											column?.setFilterValue(
-												filterValues.length ? filterValues : undefined
-											)
-										}}
-									>
-										<div
-											className={cn(
-												"mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary",
-												isSelected
-													? "bg-primary text-primary-foreground"
-													: "opacity-50 [&_svg]:invisible"
-											)}
-										>
-											<Check className={cn("h-4 w-4")} />
-										</div>
-										{option.icon && (
-											<option.icon className="mr-2 h-4 w-4 text-muted-foreground" />
-										)}
-										<span>{option.label}</span>
-										{facets?.get(option.value) && (
-											<span className="ml-auto flex h-4 w-4 items-center justify-center font-mono text-xs">
-												{facets.get(option.value)}
-											</span>
-										)}
-									</CommandItem>
-								)
-							})}
-						</CommandGroup>
-						{selectedValues.size > 0 && (
-							<>
-								<CommandSeparator />
-								<CommandGroup>
-									<CommandItem
-										onSelect={() => column?.setFilterValue(undefined)}
-										className="justify-center text-center"
-									>
-										Clear filters
-									</CommandItem>
-								</CommandGroup>
-							</>
-						)}
-					</CommandList>
-				</Command>
+			<PopoverContent className="w-[200px] flex flex-col p-0 justify-items-stretch" align="start">
+				<div className="flex gap-2 items-center p-2">
+					<Label htmlFor={minId}>≥</Label>
+					<Input
+						type="number"
+						placeholder="0"
+						name="min-priority"
+						id={minId}
+						defaultValue={filter.min}
+						onChange={(e) => {
+							const value = Number(e.target.value)
+							filter.min = value
+							column?.setFilterValue(filter)
+						}}
+						max={filter.max}
+					/>
+				</div>
+				<div className="flex gap-2 items-center p-2">
+					<Label htmlFor={maxId}>≤</Label>
+					<Input
+						type="number"
+						placeholder="∞"
+						name="max-priority"
+						id={maxId}
+						defaultValue={filter.max}
+						onChange={(e) => {
+							const value = Number(e.target.value)
+							filter.max = value
+							column?.setFilterValue(filter)
+						}}
+						min={filter.min}
+					/>
+				</div>
+				{(hasMax || hasMin) && <>
+					<Separator />
+					<Button variant="ghost" className="m-2" onClick={() => {
+						column?.setFilterValue(undefined)
+						setOpen(false)
+					}}>
+						Reset
+					</Button>
+				</>}
 			</PopoverContent>
 		</Popover>
 	)

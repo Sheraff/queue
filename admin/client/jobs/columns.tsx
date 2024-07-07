@@ -11,6 +11,21 @@ import type { Task } from "queue"
 import { useMemo } from "react"
 import { Code } from "client/components/syntax-highlighter"
 
+const useFormatDate = (value: number) => {
+	return useMemo(() => {
+		const date = new Date(value * 1000)
+		const formatter = new Intl.DateTimeFormat("en", {
+			year: "numeric",
+			month: "short",
+			day: "2-digit",
+			hour: "2-digit",
+			minute: "2-digit",
+			second: "2-digit",
+		})
+		return formatter.format(date)
+	}, [value])
+}
+
 export const columns: ColumnDef<Task>[] = [
 	{
 		id: "select",
@@ -61,7 +76,7 @@ export const columns: ColumnDef<Task>[] = [
 
 
 			return (
-				<Code>
+				<Code language="json">
 					{str}
 				</Code>
 			)
@@ -121,18 +136,7 @@ export const columns: ColumnDef<Task>[] = [
 		),
 		cell: ({ getValue }) => {
 			const value = getValue() as number
-			const str = useMemo(() => {
-				const date = new Date(value * 1000)
-				const formatter = new Intl.DateTimeFormat("en", {
-					year: "numeric",
-					month: "short",
-					day: "2-digit",
-					hour: "2-digit",
-					minute: "2-digit",
-					second: "2-digit",
-				})
-				return formatter.format(date)
-			}, [value])
+			const str = useFormatDate(value)
 			return (
 				<div className="flex items-center">
 					<span>{str}</span>
@@ -147,18 +151,7 @@ export const columns: ColumnDef<Task>[] = [
 		),
 		cell: ({ getValue }) => {
 			const value = getValue() as number
-			const str = useMemo(() => {
-				const date = new Date(value * 1000)
-				const formatter = new Intl.DateTimeFormat("en", {
-					year: "numeric",
-					month: "short",
-					day: "2-digit",
-					hour: "2-digit",
-					minute: "2-digit",
-					second: "2-digit",
-				})
-				return formatter.format(date)
-			}, [value])
+			const str = useFormatDate(value)
 			return (
 				<div className="flex items-center">
 					<span>{str}</span>
@@ -173,18 +166,7 @@ export const columns: ColumnDef<Task>[] = [
 		),
 		cell: ({ getValue }) => {
 			const value = getValue() as number
-			const str = useMemo(() => {
-				const date = new Date(value * 1000)
-				const formatter = new Intl.DateTimeFormat("en", {
-					year: "numeric",
-					month: "short",
-					day: "2-digit",
-					hour: "2-digit",
-					minute: "2-digit",
-					second: "2-digit",
-				})
-				return formatter.format(date)
-			}, [value])
+			const str = useFormatDate(value)
 			return (
 				<div className="flex items-center">
 					<span>{str}</span>

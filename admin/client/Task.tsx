@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useRef, useState } from "react"
 import type { Step, Event } from 'queue'
 import { Button } from "client/components/ui/button"
+import clsx from "clsx"
 
 type Data = { steps: Step[], events: Event[], date: number }
 
@@ -36,7 +37,7 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 	const [hoveredEvent, setHoveredEvent] = useState<number[]>([])
 
 	return (
-		<div style={{ flex: 1 }}>
+		<div className="flex-1">
 			<h2 className="text-xl">Task {job.input}{isFetching && ' - fetching'}</h2>
 			{job.parent_id && <Button type="button" onClick={() => setJob(job.parent_id)}>parent</Button>}
 			<pre>
@@ -44,7 +45,7 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 			</pre>
 			<hr />
 			<div className="flex">
-				<div style={{ flex: 1 }}>
+				<div className="flex-1">
 					<h3 className="text-lg">Steps</h3>
 					{data && <Graph
 						data={data}
@@ -54,7 +55,7 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 					/>}
 				</div>
 
-				<div style={{ maxWidth: '25vw' }}>
+				<div className="max-w-[25vw]">
 					<h3>Events</h3>
 					<div onMouseLeave={() => setHoveredEvent([])}>
 						{data?.events.map((event, i) => {
@@ -62,10 +63,7 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 							return (
 								<div
 									key={i}
-									style={{
-										backgroundColor: hoveredEvent.includes(i) ? blue : 'transparent',
-										transition: 'all 0.2s',
-									}}
+									className={clsx("transition-all, px-2 py-1", hoveredEvent.includes(i) && 'bg-stone-200')}
 									onMouseEnter={() => setHoveredEvent([i])}
 								>
 									<span>{name}</span>
@@ -131,14 +129,9 @@ function Graph({
 	const fullStep = useRef(false)
 
 	return (
-		<div style={{ padding: '1em' }}>
+		<div className="p-4">
 			<div
-				style={{
-					maxWidth: '100%',
-					position: 'relative',
-					zIndex: 0,
-					overflowX: 'auto',
-				}}
+				className="relative overflow-x-auto max-w-full z-0"
 				onMouseMove={(e) => {
 					if (fullStep.current) return
 					const x = e.clientX

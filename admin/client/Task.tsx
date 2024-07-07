@@ -40,7 +40,7 @@ export function TaskPage({ id, job, setJob }: { id: number, job: Task, setJob: (
 			<Code language="json">
 				{JSON.stringify(job, null, 2)}
 			</Code>
-			<hr />
+			<hr className="my-4" />
 			<div className="flex">
 				<div className="flex-1">
 					<h3 className="text-lg">Steps</h3>

@@ -10,6 +10,13 @@ const refetch = {
 	stalled: 10000,
 }
 
+const red = '#ef4444'
+const green = '#86efac'
+const bgGray = '#f1f5f9'
+const borderGray = '#e2e8f0'
+const blue = '#93c5fd'
+const accent = '#c026d3'
+
 const cleanEventName = (name: string, job: { job: string }) => name.replace(new RegExp(`^job\\/${job.job}\\/`), '')
 	.replace(new RegExp(`^step\\/${job.job}\\/`), '')
 
@@ -47,7 +54,7 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 						{data?.events.map((event, i) => {
 							const name = cleanEventName(event.key, job)
 							return (
-								<div key={i} style={{ backgroundColor: i === hoveredEvent ? 'lightblue' : 'transparent' }} onMouseEnter={() => setHoveredEvent(i)}>
+								<div key={i} style={{ backgroundColor: i === hoveredEvent ? blue : 'transparent' }} onMouseEnter={() => setHoveredEvent(i)}>
 									<span>{name}</span>
 								</div>
 							)
@@ -93,73 +100,97 @@ function Graph({ data, job, hoveredEvent }: { data: Data, job: object, hoveredEv
 	const adjustedInterval = adjustedEnd - minDate
 
 	return (
-		<div style={{ maxWidth: '100%', position: 'relative', zIndex: 0 }}>
-			{data.steps.map((step, i) => {
-				const start = adjustDate(step.created_at)
-				const left = (start - minDate) / adjustedInterval * 100
-				const end = adjustDate(step.status === 'stalled' || step.status === 'waiting' || step.status === 'running' ? endDate : step.updated_at)
-				const width = (end - start) / adjustedInterval * 100
-				// console.log({ start, end, left, width, adjustedInterval })
-				const isHovered = hoveredEvent !== null && cleanEventName(data.events[hoveredEvent].key, job).startsWith(step.step)
-				const events = data.events.reduce((acc, event, i) => {
-					if (!event.key.startsWith(`step/${job.job}/${step.step}`)) return acc
-					acc.push(event)
-					return acc
-				}, [] as Event[])
-				return (
-					<div key={i} style={{
-						left: `${left}%`,
-						width: `${width}%`,
-						position: 'relative',
-						whiteSpace: 'nowrap',
-						zIndex: 1,
-					}}>
-						<Step step={step} isHovered={isHovered} events={events} start={start} end={end} adjustDate={adjustDate} />
-					</div>
-				)
-			})}
-			{longIntervals.map(([a, b], i) => {
-				const start = adjustDate(a)
-				const left = Math.max(0, (start - minDate) / adjustedInterval) * 100
-				const end = start + adjustedLongEvent
-				const width = (end - start) / adjustedInterval * 100
-				return (
-					<div key={i} style={{
-						left: `${left}%`,
-						width: `${width}%`,
-						position: 'absolute',
-						top: 0,
-						bottom: 0,
-						zIndex: 0,
-						padding: `0 min(1rem, ${width / 4}%)`,
-					}}>
-						<div style={{
-							backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 5px, lightgray 5px, lightgray 6px)',
-							height: '100%',
-							opacity: 0.25,
+		<div style={{ padding: '1em' }}>
+			<div style={{ maxWidth: '100%', position: 'relative', zIndex: 0, overflow: 'hidden' }}>
+				{data.steps.map((step, i) => {
+					const start = adjustDate(step.created_at)
+					const left = (start - minDate) / adjustedInterval * 100
+					const end = adjustDate(step.status === 'stalled' || step.status === 'waiting' || step.status === 'running' ? endDate : step.updated_at)
+					const width = (end - start) / adjustedInterval * 100
+					const isHovered = hoveredEvent !== null && cleanEventName(data.events[hoveredEvent].key, job).startsWith(step.step)
+					const events = data.events.reduce((acc, event, i) => {
+						if (!event.key.startsWith(`step/${job.job}/${step.step}`)) return acc
+						acc.push(event)
+						return acc
+					}, [] as Event[])
+					return (
+						<div key={i} style={{
+							left: `${left}%`,
+							width: `${width}%`,
+							position: 'relative',
+							whiteSpace: 'nowrap',
+							zIndex: 1,
+						}}>
+							<Step
+								step={step}
+								isHovered={isHovered}
+								events={events}
+								start={start}
+								end={end}
+								adjustDate={adjustDate}
+								rtl={start > minDate + adjustedInterval * .75}
+							/>
+						</div>
+					)
+				})}
+				{longIntervals.map(([a, b], i) => {
+					const start = adjustDate(a)
+					const left = Math.max(0, (start - minDate) / adjustedInterval) * 100
+					const end = start + adjustedLongEvent
+					const width = (end - start) / adjustedInterval * 100
+					return (
+						<div key={i} style={{
+							left: `${left}%`,
+							width: `${width}%`,
+							position: 'absolute',
+							top: 0,
+							bottom: 0,
+							zIndex: 0,
+							padding: `0 min(1rem, ${width / 4}%)`,
+						}}>
+							<div style={{
+								backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 5px, ${borderGray} 5px, ${borderGray} 6px)`,
+								height: '100%',
+							}} />
+						</div>
+					)
+				})}
+				{data.events.map((event, i) => {
+					const time = adjustDate(event.created_at)
+					return (
+						<div key={i} style={{
+							left: `min(calc(100% - 1px), ${Math.max(0, (time - minDate) / adjustedInterval) * 100 + '%'})`,
+							position: 'absolute',
+							top: 0,
+							bottom: 0,
+							borderLeft: hoveredEvent === i ? `1px solid ${accent}` : `1px solid ${borderGray}`,
+							zIndex: hoveredEvent === i ? 2 : 0
 						}} />
-					</div>
-				)
-			})}
-			{data.events.map((event, i) => {
-				const time = adjustDate(event.created_at)
-				return (
-					<div key={i} style={{
-						left: Math.max(0, (time - minDate) / adjustedInterval) * 100 + '%',
-						position: 'absolute',
-						top: 0,
-						bottom: 0,
-						borderLeft: hoveredEvent === i ? '1px solid magenta' : '1px solid lightgray',
-						zIndex: hoveredEvent === i ? 2 : 0
-					}} />
-				)
-			})}
+					)
+				})}
+			</div>
 		</div>
 	)
 }
 
 
-function Step({ step, isHovered, events, start, end, adjustDate }: { step: Step, isHovered: boolean, events: Event[], start: number, end: number, adjustDate: (date: number) => number }) {
+function Step({
+	step,
+	isHovered,
+	events,
+	start,
+	end,
+	adjustDate,
+	rtl,
+}: {
+	step: Step,
+	isHovered: boolean,
+	events: Event[],
+	start: number,
+	end: number,
+	adjustDate: (date: number) => number,
+	rtl: boolean,
+}) {
 	const types = events.map(event => event.key.split('/').pop())
 	const bgs = []
 	for (let i = 1; i <= types.length; i++) {
@@ -168,7 +199,7 @@ function Step({ step, isHovered, events, start, end, adjustDate }: { step: Step,
 		const width = (eventEnd - eventStart) / (end - start) * 100
 		const left = (eventStart - start) / (end - start) * 100
 		const type = types[i]
-		const color = type === 'error' ? 'red' : type === 'run' ? 'gray' : type === 'success' ? 'green' : 'lightgray'
+		const color = type === 'error' ? red : type === 'run' ? bgGray : type === 'success' ? green : bgGray
 		bgs.push(
 			<div key={i} style={{ backgroundColor: color, position: 'absolute', top: 0, bottom: 0, left: `${left}%`, width: `${width}%`, zIndex: 0 }} />
 		)
@@ -178,14 +209,22 @@ function Step({ step, isHovered, events, start, end, adjustDate }: { step: Step,
 		<div
 			style={{
 				zIndex: 0,
-				backgroundColor: isHovered ? 'pink' : isSleep ? 'gray' : step.status === 'completed' ? 'green' : step.status === 'failed' ? 'red' : 'gray',
-				padding: '0.5em 0',
-				color: isHovered ? 'magenta' : 'black',
+				backgroundColor: isSleep ? bgGray : step.status === 'completed' ? green : step.status === 'failed' ? red : bgGray,
+				color: isHovered ? accent : 'black',
+				height: 'calc(1lh + 1em)',
 			}}
 		>
 			{bgs}
-			{/* TODO: positioning should be adjusted to not overflow the graph box */}
-			<span style={{ padding: '0 0.5em', position: 'relative', zIndex: 1 }}>{step.step}</span>
+			<span style={{
+				display: 'block',
+				top: '0.5em',
+				whiteSpace: 'pre',
+				position: 'relative',
+				zIndex: 1,
+				direction: rtl ? 'rtl' : 'ltr',
+			}}>
+				{` ${step.step} `}
+			</span>
 		</div>
 	)
 }

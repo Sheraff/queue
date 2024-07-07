@@ -3,6 +3,7 @@ import { memo, useState } from "react"
 import { TaskPage } from "./Task"
 import { Button } from "client/components/ui/button"
 import type { Task } from "queue"
+import { Code } from "client/components/Code"
 
 const MemoTask = memo(TaskPage)
 
@@ -29,9 +30,9 @@ export function Job({ job }: { job: string }) {
 				<ul className="flex flex-col gap-1">
 					{data?.map((task) => (
 						<li key={task.id}>
-							<Button type="button" onClick={() => setTask(t => t === task.id ? null : task.id)}>
+							<Button variant="outline" onClick={() => setTask(t => t === task.id ? null : task.id)}>
 								{task.status} - {new Date(task.created_at * 1000).toLocaleString()}
-								<pre>{JSON.stringify(JSON.parse(task.input), null, 2)}</pre>
+								<Code className="text-left">{JSON.stringify(JSON.parse(task.input), null, 2)}</Code>
 							</Button>
 						</li>
 					))}

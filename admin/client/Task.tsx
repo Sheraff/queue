@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useRef, useState } from "react"
 import type { Step, Event } from 'queue'
 import { Button } from "client/components/ui/button"
+import { Code } from "client/components/Code"
 import clsx from "clsx"
 
 type Data = { steps: Step[], events: Event[], date: number }
@@ -40,9 +41,9 @@ export function Task({ id, job, setJob }: { id: number, job: object, setJob: (jo
 		<div className="flex-1">
 			<h2 className="text-xl">Task {job.input}{isFetching && ' - fetching'}</h2>
 			{job.parent_id && <Button type="button" onClick={() => setJob(job.parent_id)}>parent</Button>}
-			<pre>
+			<Code language="json">
 				{JSON.stringify(job, null, 2)}
-			</pre>
+			</Code>
 			<hr />
 			<div className="flex">
 				<div className="flex-1">

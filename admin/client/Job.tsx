@@ -34,7 +34,7 @@ export function Job({ job }: { job: string }) {
 						</li>
 					))}
 				</ul>
-				{jobData && <MemoTask id={task} job={jobData} setJob={setTask} />}
+				{jobData && <MemoTask id={task} job={jobData} setJob={setTask} key={`job${job}task${jobData.id}`} />}
 			</div>
 		</>
 	)

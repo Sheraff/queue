@@ -27,42 +27,39 @@ export function DataTableToolbar<TData>({
 	const isFiltered = table.getState().columnFilters.length > 0
 
 	return (
-		<div className="flex items-center justify-between gap-8">
-			<div className="flex flex-1 items-center space-x-2">
-				{table.getColumn("status") && (
-					<DataTableFacetedFilter
-						column={table.getColumn("status")}
-						title="Status"
-						options={statuses}
-					/>
-				)}
-				{table.getColumn("priority") && (
-					<DataTableIntervalFilter
-						column={table.getColumn("priority")}
-						title="Priority"
-					/>
-				)}
-				{isFiltered && (
-					<Button
-						variant="ghost"
-						onClick={() => table.resetColumnFilters()}
-						className="h-8 px-2 lg:px-3"
-					>
-						Reset
-						<X className="ml-2 h-4 w-4" />
-					</Button>
-				)}
-			</div>
-			<div className="flex items-center space-x-2">
+		<div className="flex items-center justify-between gap-2">
+			{table.getColumn("status") && (
+				<DataTableFacetedFilter
+					column={table.getColumn("status")}
+					title="Status"
+					options={statuses}
+				/>
+			)}
+			{table.getColumn("priority") && (
+				<DataTableIntervalFilter
+					column={table.getColumn("priority")}
+					title="Priority"
+				/>
+			)}
+			{isFiltered && (
+				<Button
+					variant="ghost"
+					onClick={() => table.resetColumnFilters()}
+					className="h-8 px-2 lg:px-3"
+				>
+					Reset
+					<X className="ml-2 h-4 w-4" />
+				</Button>
+			)}
+			<div className="flex-1" />
+			<Label htmlFor="live-refresh" className="flex items-center space-x-2">
 				<Switch
 					checked={liveRefresh}
 					onCheckedChange={setLiveRefresh}
 					id="live-refresh"
 				/>
-				<Label htmlFor="live-refresh">
-					{liveRefresh ? <RefreshCw className="h-4 w-4" /> : <RefreshCwOff className="h-4 w-4" />}
-				</Label>
-			</div>
+				{liveRefresh ? <RefreshCw className="h-4 w-4" /> : <RefreshCwOff className="h-4 w-4" />}
+			</Label>
 			<Separator orientation="vertical" className="mx-2 h-4" />
 			<DataTableViewOptions table={table} />
 		</div>

@@ -90,7 +90,14 @@ const server = http.createServer((req, res) => {
 		return
 	}
 
+	if (url.pathname === '/api/queues') {
+		res.writeHead(200, { 'Content-Type': 'application/json' })
+		res.end(JSON.stringify([queue.id, 'fake-queue'], null, '\t'))
+		return
+	}
+
 	if (url.pathname === '/api/jobs') {
+		// TODO: in real conditions, we should look at the ?queue query parameter to return the appropriate jobs
 		res.writeHead(200, { 'Content-Type': 'application/json' })
 		res.end(JSON.stringify(Object.keys(queue.jobs), null, '\t'))
 		return
@@ -102,6 +109,15 @@ const server = http.createServer((req, res) => {
 		const id = job[1]
 		const tasks = db.prepare('SELECT * FROM tasks WHERE queue = @queue AND job = @job ORDER BY created_at ASC').all({ queue: queue.id, job: id })
 		res.end(JSON.stringify(tasks, null, '\t'))
+		return
+	}
+
+	const singleTask = url.pathname.match(/^\/api\/task\/(.+)$/)
+	if (singleTask) {
+		res.writeHead(200, { 'Content-Type': 'application/json' })
+		const id = singleTask[1]
+		const task = db.prepare('SELECT * FROM tasks WHERE queue = @queue AND id = @id').get({ queue: queue.id, id: id })
+		res.end(JSON.stringify(task, null, '\t'))
 		return
 	}
 

@@ -14,7 +14,6 @@ import {
 	getPaginationRowModel,
 	getSortedRowModel,
 	useReactTable,
-	type Row,
 } from "@tanstack/react-table"
 
 import {
@@ -32,17 +31,11 @@ import { DataTableToolbar } from "./toolbar"
 interface DataTableProps<TData, TValue> {
 	columns: ColumnDef<TData, TValue>[]
 	data: TData[]
-	onRowClick?: (row: Row<TData>) => void
-	liveRefresh?: boolean
-	setLiveRefresh?: (value: boolean) => void
 }
 
 export function DataTable<TData, TValue>({
 	columns,
 	data,
-	onRowClick,
-	liveRefresh,
-	setLiveRefresh,
 }: DataTableProps<TData, TValue>) {
 	const [rowSelection, setRowSelection] = React.useState({})
 	const [columnVisibility, setColumnVisibility] =
@@ -83,8 +76,6 @@ export function DataTable<TData, TValue>({
 		<div className="space-y-4 w-full tabular-nums">
 			<DataTableToolbar
 				table={table}
-				liveRefresh={liveRefresh}
-				setLiveRefresh={setLiveRefresh}
 			/>
 			<div className="rounded-md border">
 				<Table>
@@ -112,13 +103,6 @@ export function DataTable<TData, TValue>({
 								<TableRow
 									key={row.id}
 									data-state={row.getIsSelected() && "selected"}
-									onClick={onRowClick ? (e) => {
-										if (e.target instanceof HTMLElement) {
-											const interactiveParent = e.target.closest("button, a, input, select, textarea, label, [tabindex]")
-											if (interactiveParent) return
-										}
-										onRowClick(row)
-									} : undefined}
 								>
 									{row.getVisibleCells().map((cell) => (
 										<TableCell key={cell.id}>

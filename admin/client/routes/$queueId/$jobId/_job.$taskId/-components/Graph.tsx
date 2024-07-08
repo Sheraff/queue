@@ -1,89 +1,28 @@
-import { useQuery } from "@tanstack/react-query"
-import { Fragment, useRef, useState } from "react"
+import { Fragment, useRef } from "react"
 import type { Step, Event, Task } from 'queue'
-import { Button } from "client/components/ui/button"
-import { Code } from "client/components/syntax-highlighter"
 import clsx from "clsx"
+import { cleanEventName } from "./utils"
 
-type Data = { steps: Step[], events: Event[], date: number }
 
-const refetch: Record<string, number> = {
-	pending: 2000,
-	running: 300,
-	stalled: 10000,
-}
+const ACTIVE_STATUSES = [
+	'pending',
+	'running',
+	'stalled',
+]
 
-const cleanEventName = (name: string, job: { job: string }) => name.replace(new RegExp(`^job\\/${job.job}\\/`), '')
-	.replace(new RegExp(`^step\\/${job.job}\\/`), '')
-
-export function TaskPage({ id, job, setJob }: { id: number, job: Task, setJob: (job: number) => void }) {
-
-	const { data, isFetching } = useQuery({
-		queryKey: ['tasks', id],
-		queryFn: async () => {
-			const res = await fetch(`/api/tasks/${id}`)
-			const json = await res.json()
-			return json as Data
-		},
-		refetchInterval: refetch[job.status] ?? false
-	})
-
-	const [hoveredEvent, setHoveredEvent] = useState<number[]>([])
-
-	return (
-		<div className="flex-1">
-			<h2 className="text-xl">Task {job.input}{isFetching && ' - fetching'}</h2>
-			{job.parent_id && <Button type="button" onClick={() => setJob(job.parent_id!)}>parent</Button>}
-			<Code language="json">
-				{JSON.stringify(job, null, 2)}
-			</Code>
-			<hr className="my-4" />
-			<div className="flex">
-				<div className="flex-1">
-					<h3 className="text-lg">Steps</h3>
-					{data && <Graph
-						data={data}
-						job={job}
-						hoveredEvent={hoveredEvent}
-						setHoveredEvent={setHoveredEvent}
-					/>}
-				</div>
-
-				<div className="max-w-[25vw]">
-					<h3 className="text-lg">Events</h3>
-					<div onMouseLeave={() => setHoveredEvent([])} className="py-4">
-						{data?.events.map((event, i) => {
-							const name = cleanEventName(event.key, job)
-							return (
-								<div
-									key={i}
-									className={clsx("transition-all, px-2 py-1", hoveredEvent.includes(i) && 'bg-stone-200 dark:bg-stone-800')}
-									onMouseEnter={() => setHoveredEvent([i])}
-								>
-									<span>{name}</span>
-								</div>
-							)
-						})}
-					</div>
-				</div>
-			</div>
-		</div>
-	)
-}
-
-function Graph({
+export function Graph({
 	data,
 	job,
 	hoveredEvent,
 	setHoveredEvent,
 }: {
-	data: Data,
+	data: { steps: Step[], events: Event[], date: number },
 	job: Task,
 	hoveredEvent: number[],
 	setHoveredEvent: (event: number[]) => void,
 }) {
 	const minDate = job.created_at
-	const endDate = job.status in refetch ? data.date : job.updated_at
+	const endDate = ACTIVE_STATUSES.includes(job.status) ? data.date : job.updated_at
 
 	/** all event durations (in seconds) that are greater than 500ms */
 	const intervals: number[] = []

@@ -7,7 +7,12 @@
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
     "strict": true,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "server/*": [
+        "./*"
+      ]
+    }
   },
   "include": [
     "vite.config.ts",

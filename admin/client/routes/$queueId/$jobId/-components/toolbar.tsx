@@ -11,20 +11,19 @@ import { RefreshCw, RefreshCwOff, X } from "lucide-react"
 import { Switch } from "client/components/ui/switch"
 import { Label } from "client/components/ui/label"
 import { Separator } from "client/components/ui/separator"
-import { DataTableIntervalFilter } from "client/jobs/interval-filter"
+import { DataTableIntervalFilter } from "./interval-filter"
+import { useJobContext } from "./job-context"
 
 interface DataTableToolbarProps<TData> {
 	table: Table<TData>
-	liveRefresh?: boolean
-	setLiveRefresh?: (value: boolean) => void
 }
 
 export function DataTableToolbar<TData>({
 	table,
-	liveRefresh,
-	setLiveRefresh,
 }: DataTableToolbarProps<TData>) {
 	const isFiltered = table.getState().columnFilters.length > 0
+
+	const { liveRefresh, setLiveRefresh } = useJobContext()
 
 	return (
 		<div className="flex items-center justify-between gap-2">

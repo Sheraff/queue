@@ -12,6 +12,9 @@ import { useMemo } from "react"
 import { Code } from "client/components/syntax-highlighter"
 import { useNow } from "client/now"
 import { useTimeDisplay } from "client/components/time-display-provider"
+import { Link, useParams } from "@tanstack/react-router"
+import { Button } from "client/components/ui/button"
+import { ArrowRight } from "lucide-react"
 
 function secondsToHumanReadable(seconds: number): [number, Intl.RelativeTimeFormatUnit] {
 	let unit: Intl.RelativeTimeFormatUnit = 'second'
@@ -214,9 +217,19 @@ export const columns: ColumnDef<Task>[] = [
 			)
 		},
 	},
-	// TODO: when we have a router
-	// {
-	// 	id: 'go',
-	// 	cell: () => {}
-	// }
+	{
+		id: 'go',
+		accessorKey: "id",
+		header: () => { },
+		cell: ({ getValue }) => {
+			const { jobId, queueId } = useParams({ from: '/$queueId/$jobId' })
+			return (
+				<Button asChild size="icon" variant="outline">
+					<Link to="/$queueId/$jobId/$taskId" params={{ queueId, jobId, taskId: getValue() as string }}>
+						<ArrowRight className="h-4 w-4" />
+					</Link>
+				</Button>
+			)
+		}
+	}
 ]

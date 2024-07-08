@@ -28,7 +28,7 @@ const foo = new Job({
 		await Job.sleep(Math.random() * k * 500 + 2_000)
 		await Promise.all([
 			Job.run({ id: 'some-task', retry: 40, backoff: "10s" }, async () => {
-				await new Promise(resolve => setTimeout(resolve, 500))
+				await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * k * 100))
 				if (Math.random() < 0.5) {
 					throw new Error("random error")
 				}

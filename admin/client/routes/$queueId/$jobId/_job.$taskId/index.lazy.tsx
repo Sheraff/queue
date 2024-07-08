@@ -1,4 +1,4 @@
-import { createFileRoute, Link, notFound } from '@tanstack/react-router'
+import { createLazyFileRoute, Link, notFound } from '@tanstack/react-router'
 import { useJobContext } from "../-components/job-context"
 import { useQuery } from "@tanstack/react-query"
 import type { Event, Step, Task } from "queue"
@@ -8,7 +8,7 @@ import { Events } from "client/routes/$queueId/$jobId/_job.$taskId/-components/E
 import { Button } from "client/components/ui/button"
 import { Code } from "client/components/syntax-highlighter"
 
-export const Route = createFileRoute('/$queueId/$jobId/_job/$taskId/')({
+export const Route = createLazyFileRoute('/$queueId/$jobId/_job/$taskId/')({
 	component: Task
 })
 

@@ -1,10 +1,10 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createLazyFileRoute } from '@tanstack/react-router'
 import { DataTable } from "./-components/data-table"
 import { useMemo } from "react"
 import { columns } from "./-components/columns"
 import { useJobContext } from "./-components/job-context"
 
-export const Route = createFileRoute('/$queueId/$jobId/_job/')({
+export const Route = createLazyFileRoute('/$queueId/$jobId/_job/')({
 	component: Job
 })
 

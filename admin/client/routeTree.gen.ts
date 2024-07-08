@@ -15,14 +15,18 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Route as rootRoute } from './routes/__root'
 import { Route as QueueIdIndexImport } from './routes/$queueId/index'
 import { Route as QueueIdJobIdJobImport } from './routes/$queueId/$jobId/_job'
-import { Route as QueueIdJobIdJobIndexImport } from './routes/$queueId/$jobId/_job.index'
-import { Route as QueueIdJobIdJobTaskIdIndexImport } from './routes/$queueId/$jobId/_job.$taskId/index'
 
 // Create Virtual Routes
 
 const AboutLazyImport = createFileRoute('/about')()
 const IndexLazyImport = createFileRoute('/')()
 const QueueIdJobIdImport = createFileRoute('/$queueId/$jobId')()
+const QueueIdJobIdJobIndexLazyImport = createFileRoute(
+  '/$queueId/$jobId/_job/',
+)()
+const QueueIdJobIdJobTaskIdIndexLazyImport = createFileRoute(
+  '/$queueId/$jobId/_job/$taskId/',
+)()
 
 // Create/Update Routes
 
@@ -44,24 +48,33 @@ const QueueIdJobIdRoute = QueueIdJobIdImport.update({
 const QueueIdIndexRoute = QueueIdIndexImport.update({
   path: '/$queueId/',
   getParentRoute: () => rootRoute,
-} as any)
+} as any).lazy(() =>
+  import('./routes/$queueId/index.lazy').then((d) => d.Route),
+)
 
 const QueueIdJobIdJobRoute = QueueIdJobIdJobImport.update({
   id: '/_job',
   getParentRoute: () => QueueIdJobIdRoute,
-} as any)
+} as any).lazy(() =>
+  import('./routes/$queueId/$jobId/_job.lazy').then((d) => d.Route),
+)
 
-const QueueIdJobIdJobIndexRoute = QueueIdJobIdJobIndexImport.update({
+const QueueIdJobIdJobIndexLazyRoute = QueueIdJobIdJobIndexLazyImport.update({
   path: '/',
   getParentRoute: () => QueueIdJobIdJobRoute,
-} as any)
+} as any).lazy(() =>
+  import('./routes/$queueId/$jobId/_job.index.lazy').then((d) => d.Route),
+)
 
-const QueueIdJobIdJobTaskIdIndexRoute = QueueIdJobIdJobTaskIdIndexImport.update(
-  {
+const QueueIdJobIdJobTaskIdIndexLazyRoute =
+  QueueIdJobIdJobTaskIdIndexLazyImport.update({
     path: '/$taskId/',
     getParentRoute: () => QueueIdJobIdJobRoute,
-  } as any,
-)
+  } as any).lazy(() =>
+    import('./routes/$queueId/$jobId/_job.$taskId/index.lazy').then(
+      (d) => d.Route,
+    ),
+  )
 
 // Populate the FileRoutesByPath interface
 
@@ -106,14 +119,14 @@ declare module '@tanstack/react-router' {
       id: '/$queueId/$jobId/_job/'
       path: '/'
       fullPath: '/$queueId/$jobId/'
-      preLoaderRoute: typeof QueueIdJobIdJobIndexImport
+      preLoaderRoute: typeof QueueIdJobIdJobIndexLazyImport
       parentRoute: typeof QueueIdJobIdJobImport
     }
     '/$queueId/$jobId/_job/$taskId/': {
       id: '/$queueId/$jobId/_job/$taskId/'
       path: '/$taskId'
       fullPath: '/$queueId/$jobId/$taskId'
-      preLoaderRoute: typeof QueueIdJobIdJobTaskIdIndexImport
+      preLoaderRoute: typeof QueueIdJobIdJobTaskIdIndexLazyImport
       parentRoute: typeof QueueIdJobIdJobImport
     }
   }
@@ -127,8 +140,8 @@ export const routeTree = rootRoute.addChildren({
   QueueIdIndexRoute,
   QueueIdJobIdRoute: QueueIdJobIdRoute.addChildren({
     QueueIdJobIdJobRoute: QueueIdJobIdJobRoute.addChildren({
-      QueueIdJobIdJobIndexRoute,
-      QueueIdJobIdJobTaskIdIndexRoute,
+      QueueIdJobIdJobIndexLazyRoute,
+      QueueIdJobIdJobTaskIdIndexLazyRoute,
     }),
   }),
 })
@@ -171,11 +184,11 @@ export const routeTree = rootRoute.addChildren({
       ]
     },
     "/$queueId/$jobId/_job/": {
-      "filePath": "$queueId/$jobId/_job.index.tsx",
+      "filePath": "$queueId/$jobId/_job.index.lazy.tsx",
       "parent": "/$queueId/$jobId/_job"
     },
     "/$queueId/$jobId/_job/$taskId/": {
-      "filePath": "$queueId/$jobId/_job.$taskId/index.tsx",
+      "filePath": "$queueId/$jobId/_job.$taskId/index.lazy.tsx",
       "parent": "/$queueId/$jobId/_job"
     }
   }

@@ -9,7 +9,7 @@ import { jobsQueryOpts } from "client/routes/$queueId"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "client/components/ui/dropdown-menu"
 import { ChevronRight, Home } from "lucide-react"
 
-const queueOptions = {
+export const queueOptions = {
 	queryKey: ['queues'],
 	queryFn: async () => {
 		const res = await fetch('/api/queues')
@@ -44,6 +44,14 @@ function SelectNav() {
 							{queue}
 						</DropdownMenuItem>
 					))}
+					{queueId && (
+						<>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onClick={() => nav({ to: "/" })}>
+								See all queues
+							</DropdownMenuItem>
+						</>
+					)}
 				</DropdownMenuContent>
 			</DropdownMenu>
 			{queueId && <ChevronRight className="h-4 w-4" />}

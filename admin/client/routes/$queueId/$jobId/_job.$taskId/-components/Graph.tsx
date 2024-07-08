@@ -1,7 +1,8 @@
-import { Fragment, useRef } from "react"
+import { Fragment, useRef, type ElementType } from "react"
 import type { Step, Event, Task } from 'queue'
 import clsx from "clsx"
 import { cleanEventName } from "./utils"
+import { CircleCheckBig, CircleDashed, CircleX, Clock, Workflow } from "lucide-react"
 
 
 const ACTIVE_STATUSES = [
@@ -212,6 +213,7 @@ function StepDisplay({
 		)
 	}
 	const isSleep = step.step.startsWith('system/sleep')
+	const Icon = status[step.status]
 	return (
 		<div
 			className={clsx(
@@ -227,14 +229,35 @@ function StepDisplay({
 		>
 			{bgs}
 			<span
-				className="relative block z-10 whitespace-pre bg-stone-100/20 dark:bg-stone-900/20"
-				style={{
-					top: '0.5em',
-					direction: rtl ? 'rtl' : 'ltr',
-				}}
+				className={clsx(
+					"relative flex items-center z-10 whitespace-pre bg-stone-100/20 dark:bg-stone-900/20",
+					rtl && 'justify-end'
+				)}
+				style={{ top: '0.5em', }}
 			>
+				<Icon className="shrink-0 ml-1 h-4 w-4" />
 				{` ${step.step} `}
 			</span>
 		</div>
+	)
+}
+
+const status: Record<Step['status'], ElementType> = {
+	completed: CircleCheckBig,
+	failed: CircleX,
+	pending: CircleDashed,
+	running: Spin,
+	stalled: Clock,
+	waiting: Workflow,
+}
+
+function Spin({ className }: { className?: string }) {
+	return (
+		<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" className={className}>
+			<path d="M12,1A11,11,0,1,0,23,12,11,11,0,0,0,12,1Zm0,19a8,8,0,1,1,8-8A8,8,0,0,1,12,20Z" opacity=".25" fill="currentColor" />
+			<path d="M10.14,1.16a11,11,0,0,0-9,8.92A1.59,1.59,0,0,0,2.46,12,1.52,1.52,0,0,0,4.11,10.7a8,8,0,0,1,6.66-6.61A1.42,1.42,0,0,0,12,2.69h0A1.57,1.57,0,0,0,10.14,1.16Z" fill="currentColor">
+				<animateTransform attributeName="transform" type="rotate" dur="0.75s" values="0 12 12;360 12 12" repeatCount="indefinite" />
+			</path>
+		</svg>
 	)
 }

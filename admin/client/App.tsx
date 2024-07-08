@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Job } from "./jobs/Job"
 import { Button } from "client/components/ui/button"
 import { ModeToggle } from "client/components/mode-toggle"
+import { NowContext } from "client/now"
+import { TimeDisplayToggle } from "client/components/time-display-toggle"
 
 
 function App() {
@@ -18,8 +20,8 @@ function App() {
   })
 
   return (
-    <>
-      <nav className="flex p-2">
+    <NowContext >
+      <nav className="flex p-2 gap-2">
         <ul className="flex gap-1">
           {data?.map((job) => (
             <li key={job}>
@@ -28,10 +30,11 @@ function App() {
           ))}
         </ul>
         <div className="flex-1" />
+        <TimeDisplayToggle />
         <ModeToggle />
       </nav>
-      {job && <Job job={job} />}
-    </>
+      {useMemo(() => job && <Job job={job} />, [job])}
+    </NowContext>
   )
 }
 

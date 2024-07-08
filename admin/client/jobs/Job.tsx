@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { memo, useState } from "react"
+import { memo, useMemo, useState } from "react"
 import { TaskPage } from "../tasks/Task"
 import { Button } from "client/components/ui/button"
 import type { Task } from "queue"
@@ -28,27 +28,31 @@ export function Job({ job }: { job: string }) {
 
 	const jobData = task && data?.find(t => t.id === task)
 
+	const table = useMemo(() => !task && data && <DataTable
+		data={data}
+		columns={columns}
+		onRowClick={(row) => setTask(row.getValue('id'))}
+		liveRefresh={liveRefresh}
+		setLiveRefresh={(value) => {
+			setLiveRefresh(value)
+			if (value) refetch()
+		}}
+	/>, [data, liveRefresh, refetch, task])
+
+	const content = useMemo(() => jobData && <MemoTask
+		id={task}
+		job={jobData}
+		setJob={setTask}
+		key={`job${job}task${jobData.id}`}
+	/>, [jobData, task, job])
+
 	return (
 		<>
 			<h1 className="text-2xl px-2">{job}{isFetching && ' - fetching'}</h1>
 			{task && <Button onClick={() => setTask(null)}>Back</Button>}
 			<div className="p-2 mt-4">
-				{!task && data && <DataTable
-					data={data}
-					columns={columns}
-					onRowClick={(row) => setTask(row.getValue('id'))}
-					liveRefresh={liveRefresh}
-					setLiveRefresh={(value) => {
-						setLiveRefresh(value)
-						if (value) refetch()
-					}}
-				/>}
-				{jobData && <MemoTask
-					id={task}
-					job={jobData}
-					setJob={setTask}
-					key={`job${job}task${jobData.id}`}
-				/>}
+				{table}
+				{content}
 			</div>
 		</>
 	)

@@ -76,10 +76,11 @@ export function DataTable<TData, TValue>({
 		getSortedRowModel: getSortedRowModel(),
 		getFacetedRowModel: getFacetedRowModel(),
 		getFacetedUniqueValues: getFacetedUniqueValues(),
+		autoResetPageIndex: false,
 	})
 
 	return (
-		<div className="space-y-4 w-full">
+		<div className="space-y-4 w-full tabular-nums">
 			<DataTableToolbar
 				table={table}
 				liveRefresh={liveRefresh}

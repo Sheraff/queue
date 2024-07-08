@@ -23,9 +23,9 @@ const foo = new Job({
 	}),
 	priority: () => Math.floor(Math.random() * 10),
 }, async ({ k, parity }) => {
-	const iter = await Job.run('random-iter', () => Math.ceil(Math.random() * 10))
+	const iter = await Job.run('random-iter', () => Math.ceil(Math.random() * k))
 	for (let i = 0; i < iter; i++) {
-		await Job.sleep(Math.random() * 8_000 + 2_000)
+		await Job.sleep(Math.random() * k * 500 + 2_000)
 		await Promise.all([
 			Job.run({ id: 'some-task', retry: 40, backoff: "10s" }, async () => {
 				await new Promise(resolve => setTimeout(resolve, 500))
@@ -35,7 +35,7 @@ const foo = new Job({
 				return 3
 			}),
 			Job.sleep("1s").then(() => Job.run('other-task', async () => {
-				await new Promise(resolve => setTimeout(resolve, Math.random() * 500 + 500))
+				await new Promise(resolve => setTimeout(resolve, Math.random() * k * 50 + 500))
 				return 3
 			}))
 		])
@@ -81,6 +81,12 @@ const server = http.createServer((req, res) => {
 	if (!url.pathname.startsWith('/api')) {
 		res.writeHead(404)
 		res.end()
+		return
+	}
+
+	if (url.pathname === '/api/now') {
+		res.writeHead(200, { 'Content-Type': 'text/plain' })
+		res.end(String(dateStmt.get()!.date))
 		return
 	}
 

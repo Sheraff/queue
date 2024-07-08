@@ -62,12 +62,18 @@ export function Graph({
 
 	const adjustedEnd = adjustDate(endDate)
 	const adjustedInterval = adjustedEnd - minDate
+	const eventDensity = stdDev / 2 / adjustedInterval * 100
+	const wAdjust = eventDensity < 1 ? (1 - eventDensity) * 150 : 0
+
 	const fullStep = useRef(false)
 
 	return (
-		<div className="py-4" onMouseLeave={() => setHoveredEvent([])}>
+		<div className="py-4 overflow-x-auto" onMouseLeave={() => setHoveredEvent([])}>
 			<div
-				className="relative overflow-x-auto max-w-full z-0"
+				className="relative z-0 transition-all w-full"
+				style={{
+					width: wAdjust ? `${100 + wAdjust}%` : '100%',
+				}}
 				onMouseMove={(e) => {
 					if (fullStep.current) return
 					const x = e.clientX
@@ -199,9 +205,9 @@ function StepDisplay({
 }) {
 	const types = events.map(event => event.key.split('/').pop())
 	const bgs = []
-	for (let i = 1; i <= types.length; i++) {
+	for (let i = 1; i < types.length; i++) {
 		const eventStart = adjustDate(events[i - 1].created_at)
-		const eventEnd = adjustDate(i === types.length ? end : events[i].created_at)
+		const eventEnd = adjustDate(events[i].created_at)
 		const width = (eventEnd - eventStart) / (end - start) * 100
 		const left = (eventStart - start) / (end - start) * 100
 		const type = types[i]

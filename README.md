@@ -297,7 +297,8 @@ These options provide a flexible way to manage the execution of jobs, especially
 
 <img width="1800" alt="Screenshot 2024-07-08 at 16 53 20" src="https://github.com/Sheraff/queue/assets/1325721/73e88a1d-d24a-4915-b9df-14d7075fe5dd">
 
-<img width="1781" alt="Screenshot 2024-07-08 at 16 54 16" src="https://github.com/Sheraff/queue/assets/1325721/3d9c5c25-6747-4d47-b917-d65303483638">
+<img width="1799" alt="Screenshot 2024-07-08 at 19 36 44" src="https://github.com/Sheraff/queue/assets/1325721/3be39896-2a29-491a-b9c4-42d59566cdba">
+
 
 
 

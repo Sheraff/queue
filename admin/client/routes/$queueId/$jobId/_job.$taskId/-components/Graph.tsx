@@ -1,4 +1,4 @@
-import { Fragment, useRef, type ElementType } from "react"
+import { Fragment, useRef, type ReactElement } from "react"
 import type { Step, Event, Task } from 'queue'
 import clsx from "clsx"
 import { cleanEventName } from "./utils"
@@ -235,20 +235,20 @@ function StepDisplay({
 				)}
 				style={{ top: '0.5em', }}
 			>
-				<Icon className="shrink-0 ml-1 h-4 w-4" />
+				{Icon}
 				{` ${step.step} `}
 			</span>
 		</div>
 	)
 }
 
-const status: Record<Step['status'], ElementType> = {
-	completed: CircleCheckBig,
-	failed: CircleX,
-	pending: CircleDashed,
-	running: Spin,
-	stalled: Clock,
-	waiting: Workflow,
+const status: Record<Step['status'], ReactElement> = {
+	completed: <CircleCheckBig className="shrink-0 ml-1 h-4 w-4 text-emerald-500" />,
+	failed: <CircleX className="shrink-0 ml-1 h-4 w-4 text-red-500" />,
+	pending: <CircleDashed className="shrink-0 ml-1 h-4 w-4 text-stone-700 dark:text-stone-300" />,
+	running: <Spin className="shrink-0 ml-1 h-4 w-4 text-amber-500" />,
+	stalled: <Clock className="shrink-0 ml-1 h-4 w-4 text-cyan-700 dark:text-cyan-300" />,
+	waiting: <Workflow className="shrink-0 ml-1 h-4 w-4 text-purple-500" />,
 }
 
 function Spin({ className }: { className?: string }) {

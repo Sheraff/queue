@@ -24,7 +24,7 @@ function Task() {
 	const { queueId, jobId, taskId } = Route.useParams()
 	const { tasks } = useJobContext()
 
-	const task = tasks.find(task => String(task.id) === String(taskId))
+	const task = tasks.find(task => String(task.id) === taskId)
 	if (!task) throw notFound()
 
 	const { data, isFetching } = useQuery({
@@ -53,7 +53,7 @@ function Task() {
 		<div className="flex-1">
 			<h2 className="text-xl">Task {task.input}{isFetching && ' - fetching'}</h2>
 			{parent && <Button asChild>
-				<Link to="/$queueId/$jobId/$taskId" params={{ queueId, jobId: parent.job, taskId: parent.id }}>parent</Link>
+				<Link to="/$queueId/$jobId/$taskId" params={{ queueId, jobId: parent.job, taskId: String(parent.id) }}>parent</Link>
 			</Button>}
 			<Code language="json">
 				{JSON.stringify(task, null, 2)}

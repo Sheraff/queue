@@ -197,6 +197,10 @@
     .hljs-strong {
       @apply font-bold;
     }
+
+    .hljs .linenumber {
+      @apply text-zinc-300;
+    }
   }
 
   .dark {
@@ -375,6 +379,10 @@
     .hljs-deletion {
       @apply text-red-500/55;
       @apply italic;
+    }
+
+    .hljs .linenumber {
+      @apply text-zinc-700;
     }
   }
 }

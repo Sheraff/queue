@@ -45,7 +45,7 @@ function Task() {
 		queryFn: async () => {
 			const res = await fetch(`/api/source/${task.job}`)
 			const text = await res.text()
-			return text
+			return text.trim()
 		},
 		staleTime: Infinity,
 	})
@@ -88,7 +88,7 @@ function Task() {
 						</TabsContent>
 						{source && (
 							<TabsContent value="source">
-								<Code language="javascript">
+								<Code language="javascript" showLineNumbers>
 									{source}
 								</Code>
 							</TabsContent>

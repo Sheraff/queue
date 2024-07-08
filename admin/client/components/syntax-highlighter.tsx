@@ -5,8 +5,8 @@ import json from 'react-syntax-highlighter/dist/esm/languages/hljs/json'
 LightAsync.registerLanguage('javascript', js)
 LightAsync.registerLanguage('json', json)
 
-export function Code({ children, language = 'javascript', className }: { children: string, language?: 'javascript' | 'json', className?: string }) {
-	return <LightAsync language={language} style={{}} className={className} useInlineStyles={false}>
+export function Code({ children, language = 'javascript', className, showLineNumbers }: { children: string, language?: 'javascript' | 'json', className?: string, showLineNumbers?: boolean }) {
+	return <LightAsync language={language} style={{}} className={className} useInlineStyles={false} showLineNumbers={showLineNumbers}>
 		{children}
 	</LightAsync>
 }

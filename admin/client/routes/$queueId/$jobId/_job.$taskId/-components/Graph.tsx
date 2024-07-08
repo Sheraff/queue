@@ -1,4 +1,4 @@
-import { Fragment, useRef, type ReactElement } from "react"
+import { Fragment, useLayoutEffect, useRef, type ReactElement } from "react"
 import type { Step, Event, Task } from 'queue'
 import clsx from "clsx"
 import { cleanEventName } from "./utils"
@@ -62,17 +62,43 @@ export function Graph({
 
 	const adjustedEnd = adjustDate(endDate)
 	const adjustedInterval = adjustedEnd - minDate
-	const eventDensity = stdDev / 2 / adjustedInterval * 100
-	const wAdjust = eventDensity < 1 ? (1 - eventDensity) * 150 : 0
+	// const eventDensity = stdDev / 2 / adjustedInterval * 100
+	const wAdjust = Math.max(adjustedInterval * 2 / stdDev, 100) // <= an interval of the size "stdDev / 2" should be at least 1% of the width
 
 	const fullStep = useRef(false)
 
+	// stick to the right side
+	const scrollable = useRef<HTMLDivElement>(null)
+	const lastRender = useRef(false)
+	useLayoutEffect(() => {
+		const el = scrollable.current
+		if (!el) return
+
+		if (lastRender.current) {
+			el.scrollTo({ left: el.scrollWidth - el.clientWidth, behavior: 'smooth' })
+		}
+
+		return () => {
+			const b = el.scrollWidth - el.clientWidth
+			if (!b) {
+				lastRender.current = false
+			} else {
+				const a = el.scrollLeft
+				lastRender.current = Math.abs(a - b) < 20
+			}
+		}
+	})
+
 	return (
-		<div className="py-4 overflow-x-auto" onMouseLeave={() => setHoveredEvent([])}>
+		<div
+			ref={scrollable}
+			className="py-4 overflow-x-auto"
+			onMouseLeave={() => setHoveredEvent([])}
+		>
 			<div
-				className="relative z-0 transition-all w-full"
+				className="relative z-0 transition-all"
 				style={{
-					width: wAdjust ? `${100 + wAdjust}%` : '100%',
+					width: `${wAdjust}%`,
 				}}
 				onMouseMove={(e) => {
 					if (fullStep.current) return
@@ -101,40 +127,51 @@ export function Graph({
 					const width = (end - start) / adjustedInterval * 100
 					const isHovered = Boolean(hoveredEvent.length) && hoveredEvent.some(i => cleanEventName(data.events[i].key, job).startsWith(step.step))
 					const events = data.events.filter((event) => event.key.startsWith(`step/${job.job}/${step.step}/`))
-					return (
-						<Fragment key={i}>
-							{i > 0 && step.discovered_on !== data.steps[i - 1].discovered_on && (
-								<div className="relative w-full h-px my-2 z-0 bg-stone-200 dark:bg-stone-800" />
-							)}
-							<HoverCard open={step.source ? undefined : false}>
-								<HoverCardTrigger
-									className="block relative z-10 transition-all whitespace-nowrap my-1"
-									style={{
-										left: `${left}%`,
-										width: `${width}%`,
-									}}
-									onMouseEnter={() => {
-										fullStep.current = true
-										setHoveredEvent(events.map((event) => data.events.indexOf(event)))
-									}}
-									onMouseLeave={() => {
-										fullStep.current = false
-									}}
-								>
-									<StepDisplay
-										step={step}
-										isHovered={isHovered}
-										events={events}
-										start={start}
-										end={end}
-										adjustDate={adjustDate}
-										rtl={start > minDate + adjustedInterval * .75}
-									/>
+
+					let content = (
+						<div
+							className="block relative z-10 transition-all whitespace-nowrap my-1"
+							style={{
+								left: `${left}%`,
+								width: `${width}%`,
+							}}
+							onMouseEnter={() => {
+								fullStep.current = true
+								setHoveredEvent(events.map((event) => data.events.indexOf(event)))
+							}}
+							onMouseLeave={() => {
+								fullStep.current = false
+							}}
+						>
+							<StepDisplay
+								step={step}
+								isHovered={isHovered}
+								events={events}
+								start={start}
+								end={end}
+								adjustDate={adjustDate}
+								rtl={start > minDate + adjustedInterval * .75}
+							/>
+						</div>
+					)
+					if (step.source) {
+						content = (
+							<HoverCard>
+								<HoverCardTrigger asChild>
+									{content}
 								</HoverCardTrigger>
 								<HoverCardContent className="w-fit">
 									<Code language="javascript">{step.source}</Code>
 								</HoverCardContent>
 							</HoverCard>
+						)
+					}
+					return (
+						<Fragment key={i}>
+							{i > 0 && step.discovered_on !== data.steps[i - 1].discovered_on && (
+								<div className="relative w-full h-px my-2 z-0 bg-stone-200 dark:bg-stone-800" />
+							)}
+							{content}
 						</Fragment>
 					)
 				})}

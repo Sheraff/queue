@@ -8,11 +8,11 @@ import {
 } from "queue"
 import Database from "better-sqlite3"
 import { z } from "zod"
+import { format } from "prettier"
 
 type Step = object
 type Task = object
 type Event = object
-
 
 const foo = new Job({
 	id: 'foo',
@@ -74,7 +74,6 @@ const getData = (queue: Queue, origin: number) => {
 	return data
 }
 
-
 // Create an HTTP server
 const server = http.createServer((req, res) => {
 	const url = new URL(req.url || '', `http://${req.headers.host}`)
@@ -101,6 +100,25 @@ const server = http.createServer((req, res) => {
 		res.writeHead(200, { 'Content-Type': 'application/json' })
 		res.end(JSON.stringify(Object.keys(queue.jobs), null, '\t'))
 		return
+	}
+
+	const source = url.pathname.match(/^\/api\/source\/(.+)$/)
+	if (source) {
+		if (!(source[1] in queue.jobs)) {
+			res.writeHead(404, { 'Content-Type': 'application/json' })
+			res.end(JSON.stringify({ error: 'not found' }, null, '\t'))
+			return
+		}
+		const job = queue.jobs[source[1] as keyof typeof queue.jobs]!
+		return format(job.string, { parser: "typescript", semi: false })
+			.then((str) => {
+				res.writeHead(200, { 'Content-Type': 'text/plain' })
+				res.end(str)
+			})
+			.catch((error) => {
+				res.writeHead(500, { 'Content-Type': 'application/json' })
+				res.end(JSON.stringify({ error: error.message }, null, '\t'))
+			})
 	}
 
 	const job = url.pathname.match(/^\/api\/jobs\/(.+)$/)

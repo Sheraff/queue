@@ -96,6 +96,8 @@ export class Job<
 	readonly triggers: NoInfer<Array<Pipe<string, InputData> | PipeInto<any, InputData>>> | undefined
 	/** @package */
 	readonly cron: string | string[] | undefined
+	/** @package */
+	readonly string: string
 
 	readonly #emitter = new EventEmitter<EventMap<In, Out>>()
 	readonly type = 'job'
@@ -186,6 +188,12 @@ export class Job<
 		this.output = opts.output ?? null
 		this.triggers = opts.triggers as Array<Pipe<string, InputData> | PipeInto<any, InputData>>
 		this.cron = opts.cron
+
+		this.string = `new Job({ ${Object.entries(opts).map(([key, value]) => {
+			if (typeof value === 'function') return `${key}: ${value.toString()}`
+			if (key === 'input' || key === 'output') return `${key}: ParserObject`
+			return `${key}: ${JSON.stringify(value)}`
+		}).join(', ')} }, ${fn.toString()})`
 
 		if (this.cron && this.input) {
 			try {

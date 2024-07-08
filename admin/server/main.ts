@@ -1,18 +1,15 @@
-// Import the necessary module using ES Module syntax
 import http from 'http'
 import {
 	Queue,
 	SQLiteStorage,
-	// type Step, type Task, type Event, 
-	Job
+	Job,
+	type Step,
+	type Task,
+	type Event,
 } from "queue"
 import Database from "better-sqlite3"
 import { z } from "zod"
 import { format } from "prettier"
-
-type Step = object
-type Task = object
-type Event = object
 
 const foo = new Job({
 	id: 'foo',
@@ -148,9 +145,8 @@ const server = http.createServer((req, res) => {
 			res.end(JSON.stringify({ error: 'not found' }, null, '\t'))
 			return
 		}
-		res.writeHead(200, { 'Content-Type': 'application/json' })
 
-		const steps = db.prepare('SELECT * FROM steps WHERE task_id = @id ORDER BY created_at ASC').all({ id })
+		const steps = db.prepare('SELECT * FROM steps WHERE task_id = @id ORDER BY created_at ASC').all({ id }) as Step[]
 
 		const events = db.prepare('SELECT * FROM events WHERE queue = @queue AND input = @input AND (key LIKE @job OR key LIKE @step) ORDER BY created_at ASC').all({
 			queue: queue.id,
@@ -161,8 +157,15 @@ const server = http.createServer((req, res) => {
 
 		const date = dateStmt.get()!.date as number
 
-		res.end(JSON.stringify({ steps, events, date }, null, '\t'))
-		return
+		return Promise.all(steps.map(async (step) => step.source = await format(step.source, { parser: "typescript", semi: false })))
+			.then(() => {
+				res.writeHead(200, { 'Content-Type': 'application/json' })
+				res.end(JSON.stringify({ steps, events, date }, null, '\t'))
+			})
+			.catch((error) => {
+				res.writeHead(500, { 'Content-Type': 'application/json' })
+				res.end(JSON.stringify({ error: error.message }, null, '\t'))
+			})
 	}
 
 	const param = url.searchParams.get('cursor')

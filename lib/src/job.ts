@@ -369,8 +369,9 @@ export class Job<
 	/** @public */
 	static async sleep(ms: number | Duration): Promise<void> {
 		const e = getExecutionContext()
+		const duration = ms
 		if (typeof ms === 'string') ms = parseDuration(ms)
-		return e.sleep(ms)
+		return e.sleep(ms, { duration })
 	}
 
 	/** @public */
@@ -451,6 +452,8 @@ export class Job<
 						} catch (cause) {
 							throw new NonRecoverableError('Input parsing failed', { cause })
 						}
+					}, {
+						source: ''
 					})
 				}
 
@@ -467,6 +470,8 @@ export class Job<
 						} catch (cause) {
 							throw new NonRecoverableError('Output parsing failed', { cause })
 						}
+					}, {
+						source: ''
 					})
 				}
 			} catch (error) {
@@ -523,7 +528,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		return i
 	}
 
-	const run: ExecutionContext['run'] = (options, fn) => {
+	const run: ExecutionContext['run'] = (options, fn, internals) => {
 		if (controller.signal.aborted) {
 			return Promise.reject(interrupt)
 		}
@@ -553,13 +558,14 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		let canRetry = false
 		let syncResult: Data
 		let syncError: unknown
+		const source = entry ? null : internals?.source ?? `Job.run("${options.id}", ${fn.toString()})`
 
 		const onSuccess = (data: Data) => {
 			registrationContext.recordEvent(`step/${task.job}/${step}/success`, task.input, JSON.stringify({ data, runs }))
 			return syncOrPromise<void>(resolve => {
 				registrationContext.recordStep(
 					task,
-					{ step, status: 'completed', data: JSON.stringify(data), runs, discovered_on: task.loop },
+					{ step, status: 'completed', data: JSON.stringify(data), runs, discovered_on: task.loop, source },
 					resolve
 				)
 			})
@@ -577,7 +583,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				if (!canRetry) {
 					return registrationContext.recordStep(
 						task,
-						{ step, status: 'failed', data: serializeError(error), runs, discovered_on: task.loop },
+						{ step, status: 'failed', data: serializeError(error), runs, discovered_on: task.loop, source },
 						resolve
 					)
 				}
@@ -585,13 +591,13 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				if (!delay) {
 					return registrationContext.recordStep(
 						task,
-						{ step, status: 'pending', data: null, runs, discovered_on: task.loop },
+						{ step, status: 'pending', data: null, runs, discovered_on: task.loop, source },
 						resolve
 					)
 				}
 				registrationContext.recordStep(
 					task,
-					{ step, status: 'stalled', data: null, runs, sleep_for: delay / 1000, next_status: 'pending', discovered_on: task.loop },
+					{ step, status: 'stalled', data: null, runs, sleep_for: delay / 1000, next_status: 'pending', discovered_on: task.loop, source },
 					resolve
 				)
 			})
@@ -622,7 +628,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				promises.push(new Promise<Data>(resolve =>
 					registrationContext.recordStep(
 						task,
-						{ step, status: 'running', data: null, runs, discovered_on: task.loop },
+						{ step, status: 'running', data: null, runs, discovered_on: task.loop, source },
 						() => resolve(promise)
 					))
 					.then(onSuccess)
@@ -659,6 +665,11 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 	}
 
 	const thread: ExecutionContext['thread'] = (options, fn, input) => {
+		const internals = {
+			get source() {
+				return `Job.thread("${options.id}", ${fn.toString()})`
+			}
+		}
 		return run(options, async ({ signal }) => {
 			const workerFn = `
 				const { parentPort, workerData } = require('worker_threads')
@@ -698,10 +709,10 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 						reject(new Error(`Worker stopped with exit code ${code}`))
 				})
 			})
-		})
+		}, internals)
 	}
 
-	const sleep: ExecutionContext['sleep'] = (ms) => {
+	const sleep: ExecutionContext['sleep'] = (ms, internals) => {
 		if (controller.signal.aborted) {
 			return Promise.reject(interrupt)
 		}
@@ -717,10 +728,11 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 			}
 		}
 		const status = ms <= 0 ? 'completed' : 'stalled'
+		const source = entry ? null : `Job.sleep(${JSON.stringify(internals?.duration ?? ms)})`
 		const maybePromise = syncOrPromise<void>(resolve => {
 			registrationContext.recordStep(
 				task,
-				{ step, status, data: null, sleep_for: ms / 1000, runs: 0, next_status: 'completed', discovered_on: task.loop },
+				{ step, status, data: null, sleep_for: ms / 1000, runs: 0, next_status: 'completed', discovered_on: task.loop, source },
 				resolve
 			)
 		})
@@ -762,6 +774,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 			: `pipe/${instance.id}`
 
 		const timeout = resolveStepTimeout(options.timeout)
+		const source = `Job.waitFor(queue.${instance.type}s["${instance.id}"], ${event}, ${JSON.stringify(options, null, 2)})`
 
 		const maybePromise = syncOrPromise<void>(resolve => {
 			registrationContext.recordStep(
@@ -775,7 +788,8 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 					wait_filter: options.filter ? JSON.stringify(options.filter) : '{}', // TODO: query might be more performant if we supported the null filter case
 					runs: 0,
 					timeout,
-					discovered_on: task.loop
+					discovered_on: task.loop,
+					source,
 				},
 				resolve
 			)
@@ -786,7 +800,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		return Promise.reject(interrupt)
 	}
 
-	const dispatch: ExecutionContext['dispatch'] = (instance, data) => {
+	const dispatch: ExecutionContext['dispatch'] = (instance, data, internals) => {
 		if (controller.signal.aborted) {
 			return Promise.reject(interrupt)
 		}
@@ -796,6 +810,10 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 			retry: 0,
 		}, () => {
 			instance.dispatch(data)
+		}, internals ?? {
+			get source() {
+				return `Job.dispatch(queue.${instance.type}s["${instance.id}"], ${JSON.stringify(data, null, 2)})`
+			}
 		})
 	}
 
@@ -804,7 +822,11 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 			return Promise.reject(interrupt)
 		}
 		const promise = waitFor(job, 'settled', { ...options, filter: input })
-		await dispatch(job, input)
+		await dispatch(job, input, {
+			get source() {
+				return `Job.invoke(queue.jobs["${job.id}"], ${JSON.stringify(input, null, 2)})`
+			}
+		})
 		const { result, error, reason } = (await promise) as { result: Data, error: unknown, reason: CancelReason }
 		if (error) throw error
 		if (reason) throw new NonRecoverableError(`Job was cancelled "${reason.type}"`)
@@ -821,6 +843,10 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 			retry: 0
 		}, () => {
 			instance.cancel(data, reason)
+		}, {
+			get source() {
+				return `Job.cancel(queue.${instance.type}s["${instance.id}"], ${JSON.stringify(data, null, 2)}, ${JSON.stringify(reason)})`
+			}
 		})
 	}
 

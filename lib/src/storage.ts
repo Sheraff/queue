@@ -84,6 +84,8 @@ export type Step = {
 	wait_retroactive?: boolean | null
 
 	data: string | null
+
+	source: string
 }
 
 export type Event = {
@@ -152,6 +154,7 @@ export interface Storage {
 	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs'> & {
 		sleep_for?: number | null
 		timeout?: number | null
+		source?: string | null
 	}, cb: () => T): T | Promise<T>
 	/** Append event to table */
 	recordEvent<T>(queue: string, key: string, input: string, data: string, cb?: () => T): T | Promise<T>
@@ -274,7 +277,8 @@ export class SQLiteStorage implements Storage {
 				wait_for TEXT,
 				wait_filter JSON,
 				wait_from REAL,
-				data JSON
+				data JSON,
+				source TEXT
 			);
 		
 			CREATE UNIQUE INDEX IF NOT EXISTS ${stepsTable}_job_key_step ON ${stepsTable} (queue, job, key, step);
@@ -687,6 +691,7 @@ export class SQLiteStorage implements Storage {
 			wait_from: number | null
 			discovered_on: number | null
 			data: string | null
+			source: string | null
 		}>(/* sql */ `
 			INSERT INTO ${stepsTable} (
 				queue,
@@ -703,7 +708,8 @@ export class SQLiteStorage implements Storage {
 				wait_filter,
 				wait_from,
 				discovered_on,
-				data
+				data,
+				source
 			)
 			VALUES (
 				@queue,
@@ -720,7 +726,8 @@ export class SQLiteStorage implements Storage {
 				@wait_filter,
 				CASE @wait_retroactive WHEN TRUE THEN 0 ELSE (unixepoch('subsec')) END,
 				@discovered_on,
-				@data
+				@data,
+				@source
 			)
 			ON CONFLICT (queue, job, key, step)
 			DO UPDATE SET
@@ -858,6 +865,7 @@ export class SQLiteStorage implements Storage {
 		wait_from: number | null
 		discovered_on: number | null
 		data: string | null
+		source: string | null
 	}>
 	#recordEventStmt!: BetterSqlite3.Statement<{ queue: string, key: string, input: string, data: string }>
 
@@ -905,6 +913,7 @@ export class SQLiteStorage implements Storage {
 	recordStep<T>(task: Task, step: Pick<Step, 'step' | 'status' | 'next_status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs' | 'discovered_on'> & {
 		sleep_for?: number
 		timeout?: number
+		source?: string
 	}, cb: () => T): T {
 		this.#recordStepStmt.run({
 			queue: task.queue,
@@ -922,7 +931,8 @@ export class SQLiteStorage implements Storage {
 			wait_retroactive: Number(step.wait_retroactive) ?? null,
 			wait_from: null,
 			discovered_on: step.discovered_on,
-			step: step.step
+			step: step.step,
+			source: step.source ?? null,
 		})
 		return cb()
 	}

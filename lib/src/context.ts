@@ -43,6 +43,7 @@ export interface RegistrationContext {
 		step: Pick<Step, 'step' | 'status' | 'next_status' | 'data' | 'wait_for' | 'wait_filter' | 'wait_retroactive' | 'runs' | 'discovered_on'> & {
 			sleep_for?: number | null
 			timeout?: number | null
+			source?: string | null
 		},
 		cb: () => T
 	): T | Promise<T>
@@ -77,7 +78,7 @@ export const registration = new AsyncLocalStorage<RegistrationContext>()
 
 
 export interface ExecutionContext {
-	run<Out extends Data>(options: RunOptions, fn: (utils: { signal: AbortSignal }) => Out | Promise<Out>): Promise<Out>
+	run<Out extends Data>(options: RunOptions, fn: (utils: { signal: AbortSignal }) => Out | Promise<Out>, internals?: { source?: string | null }): Promise<Out>
 	thread<
 		Out extends Data,
 		In extends Data = undefined
@@ -86,10 +87,10 @@ export interface ExecutionContext {
 		fn: (input: In, utils: { signal: AbortSignal }) => Out | Promise<Out>,
 		input?: In
 	): Promise<Out>
-	sleep(ms: number): Promise<void> | void
+	sleep(ms: number, internals?: { duration?: string | number }): Promise<void> | void
 	waitFor(instance: Job | Pipe, event: string, options: WaitForOptions<InputData>): Promise<Data> | void
 	invoke(job: Job, data: InputData, options?: Omit<WaitForOptions<InputData>, 'filter' | 'retroactive'>): Promise<Data>
-	dispatch(instance: Job | Pipe, data: InputData): Promise<void>
+	dispatch(instance: Job | Pipe, data: InputData, internals?: { source?: string | null }): Promise<void>
 	cancel(instance: Job, input: InputData, reason: CancelReason): Promise<void>
 	promises: Promise<unknown>[]
 	controller: AbortController

@@ -3,13 +3,14 @@ import { createFileRoute, Outlet } from '@tanstack/react-router'
 import { Link } from '@tanstack/react-router'
 import { Button } from "client/components/ui/button"
 
-const jobsQueryOpts = (queueId: string) => ({
+export const jobsQueryOpts = (queueId?: string) => ({
   queryKey: [queueId, 'jobs'],
   queryFn: async () => {
     const res = await fetch(`/api/jobs?queue=${queueId}`)
     const json = await res.json()
     return json as string[]
-  }
+  },
+  enabled: Boolean(queueId),
 }) satisfies UseQueryOptions
 
 export const Route = createFileRoute('/$queueId/')({

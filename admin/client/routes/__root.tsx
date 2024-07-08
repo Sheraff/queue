@@ -1,5 +1,5 @@
 import { useQuery, useSuspenseQuery, type QueryClient, type UseQueryOptions } from "@tanstack/react-query"
-import { createRootRouteWithContext, Link, Outlet, redirect, useNavigate, useParams } from '@tanstack/react-router'
+import { createRootRouteWithContext, Link, Outlet, useNavigate, useParams } from '@tanstack/react-router'
 import { ModeToggle } from "client/components/mode-toggle"
 import { TimeDisplayToggle } from "client/components/time-display-toggle"
 import { TanStackRouterDevtools } from '@tanstack/router-devtools'
@@ -7,7 +7,7 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { Button } from "client/components/ui/button"
 import { jobsQueryOpts } from "client/routes/$queueId"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "client/components/ui/dropdown-menu"
-import { ChevronRight } from "lucide-react"
+import { ChevronRight, Home } from "lucide-react"
 
 const queueOptions = {
 	queryKey: ['queues'],
@@ -24,11 +24,18 @@ function SelectNav() {
 	const nav = useNavigate()
 	const { data: jobs } = useQuery(jobsQueryOpts(queueId))
 	return (
-		<>
+		<nav className="flex gap-1 items-center">
+			<Button variant="ghost" size="icon" asChild>
+				<Link to="/">
+					<Home className="h-4 w-4" />
+				</Link>
+			</Button>
+			<ChevronRight className="h-4 w-4" />
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button variant="ghost">
-						{queueId ? queueId : "Select a queue"}
+						{queueId}
+						{!queueId && <span className="text-stone-400 dark:text-stone-600">{'<queue>'}</span>}
 					</Button>
 				</DropdownMenuTrigger>
 				<DropdownMenuContent align="start">
@@ -44,7 +51,8 @@ function SelectNav() {
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
 						<Button variant="ghost">
-							{jobId ? jobId : "Select a job"}
+							{jobId}
+							{!jobId && <span className="text-stone-400 dark:text-stone-600">{'<job>'}</span>}
 						</Button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="start">
@@ -64,31 +72,30 @@ function SelectNav() {
 					</DropdownMenuContent>
 				</DropdownMenu>
 			)}
-		</>
+		</nav>
 	)
 }
 
 export const Route = createRootRouteWithContext<{ client: QueryClient }>()({
-	loader: async ({ context, params }) => {
-		const data = await context.client.ensureQueryData(queueOptions)
-		if ('queueId' in params) return
-		throw redirect({
-			to: "/$queueId",
-			params: { queueId: data[0] },
-		})
+	loader: async ({ context }) => {
+		const queues = await context.client.ensureQueryData(queueOptions)
+		return { queues }
 	},
 	component: () => (
 		<>
-			<nav className="flex p-4 gap-2 items-center">
+			<header className="flex p-4 gap-2">
 				<SelectNav />
 				<div className="flex-1" />
 				<TimeDisplayToggle />
 				<ModeToggle />
-			</nav>
+			</header>
 			<hr />
 			<Outlet />
 			<hr className="mt-8" />
 			<footer className="flex justify-center flex-wrap gap-2 p-8 text-center text-xs text-gray-500">
+				<Button asChild variant="link">
+					<Link to="/">Home</Link>
+				</Button>
 				<Button asChild variant="link">
 					<Link to="/about">About</Link>
 				</Button>

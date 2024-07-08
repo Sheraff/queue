@@ -7,7 +7,7 @@ export const jobQueryOpts = (queueId: string, job: string, liveRefresh: boolean)
 	queryFn: async () => {
 		const res = await fetch(`/api/jobs/${job}`)
 		const json = await res.json()
-		return json
+		return json as Task[]
 	},
 	select: (data) => data.sort((a, b) => b.created_at - a.created_at),
 	refetchInterval: liveRefresh ? 5000 : false,

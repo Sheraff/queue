@@ -5,7 +5,8 @@ import { useState } from "react"
 
 export const Route = createFileRoute('/$queueId/$jobId/_job')({
 	loader: async ({ context, params }) => {
-		await context.client.ensureQueryData(jobQueryOpts(params.queueId, params.jobId, true))
+		const tasks = await context.client.ensureQueryData(jobQueryOpts(params.queueId, params.jobId, true))
+		return { tasks }
 	},
 	component: Layout
 })

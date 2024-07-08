@@ -15,7 +15,8 @@ export const jobsQueryOpts = (queueId?: string) => ({
 
 export const Route = createFileRoute('/$queueId/')({
   async loader({ context, params }) {
-    await context.client.ensureQueryData(jobsQueryOpts(params.queueId))
+    const jobs = await context.client.ensureQueryData(jobsQueryOpts(params.queueId))
+    return { jobs }
   },
   component: Queue
 })

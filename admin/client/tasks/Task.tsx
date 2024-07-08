@@ -152,7 +152,7 @@ function Graph({
 					const end = adjustDate(step.status === 'stalled' || step.status === 'waiting' || step.status === 'running' ? endDate : step.updated_at)
 					const width = (end - start) / adjustedInterval * 100
 					const isHovered = Boolean(hoveredEvent.length) && hoveredEvent.some(i => cleanEventName(data.events[i].key, job).startsWith(step.step))
-					const events = data.events.filter((event) => event.key.startsWith(`step/${job.job}/${step.step}`))
+					const events = data.events.filter((event) => event.key.startsWith(`step/${job.job}/${step.step}/`))
 					return (
 						<Fragment key={i}>
 							{i > 0 && step.discovered_on !== data.steps[i - 1].discovered_on && (

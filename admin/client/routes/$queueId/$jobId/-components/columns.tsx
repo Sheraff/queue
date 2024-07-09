@@ -120,7 +120,7 @@ export const columns: ColumnDef<Task>[] = [
 
 			return (
 				<Code language="json">
-					{str}
+					{str || '{}'}
 				</Code>
 			)
 		},

@@ -65,6 +65,7 @@ function Task() {
 	return (
 		<div className="flex-1">
 			<h2 className="text-xl">Task {task.input}{isFetching && ' - fetching'}</h2>
+			{task.parent_id && !parent && <Button disabled>parent</Button>}
 			{parent && <Button asChild>
 				<Link to="/$queueId/$jobId/$taskId" params={{ queueId, jobId: parent.job, taskId: String(parent.id) }}>parent</Link>
 			</Button>}

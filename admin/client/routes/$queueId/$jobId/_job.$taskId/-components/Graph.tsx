@@ -37,7 +37,7 @@ export function Graph({
 	}
 	const average = intervals.reduce((acc, val) => acc + val, 0) / intervals.length
 	const stdDev = Math.sqrt(intervals.reduce((acc, val) => acc + (val - average) ** 2, 0) / intervals.length)
-	const longDuration = stdDev * 3
+	const longDuration = average + stdDev * 2
 
 	const longIntervals: [number, number][] = []
 	for (let i = 0; i < data.events.length - 1; i++) {
@@ -53,7 +53,7 @@ export function Graph({
 	const stdDevWithoutLong = Math.sqrt(withoutLong.reduce((acc, val) => acc + (val - averageWithoutLong) ** 2, 0) / withoutLong.length)
 	const maxWithoutLong = Math.max(...withoutLong)
 
-	const adjustedLongEvent = Math.max(maxWithoutLong * 1.5, stdDevWithoutLong * 3)
+	const adjustedLongEvent = Math.max(maxWithoutLong * 1.5, averageWithoutLong + stdDevWithoutLong * 2)
 
 	function adjustDate(date: number) {
 		const before = longIntervals.filter(([, b]) => b <= date)
@@ -62,8 +62,8 @@ export function Graph({
 
 	const adjustedEnd = adjustDate(endDate)
 	const adjustedInterval = adjustedEnd - minDate
-	// const eventDensity = stdDev / 2 / adjustedInterval * 100
-	const wAdjust = Math.max(adjustedInterval * 2 / stdDev, 100) // <= an interval of the size "stdDev / 2" should be at least 1% of the width
+	// const eventDensity = (averageWithoutLong - 1 * stdDevWithoutLong) / adjustedInterval * 100
+	const wAdjust = Math.max(adjustedInterval / (averageWithoutLong - 1 * stdDevWithoutLong), 100) // <= an interval of the size "avg - stdDev * 1" should be at least 1% of the width
 
 	const fullStep = useRef(false)
 
@@ -123,7 +123,7 @@ export function Graph({
 				{data.steps.map((step, i) => {
 					const start = adjustDate(step.created_at)
 					const left = (start - minDate) / adjustedInterval * 100
-					const end = adjustDate(step.status === 'stalled' || step.status === 'waiting' || step.status === 'running' ? endDate : step.updated_at)
+					const end = Math.min(adjustedEnd, adjustDate(step.status === 'stalled' || step.status === 'waiting' || step.status === 'running' ? endDate : step.updated_at))
 					const width = (end - start) / adjustedInterval * 100
 					const isHovered = Boolean(hoveredEvent.length) && hoveredEvent.some(i => cleanEventName(data.events[i].key, job).startsWith(step.step))
 					const events = data.events.filter((event) => event.key.startsWith(`step/${job.job}/${step.step}/`))
@@ -157,7 +157,7 @@ export function Graph({
 					if (step.source) {
 						content = (
 							<HoverCard>
-								<HoverCardTrigger asChild>
+								<HoverCardTrigger asChild tabIndex={0}>
 									{content}
 								</HoverCardTrigger>
 								<HoverCardContent className="w-fit">

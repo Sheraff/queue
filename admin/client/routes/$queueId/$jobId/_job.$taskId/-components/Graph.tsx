@@ -1,10 +1,14 @@
-import { Fragment, useLayoutEffect, useRef, type ReactElement } from "react"
+import { Fragment, useLayoutEffect, useRef, useState, type ReactElement } from "react"
 import type { Step, Event, Task } from 'queue'
 import clsx from "clsx"
 import { cleanEventName } from "./utils"
 import { CircleCheckBig, CircleDashed, CircleX, Clock, Workflow } from "lucide-react"
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "client/components/ui/hover-card"
 import { Code } from "client/components/syntax-highlighter"
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "client/components/ui/sheet"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "client/components/ui/tabs"
+import { Card, CardContent, CardHeader } from "client/components/ui/card"
+import { Separator } from "client/components/ui/separator"
+import { useFormatDate } from "client/components/use-format-date"
 
 
 const ACTIVE_STATUSES = [
@@ -89,6 +93,8 @@ export function Graph({
 		}
 	})
 
+	const [sheetData, setSheetData] = useState<{ step: Step, events: Event[] } | null>(null)
+
 	return (
 		<div
 			ref={scrollable}
@@ -120,61 +126,53 @@ export function Graph({
 					setHoveredEvent([i])
 				}}
 			>
-				{data.steps.map((step, i) => {
-					const start = adjustDate(step.created_at)
-					const left = (start - minDate) / adjustedInterval * 100
-					const end = Math.min(adjustedEnd, adjustDate(step.status === 'stalled' || step.status === 'waiting' || step.status === 'running' ? endDate : step.updated_at))
-					const width = (end - start) / adjustedInterval * 100
-					const isHovered = Boolean(hoveredEvent.length) && hoveredEvent.some(i => cleanEventName(data.events[i].key, job).startsWith(step.step))
-					const events = data.events.filter((event) => event.key.startsWith(`step/${job.job}/${step.step}/`))
+				<Sheet>
+					{sheetData && (
+						<StepDetails step={sheetData.step} events={sheetData.events} />
+					)}
 
-					let content = (
-						<div
-							className="block relative z-10 transition-all whitespace-nowrap my-1"
-							style={{
-								left: `${left}%`,
-								width: `${width}%`,
-							}}
-							onMouseEnter={() => {
-								fullStep.current = true
-								setHoveredEvent(events.map((event) => data.events.indexOf(event)))
-							}}
-							onMouseLeave={() => {
-								fullStep.current = false
-							}}
-						>
-							<StepDisplay
-								step={step}
-								isHovered={isHovered}
-								events={events}
-								start={start}
-								end={end}
-								adjustDate={adjustDate}
-								rtl={start > minDate + adjustedInterval * .75}
-							/>
-						</div>
-					)
-					if (step.source) {
-						content = (
-							<HoverCard>
-								<HoverCardTrigger asChild tabIndex={0}>
-									{content}
-								</HoverCardTrigger>
-								<HoverCardContent className="w-fit">
-									<Code language="javascript">{step.source}</Code>
-								</HoverCardContent>
-							</HoverCard>
+					{data.steps.map((step, i) => {
+						const start = adjustDate(step.created_at)
+						const left = (start - minDate) / adjustedInterval * 100
+						const end = Math.min(adjustedEnd, adjustDate(step.status === 'stalled' || step.status === 'waiting' || step.status === 'running' ? endDate : step.updated_at))
+						const width = (end - start) / adjustedInterval * 100
+						const isHovered = Boolean(hoveredEvent.length) && hoveredEvent.some(i => cleanEventName(data.events[i].key, job).startsWith(step.step))
+						const events = data.events.filter((event) => event.key.startsWith(`step/${job.job}/${step.step}/`))
+						return (
+							<Fragment key={i}>
+								{i > 0 && step.discovered_on !== data.steps[i - 1].discovered_on && (
+									<div className="relative w-full h-px my-2 z-0 bg-stone-200 dark:bg-stone-800" />
+								)}
+								<SheetTrigger onPointerEnter={() => setSheetData({ step, events })} asChild>
+									<div
+										className="block relative z-10 transition-all whitespace-nowrap my-1 cursor-pointer"
+										style={{
+											left: `${left}%`,
+											width: `${width}%`,
+										}}
+										onMouseEnter={() => {
+											fullStep.current = true
+											setHoveredEvent(events.map((event) => data.events.indexOf(event)))
+										}}
+										onMouseLeave={() => {
+											fullStep.current = false
+										}}
+									>
+										<StepDisplay
+											step={step}
+											isHovered={isHovered}
+											events={events}
+											start={start}
+											end={end}
+											adjustDate={adjustDate}
+											rtl={start > minDate + adjustedInterval * .75}
+										/>
+									</div>
+								</SheetTrigger>
+							</Fragment>
 						)
-					}
-					return (
-						<Fragment key={i}>
-							{i > 0 && step.discovered_on !== data.steps[i - 1].discovered_on && (
-								<div className="relative w-full h-px my-2 z-0 bg-stone-200 dark:bg-stone-800" />
-							)}
-							{content}
-						</Fragment>
-					)
-				})}
+					})}
+				</Sheet>
 				{longIntervals.map(([a], i) => {
 					const start = adjustDate(a)
 					const left = Math.max(0, (start - minDate) / adjustedInterval) * 100
@@ -309,5 +307,103 @@ function Spin({ className }: { className?: string }) {
 				<animateTransform attributeName="transform" type="rotate" dur="0.75s" values="0 12 12;360 12 12" repeatCount="indefinite" />
 			</path>
 		</svg>
+	)
+}
+
+
+
+function StepDetails({ step, events }: { step: Step, events: Event[] }) {
+	const { source: sheetSource, data: sheetOutput, ...sheetRest } = step
+	return (
+		<SheetContent className="min-w-[50%] w-fit overflow-y-auto">
+			<SheetHeader>
+				<SheetTitle>{step.step}</SheetTitle>
+			</SheetHeader>
+			<Tabs defaultValue="state" className="w-full my-4">
+				<Card className="mt-4">
+					<CardHeader>
+						<TabsList>
+							<TabsTrigger value="state">State</TabsTrigger>
+							{sheetSource && (
+								<TabsTrigger value="source">Source</TabsTrigger>
+							)}
+							{(sheetOutput) && (
+								<TabsTrigger value="output">Output</TabsTrigger>
+							)}
+						</TabsList>
+					</CardHeader>
+					<CardContent>
+						<TabsContent value="state">
+							<Code language="json">
+								{JSON.stringify(sheetRest, null, 2)}
+							</Code>
+						</TabsContent>
+						{sheetSource && (
+							<TabsContent value="source">
+								<Code language="javascript" showLineNumbers>
+									{sheetSource.trim()}
+								</Code>
+							</TabsContent>
+						)}
+						{(sheetOutput) && (
+							<TabsContent value="output">
+								{step.status === 'failed' ? (
+									<ErrorDisplay error={sheetOutput} />
+								) : (
+									<Code language="json">
+										{JSON.stringify(JSON.parse(sheetOutput), null, 2)}
+									</Code>
+								)}
+							</TabsContent>
+						)}
+					</CardContent>
+				</Card>
+			</Tabs>
+
+			{events.map((event, i) => (
+				<Fragment key={i}>
+					{i > 0 && <Separator />}
+					<EventDisplay event={event} step={step} />
+				</Fragment>
+			))}
+
+		</SheetContent>
+	)
+}
+
+function EventDisplay({ event, step }: { event: Event, step: Step }) {
+	const data = event.data && JSON.parse(event.data)
+	const error = data && data.error
+	if (error) data.error = undefined
+	const date = useFormatDate(event.created_at)
+	return (
+		<div className="my-8">
+			<p>{date}</p>
+			<p>{cleanEventName(event.key, step)}</p>
+			{event.data && (
+				<Code language="json">
+					{JSON.stringify(data, null, 2)}
+				</Code>
+			)}
+			{error && (
+				<ErrorDisplay error={error} />
+			)}
+		</div>
+	)
+}
+
+function ErrorDisplay({ error, indent = '' }: { error: string, indent?: string }) {
+	const obj = JSON.parse(error) as { name: string, message: string, stack: string, cause?: string }
+	return (
+		<pre className="whitespace-pre-wrap">
+			<span>{indent}<span className="font-bold">{obj.name}</span>: <span className="italic">{obj.message}</span></span>
+			{obj.stack.split('\n').map((l, i) => (
+				<span className="text-stone-500" key={i}>{`\n${indent}`}{l}</span>
+			))}
+			{obj.cause && (<>
+				{`\n${indent}  `}
+				<ErrorDisplay error={obj.cause} indent={`${indent}  `} />
+			</>)}
+		</pre>
 	)
 }

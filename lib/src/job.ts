@@ -561,6 +561,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		const source = entry ? null : internals?.source ?? `Job.run("${options.id}", ${fn.toString()})`
 
 		const onSuccess = (data: Data) => {
+			// TODO: use logger instead of storage for this event
 			registrationContext.recordEvent(`step/${task.job}/${step}/success`, task.input, JSON.stringify({ data, runs }))
 			return syncOrPromise<void>(resolve => {
 				registrationContext.recordStep(
@@ -578,6 +579,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				if (typeof retry === 'number') canRetry = runs < retry
 				else canRetry = retry(runs, error)
 			}
+			// TODO: use logger instead of storage for this event
 			registrationContext.recordEvent(`step/${task.job}/${step}/error`, task.input, JSON.stringify({ error: serializeError(error), runs }))
 			return syncOrPromise<void>(resolve => {
 				if (!canRetry) {
@@ -624,6 +626,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 					])
 					: maybePromise
 
+				// TODO: use logger instead of storage for this event
 				registrationContext.recordEvent(`step/${task.job}/${step}/run`, task.input, JSON.stringify({ runs }))
 				promises.push(new Promise<Data>(resolve =>
 					registrationContext.recordStep(

@@ -7,6 +7,7 @@ import { getRegistrationContext, hash, hydrateError, interrupt, isInterrupt, isP
 import { parseDuration, parsePeriod, type Duration, type Frequency } from './ms'
 import { type ResourceLimits, SHARE_ENV, Worker } from "worker_threads"
 import { transferableAbortSignal } from "util"
+import { type Logger, system as loggerSystem } from "./logger"
 
 export type CancelReason =
 	| { type: 'timeout' }
@@ -22,7 +23,7 @@ type EventMap<In extends Data, Out extends Data> = {
 	success: [data: { input: In, result: Out }, meta: EventMeta]
 	error: [data: { input: In, error: unknown }, meta: EventMeta]
 	cancel: [data: { input: In, reason: CancelReason }, meta: EventMeta]
-	settled: [data: { input: In, result: Out | null, error: unknown | null, reason: CancelReason | null }, meta: EventMeta]
+	settled: [data: { input: In, result: Out | null, error: unknown | null, reason: CancelReason | null }, meta: EventMeta & { serializedError?: string }]
 }
 
 type Listener<In extends Data, Out extends Data, Event extends keyof EventMap<In, Out>> = (...args: EventMap<In, Out>[Event]) => void
@@ -265,8 +266,9 @@ export class Job<
 			this.#emitter.on('error', ({ input, error }, meta) => {
 				opts.onError?.({ input, error })
 				const registrationContext = getRegistrationContext(this)
-				registrationContext.recordEvent(`job/${this.id}/error`, meta.input, JSON.stringify({ input, error }))
-				setImmediate(() => this.#emitter.emit('settled', { input, result: null, error, reason: null }, meta))
+				const serializedError = serializeError(error)
+				registrationContext.recordEvent(`job/${this.id}/error`, meta.input, JSON.stringify({ input, error: serializedError }))
+				setImmediate(() => this.#emitter.emit('settled', { input, result: null, error, reason: null }, { ...meta, serializedError }))
 			})
 
 			this.#emitter.on('cancel', ({ input, reason }, meta) => {
@@ -287,7 +289,7 @@ export class Job<
 			this.#emitter.on('settled', ({ input, result, error, reason }, meta) => {
 				opts.onSettled?.({ input, result, error, reason })
 				const registrationContext = getRegistrationContext(this)
-				registrationContext.recordEvent(`job/${this.id}/settled`, meta.input, JSON.stringify({ input, result, error, reason }))
+				registrationContext.recordEvent(`job/${this.id}/settled`, meta.input, JSON.stringify({ input, result, error: meta.serializedError ?? null, reason }))
 			})
 		}
 	}
@@ -350,17 +352,17 @@ export class Job<
 	 * @description
 	 * The `signal` property of the `utils` object is only provided when the options contain a `timeout`.
 	 */
-	static async run<Out extends Data>(id: string, fn: (utils: { signal: AbortSignal }) => Out | Promise<Out>): Promise<Out>
-	static async run<Out extends Data>(opts: RunOptions, fn: (utils: { signal: AbortSignal }) => Out | Promise<Out>): Promise<Out>
-	static async run<Out extends Data>(optsOrId: string | RunOptions, fn: (utils: { signal: AbortSignal }) => Out | Promise<Out>): Promise<Out> {
+	static async run<Out extends Data>(id: string, fn: (utils: { signal: AbortSignal, logger: Logger }) => Out | Promise<Out>): Promise<Out>
+	static async run<Out extends Data>(opts: RunOptions, fn: (utils: { signal: AbortSignal, logger: Logger }) => Out | Promise<Out>): Promise<Out>
+	static async run<Out extends Data>(optsOrId: string | RunOptions, fn: (utils: { signal: AbortSignal, logger: Logger }) => Out | Promise<Out>): Promise<Out> {
 		const e = getExecutionContext()
 		const opts: RunOptions = typeof optsOrId === 'string' ? { id: optsOrId } : optsOrId
 		return e.run(opts, fn)
 	}
 
-	static async thread<Out extends Data, In extends Data = undefined>(id: string, fn: (input: In, utils: { signal: AbortSignal }) => Out | Promise<Out>, input?: In): Promise<Out>
-	static async thread<Out extends Data, In extends Data = undefined>(opts: ThreadOptions, fn: (input: In, utils: { signal: AbortSignal }) => Out | Promise<Out>, input?: In): Promise<Out>
-	static async thread<Out extends Data, In extends Data = undefined>(optsOrId: string | ThreadOptions, fn: (input: In, utils: { signal: AbortSignal }) => Out | Promise<Out>, input?: In): Promise<Out> {
+	static async thread<Out extends Data, In extends Data = undefined>(id: string, fn: (input: In, utils: { signal: AbortSignal, logger: Pick<Logger, 'info' | 'warn' | 'error'> }) => Out | Promise<Out>, input?: In): Promise<Out>
+	static async thread<Out extends Data, In extends Data = undefined>(opts: ThreadOptions, fn: (input: In, utils: { signal: AbortSignal, logger: Pick<Logger, 'info' | 'warn' | 'error'> }) => Out | Promise<Out>, input?: In): Promise<Out>
+	static async thread<Out extends Data, In extends Data = undefined>(optsOrId: string | ThreadOptions, fn: (input: In, utils: { signal: AbortSignal, logger: Pick<Logger, 'info' | 'warn' | 'error'> }) => Out | Promise<Out>, input?: In): Promise<Out> {
 		const e = getExecutionContext()
 		const opts: RunOptions = typeof optsOrId === 'string' ? { id: optsOrId } : optsOrId
 		return e.thread(opts, fn, input)
@@ -559,10 +561,10 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 		let syncResult: Data
 		let syncError: unknown
 		const source = entry ? null : internals?.source ?? `Job.run("${options.id}", ${fn.toString()})`
+		const logger = registrationContext.logger.child({ job: task.job, input: task.input, key: `step/${task.job}/${step}` })
 
 		const onSuccess = (data: Data) => {
-			// TODO: use logger instead of storage for this event
-			registrationContext.recordEvent(`step/${task.job}/${step}/success`, task.input, JSON.stringify({ data, runs }))
+			logger[loggerSystem]({ data, runs, event: 'success' })
 			return syncOrPromise<void>(resolve => {
 				registrationContext.recordStep(
 					task,
@@ -579,13 +581,13 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				if (typeof retry === 'number') canRetry = runs < retry
 				else canRetry = retry(runs, error)
 			}
-			// TODO: use logger instead of storage for this event
-			registrationContext.recordEvent(`step/${task.job}/${step}/error`, task.input, JSON.stringify({ error: serializeError(error), runs }))
+			const serializedError = serializeError(error)
+			logger[loggerSystem]({ error: serializedError, runs, event: 'error' })
 			return syncOrPromise<void>(resolve => {
 				if (!canRetry) {
 					return registrationContext.recordStep(
 						task,
-						{ step, status: 'failed', data: serializeError(error), runs, discovered_on: task.loop, source },
+						{ step, status: 'failed', data: serializedError, runs, discovered_on: task.loop, source },
 						resolve
 					)
 				}
@@ -607,7 +609,10 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 
 		try {
 			const runController = new AbortController()
-			const utils = { signal: runController.signal }
+			const utils = {
+				signal: runController.signal,
+				logger,
+			}
 			const maybePromise = execution.run(task.id, () => fn(utils))
 			if (isPromise(maybePromise)) {
 				const timeout = resolveStepTimeout(options.timeout)
@@ -626,8 +631,7 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 					])
 					: maybePromise
 
-				// TODO: use logger instead of storage for this event
-				registrationContext.recordEvent(`step/${task.job}/${step}/run`, task.input, JSON.stringify({ runs }))
+				logger[loggerSystem]({ runs, event: 'run' })
 				promises.push(new Promise<Data>(resolve =>
 					registrationContext.recordStep(
 						task,
@@ -673,11 +677,16 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				return `Job.thread("${options.id}", ${fn.toString()})`
 			}
 		}
-		return run(options, async ({ signal }) => {
+		return run(options, async ({ signal, logger }) => {
 			const workerFn = `
 				const { parentPort, workerData } = require('worker_threads')
 				try {
-					Promise.resolve((${fn.toString()})(workerData.input, { signal: workerData.signal }))
+					const logger = {
+						info: (data) => parentPort.postMessage({ log: ['info', data] }),
+						warn: (data) => parentPort.postMessage({ log: ['warn', data] }),
+						error: (data) => parentPort.postMessage({ log: ['error', data] }),
+					}
+					Promise.resolve((${fn.toString()})(workerData.input, { signal: workerData.signal, logger }))
 						.then(result => parentPort.postMessage({ result }))
 						.catch(err => parentPort.postMessage({ error: err }))
 				} catch (error) {
@@ -702,6 +711,8 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 				})
 				worker.on('message', (value) => {
 					if ('error' in value) return reject(value.error)
+					//@ts-expect-error -- internally annoying to type, externally safe already
+					if ('log' in value) return logger[value.log[0]](value.log[1])
 					resolve(value.result)
 				})
 				worker.on('error', (err) => {

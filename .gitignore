@@ -1,5 +1,8 @@
 node_modules
-/*.db*
+**.db
+**.db-*
+**.log
+**.log.*
 lcov.info
 .turbo
 .DS_Store

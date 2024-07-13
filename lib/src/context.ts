@@ -4,9 +4,11 @@ import type { Pipe } from "./pipe"
 import type { CancelReason, Job, RunOptions, ThreadOptions, WaitForOptions } from "./job"
 import type { Data, InputData } from "./types"
 import type { Step, Task } from "./storage"
+import type { Logger } from "./logger"
 
 export interface RegistrationContext {
 	queue: Queue
+	logger: Logger
 	checkRegistration(
 		instance: Job<any, any, any> | Pipe<any, any>
 	): void | never
@@ -78,13 +80,23 @@ export const registration = new AsyncLocalStorage<RegistrationContext>()
 
 
 export interface ExecutionContext {
-	run<Out extends Data>(options: RunOptions, fn: (utils: { signal: AbortSignal }) => Out | Promise<Out>, internals?: { source?: string | null }): Promise<Out>
+	run<Out extends Data>(
+		options: RunOptions,
+		fn: (utils: {
+			signal: AbortSignal
+			logger: Logger
+		}) => Out | Promise<Out>,
+		internals?: { source?: string | null }
+	): Promise<Out>
 	thread<
 		Out extends Data,
 		In extends Data = undefined
 	>(
 		options: ThreadOptions,
-		fn: (input: In, utils: { signal: AbortSignal }) => Out | Promise<Out>,
+		fn: (input: In, utils: {
+			signal: AbortSignal
+			logger: Pick<Logger, 'info' | 'warn' | 'error'>
+		}) => Out | Promise<Out>,
 		input?: In
 	): Promise<Out>
 	sleep(ms: number, internals?: { duration?: string | number }): Promise<void> | void

@@ -1,7 +1,6 @@
-import { Fragment, useLayoutEffect, useRef, useState, type ReactElement } from "react"
-import type { Step, Event, Task } from 'queue'
+import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react"
+import type { Step, Event, Task, Log, SystemLog } from 'queue'
 import clsx from "clsx"
-import { cleanEventName } from "./utils"
 import { CircleCheckBig, CircleDashed, CircleX, Clock, Workflow } from "lucide-react"
 import { Code } from "client/components/syntax-highlighter"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "client/components/ui/sheet"
@@ -19,23 +18,26 @@ const ACTIVE_STATUSES = [
 
 export function Graph({
 	data,
+	all,
 	job,
 	hoveredEvent,
 	setHoveredEvent,
 }: {
-	data: { steps: Step[], events: Event[], date: number },
+	data: { steps: Step[], events: Event[], logs: Log[], date: number },
+	all: (Event | SystemLog)[],
 	job: Task,
 	hoveredEvent: number[],
 	setHoveredEvent: (event: number[]) => void,
 }) {
+
 	const minDate = job.created_at
 	const endDate = ACTIVE_STATUSES.includes(job.status) ? data.date : job.updated_at
 
 	/** all event durations (in seconds) that are greater than 500ms */
 	const intervals: number[] = []
-	for (let i = 1; i < data.events.length; i++) {
-		const start = data.events[i - 1]!.created_at
-		const end = data.events[i]!.created_at
+	for (let i = 1; i < all.length; i++) {
+		const start = all[i - 1]!.created_at
+		const end = all[i]!.created_at
 		if (end - start < 0.5) continue
 		intervals.push(end - start)
 	}
@@ -44,9 +46,9 @@ export function Graph({
 	const longDuration = average + stdDev * 2
 
 	const longIntervals: [number, number][] = []
-	for (let i = 0; i < data.events.length - 1; i++) {
-		const a = data.events[i]!.created_at
-		const b = data.events[i + 1]!.created_at
+	for (let i = 0; i < all.length - 1; i++) {
+		const a = all[i]!.created_at
+		const b = all[i + 1]!.created_at
 		if (b - a <= longDuration) continue
 		longIntervals.push([a, b])
 	}
@@ -93,7 +95,8 @@ export function Graph({
 		}
 	})
 
-	const [sheetData, setSheetData] = useState<{ step: Step, events: Event[] } | null>(null)
+	const [sheetData, setSheetData] = useState<{ step: Step, key: string } | null>(null)
+	const sheetEvents = useMemo(() => sheetData && data.logs.filter((event) => event.key === sheetData.key), [sheetData, data.logs])
 
 	return (
 		<div
@@ -114,8 +117,8 @@ export function Graph({
 					const time = minDate + adjustedInterval * ((x - left) / width)
 					let min = Infinity
 					let i = -1
-					for (let j = 0; j < data.events.length; j++) {
-						const event = data.events[j]
+					for (let j = 0; j < all.length; j++) {
+						const event = all[j]
 						const diff = Math.abs(time - adjustDate(event.created_at))
 						if (diff < min) {
 							min = diff
@@ -128,7 +131,7 @@ export function Graph({
 			>
 				<Sheet>
 					{sheetData && (
-						<StepDetails step={sheetData.step} events={sheetData.events} />
+						<StepDetails step={sheetData.step} logs={sheetEvents!} />
 					)}
 
 					{data.steps.map((step, i) => {
@@ -136,14 +139,15 @@ export function Graph({
 						const left = (start - minDate) / adjustedInterval * 100
 						const end = Math.min(adjustedEnd, adjustDate(step.status === 'stalled' || step.status === 'waiting' || step.status === 'running' ? endDate : step.updated_at))
 						const width = (end - start) / adjustedInterval * 100
-						const isHovered = Boolean(hoveredEvent.length) && hoveredEvent.some(i => cleanEventName(data.events[i].key, job).startsWith(step.step))
-						const events = data.events.filter((event) => event.key.startsWith(`step/${job.job}/${step.step}/`))
+						const key = `step/${job.job}/${step.step}`
+						const isHovered = Boolean(hoveredEvent.length) && hoveredEvent.some(i => all[i].key === key)
+						const logs = data.logs.filter((log) => log.system && log.key === key) as SystemLog[]
 						return (
 							<Fragment key={i}>
 								{i > 0 && step.discovered_on !== data.steps[i - 1].discovered_on && (
 									<div className="relative w-full h-px my-2 z-0 bg-stone-200 dark:bg-stone-800" />
 								)}
-								<SheetTrigger onPointerEnter={() => setSheetData({ step, events })} asChild>
+								<SheetTrigger onPointerEnter={() => setSheetData({ step, key })} asChild>
 									<div
 										className="block relative z-10 transition-all whitespace-nowrap my-1 cursor-pointer"
 										style={{
@@ -152,7 +156,7 @@ export function Graph({
 										}}
 										onMouseEnter={() => {
 											fullStep.current = true
-											setHoveredEvent(events.map((event) => data.events.indexOf(event)))
+											setHoveredEvent(logs.map((event) => all.indexOf(event)))
 										}}
 										onMouseLeave={() => {
 											fullStep.current = false
@@ -161,7 +165,7 @@ export function Graph({
 										<StepDisplay
 											step={step}
 											isHovered={isHovered}
-											events={events}
+											logs={logs}
 											start={start}
 											end={end}
 											adjustDate={adjustDate}
@@ -197,7 +201,7 @@ export function Graph({
 						</div>
 					)
 				})}
-				{data.events.map((event, i) => {
+				{all.map((event, i) => {
 					const time = adjustDate(event.created_at)
 					return (
 						<div
@@ -224,7 +228,7 @@ export function Graph({
 function StepDisplay({
 	step,
 	isHovered,
-	events,
+	logs,
 	start,
 	end,
 	adjustDate,
@@ -232,20 +236,20 @@ function StepDisplay({
 }: {
 	step: Step,
 	isHovered: boolean,
-	events: Event[],
+	logs: SystemLog[],
 	start: number,
 	end: number,
 	adjustDate: (date: number) => number,
 	rtl: boolean,
 }) {
-	const types = events.map(event => event.key.split('/').pop())
 	const bgs = []
-	for (let i = 1; i < types.length; i++) {
-		const eventStart = adjustDate(events[i - 1].created_at)
-		const eventEnd = adjustDate(events[i].created_at)
+	for (let i = 1; i < logs.length; i++) {
+		const eventStart = adjustDate(logs[i - 1].created_at)
+		const event = logs[i]!
+		const eventEnd = adjustDate(event.created_at)
 		const width = (eventEnd - eventStart) / (end - start) * 100
 		const left = (eventStart - start) / (end - start) * 100
-		const type = types[i]
+		const type = event.payload.event
 		bgs.push(
 			<div
 				key={i}
@@ -312,7 +316,7 @@ function Spin({ className }: { className?: string }) {
 
 
 
-function StepDetails({ step, events }: { step: Step, events: Event[] }) {
+function StepDetails({ step, logs }: { step: Step, logs: Log[] }) {
 	const { source: sheetSource, data: sheetOutput, ...sheetRest } = step
 	return (
 		<SheetContent className="min-w-[50%] w-fit overflow-y-auto">
@@ -360,10 +364,10 @@ function StepDetails({ step, events }: { step: Step, events: Event[] }) {
 				</Card>
 			</Tabs>
 
-			{events.map((event, i) => (
+			{logs.map((event, i) => (
 				<Fragment key={i}>
 					{i > 0 && <Separator />}
-					<EventDisplay event={event} step={step} />
+					<LogDisplay log={event} />
 				</Fragment>
 			))}
 
@@ -371,22 +375,32 @@ function StepDetails({ step, events }: { step: Step, events: Event[] }) {
 	)
 }
 
-function EventDisplay({ event, step }: { event: Event, step: Step }) {
-	const data = event.data && JSON.parse(event.data)
-	const error = data && data.error
-	if (error) data.error = undefined
-	const date = useFormatDate(event.created_at)
+function LogDisplay({ log }: { log: Log }) {
+	const date = useFormatDate(log.created_at)
+	const type = log.system ? log.payload.event : 'log'
 	return (
 		<div className="my-8">
-			<p>{date}</p>
-			<p>{cleanEventName(event.key, step)}</p>
-			{event.data && (
+			<p className="text-sm">{date}</p>
+			<p className="text-xl my-1">{type}</p>
+			{log.system && log.payload.event === 'error' && (
+				<ErrorDisplay error={log.payload.error} />
+			)}
+			{log.system && log.payload.event !== 'error' && (
 				<Code language="json">
-					{JSON.stringify(data, null, 2)}
+					{JSON.stringify(log.payload, null, 2)}
 				</Code>
 			)}
-			{error && (
-				<ErrorDisplay error={error} />
+			{!log.system && typeof log.payload === 'string' && (
+				<>
+					<p className="text-stone-500">{log.payload}</p>
+				</>
+			)}
+			{!log.system && typeof log.payload !== 'string' && (
+				<>
+					<Code language="json">
+						{JSON.stringify(log.payload, null, 2)}
+					</Code>
+				</>
 			)}
 		</div>
 	)

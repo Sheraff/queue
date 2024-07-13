@@ -234,8 +234,8 @@ export class SQLiteStorage implements Storage {
 				status TEXT NOT NULL,
 				started_at REAL,
 				loop INTEGER NOT NULL DEFAULT 0,
-				created_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
-				updated_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+				created_at REAL NOT NULL,
+				updated_at REAL NOT NULL,
 				data JSON
 			);
 
@@ -269,8 +269,8 @@ export class SQLiteStorage implements Storage {
 				status TEXT NOT NULL,
 				next_status TEXT,
 				runs INTEGER NOT NULL DEFAULT 0,
-				created_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
-				updated_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+				created_at REAL NOT NULL,
+				updated_at REAL NOT NULL,
 				discovered_on INTEGER NOT NULL,
 				sleep_until REAL,
 				timeout_at REAL,
@@ -291,7 +291,7 @@ export class SQLiteStorage implements Storage {
 			CREATE TABLE IF NOT EXISTS ${eventsTable} (
 				queue TEXT NOT NULL,
 				key TEXT NOT NULL,
-				created_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+				created_at REAL NOT NULL,
 				input JSON,
 				data JSON
 			);
@@ -303,19 +303,19 @@ export class SQLiteStorage implements Storage {
 			CREATE INDEX IF NOT EXISTS ${eventsTable}_key ON ${eventsTable} (queue, key, created_at ASC, input, data);
 		`)
 
-		this.#getTaskStmt = this.#db.prepare<{ queue: string, job: string, key: string }, Task | undefined>(/* sql */ `
+		this.#getTaskStmt = this.#db.prepare<{ queue: string, job: string, key: string, now: number }, Task | undefined>(/* sql */ `
 			SELECT
 				*,
 				CASE
 					WHEN timeout_at IS NULL THEN NULL
-					WHEN (timeout_at <= unixepoch('subsec')) THEN TRUE
+					WHEN (timeout_at <= @now) THEN TRUE
 					ELSE FALSE
 				END timed_out
 			FROM ${tasksTable}
 			WHERE queue = @queue AND job = @job AND key = @key
 		`)
 
-		const getNextTaskStmt = this.#db.prepare<{ queue: string }, Task>(/* sql */ `
+		const getNextTaskStmt = this.#db.prepare<{ queue: string, now: number }, Task>(/* sql */ `
 			WITH queue_tasks AS (
 				SELECT
 					*
@@ -328,12 +328,12 @@ export class SQLiteStorage implements Storage {
 					task.id,
 					MAX(
 						step.timeout_at IS NOT NULL
-						AND step.timeout_at <= unixepoch('subsec')
+						AND step.timeout_at <= @now
 					) AS step_timed_out,
 					MAX(
 						step.status = 'stalled'
 						AND step.sleep_until IS NOT NULL
-						AND (step.sleep_until > unixepoch('subsec'))
+						AND (step.sleep_until > @now)
 					) AS step_sleeping,
 					MAX(
 						step.status = 'waiting'
@@ -358,7 +358,7 @@ export class SQLiteStorage implements Storage {
 				WHERE task.throttle_id IS NOT NULL
 					AND task.status = 'stalled'
 					AND sibling.started_at IS NOT NULL
-					AND sibling.started_at > unixepoch('subsec') - task.throttle_duration
+					AND sibling.started_at > @now - task.throttle_duration
 				GROUP BY task.id
 			)
 
@@ -366,7 +366,7 @@ export class SQLiteStorage implements Storage {
 				task.*,
 				CASE
 					WHEN timeout_at IS NULL THEN NULL
-					WHEN (timeout_at <= unixepoch('subsec')) THEN TRUE
+					WHEN (timeout_at <= @now) THEN TRUE
 					ELSE FALSE
 				END timed_out
 			FROM queue_tasks task
@@ -375,7 +375,7 @@ export class SQLiteStorage implements Storage {
 			WHERE (
 				-- task timed out, resolve it
 				timeout_at IS NOT NULL
-				AND timeout_at <= unixepoch('subsec')
+				AND timeout_at <= @now
 			) OR (
 				-- step timed out, resolve it
 				step_timed_out IS 1
@@ -385,7 +385,7 @@ export class SQLiteStorage implements Storage {
 					OR (
 						-- task was sleeping, e.g. debounced
 						sleep_until IS NOT NULL
-						AND sleep_until <= unixepoch('subsec')
+						AND sleep_until <= @now
 					)
 					OR (
 						-- task was throttled
@@ -406,7 +406,7 @@ export class SQLiteStorage implements Storage {
 			LIMIT 2
 		`)
 
-		this.#getNextFutureTaskStmt = this.#db.prepare<{ queue: string }, { ms: number }>(/* sql */ `
+		this.#getNextFutureTaskStmt = this.#db.prepare<{ queue: string, now: number }, { ms: number }>(/* sql */ `
 			WITH
 				pending AS (
 					SELECT (step.sleep_until) as timeout
@@ -471,7 +471,7 @@ export class SQLiteStorage implements Storage {
 					ORDER BY timeout ASC
 					LIMIT 1
 				)
-			SELECT CEIL((MIN(timeout) - unixepoch('subsec')) * 1000) as ms
+			SELECT CEIL((MIN(timeout) - @now) * 1000) as ms
 			FROM (
 				SELECT timeout FROM pending
 				UNION ALL
@@ -486,27 +486,27 @@ export class SQLiteStorage implements Storage {
 			LIMIT 1
 		`)
 
-		const reserveTaskStmt = this.#db.prepare<{ id: number }>(/* sql */ `
+		const reserveTaskStmt = this.#db.prepare<{ id: number, now: number }>(/* sql */ `
 			UPDATE ${tasksTable}
 			SET
 				status = 'running',
-				started_at = CASE WHEN started_at IS NULL THEN unixepoch('subsec') ELSE started_at END,
-				updated_at = unixepoch('subsec'),
+				started_at = CASE WHEN started_at IS NULL THEN @now ELSE started_at END,
+				updated_at = @now,
 				loop = loop + 1
 			WHERE id = @id
 		`)
 
-		const getTaskStepDataStmt = this.#db.prepare<{ id: number }, Step>(/* sql */ `
+		const getTaskStepDataStmt = this.#db.prepare<{ id: number, now: number }, Step>(/* sql */ `
 			SELECT
 				*,
 				CASE
 					WHEN sleep_until IS NULL THEN NULL
-					WHEN ((sleep_until) <= unixepoch('subsec')) THEN TRUE
+					WHEN ((sleep_until) <= @now) THEN TRUE
 					ELSE FALSE
 				END sleep_done,
 				CASE
 					WHEN timeout_at IS NULL THEN NULL
-					WHEN ((timeout_at) <= unixepoch('subsec')) THEN TRUE
+					WHEN ((timeout_at) <= @now) THEN TRUE
 					ELSE FALSE
 				END timed_out
 			FROM ${stepsTable}
@@ -515,18 +515,19 @@ export class SQLiteStorage implements Storage {
 		`)
 
 		this.#getNextTaskTx = this.#db.transaction((queue: string) => {
+			const now = Date.now() / 1000
 			// performance.mark('st-start')
-			resolveAllStepEventsStmt.get({ queue })
+			resolveAllStepEventsStmt.get({ queue, now })
 			// performance.mark('st-events')
-			const [task, next] = getNextTaskStmt.all({ queue })
+			const [task, next] = getNextTaskStmt.all({ queue, now })
 			// performance.mark('st-tasks')
 			if (!task) {
 				// console.log('no task')
 				return
 			}
-			reserveTaskStmt.run(task)
+			reserveTaskStmt.run({ id: task.id, now })
 			// performance.mark('st-reserve')
-			const steps = getTaskStepDataStmt.all(task)
+			const steps = getTaskStepDataStmt.all({ id: task.id, now })
 			// performance.mark('st-steps')
 			for (let i = 0; i < steps.length; i++) {
 				const step = steps[i]!
@@ -539,6 +540,7 @@ export class SQLiteStorage implements Storage {
 						timeout: null,
 						wait_retroactive: null,
 						status: step.next_status,
+						now,
 					})
 				}
 			}
@@ -561,30 +563,30 @@ export class SQLiteStorage implements Storage {
 			return [task, steps, !!next] as [Task, Step[], boolean]
 		})
 
-		this.#resolveTaskStmt = this.#db.prepare<{ queue: string, job: string, key: string, status: TaskStatus, data: string | null }>(/* sql */ `
+		this.#resolveTaskStmt = this.#db.prepare<{ queue: string, job: string, key: string, status: TaskStatus, data: string | null, now: number }>(/* sql */ `
 			UPDATE ${tasksTable}
 			SET
 				status = @status,
 				data = @data,
-				updated_at = unixepoch('subsec')
+				updated_at = @now
 			WHERE queue = @queue AND job = @job AND key = @key
 		`)
 
-		this.#loopTaskStmt = this.#db.prepare<{ queue: string, job: string, key: string }>(/* sql */ `
+		this.#loopTaskStmt = this.#db.prepare<{ queue: string, job: string, key: string, now: number }>(/* sql */ `
 			UPDATE ${tasksTable}
 			SET
 				status = 'pending',
-				updated_at = unixepoch('subsec')
+				updated_at = @now
 			WHERE queue = @queue AND job = @job AND key = @key
 		`)
 
-		const checkLatestRateLimitStmt = this.#db.prepare<{ queue: string, rate_limit_id: string, rate_limit_duration: number }, { ms: number }>(/* sql */ `
-			SELECT CEIL((@rate_limit_duration + created_at - unixepoch('subsec')) * 1000) ms
+		const checkLatestRateLimitStmt = this.#db.prepare<{ queue: string, rate_limit_id: string, rate_limit_duration: number, now: number }, { ms: number }>(/* sql */ `
+			SELECT CEIL((@rate_limit_duration + created_at - @now) * 1000) ms
 			FROM ${tasksTable}
 			WHERE
 				queue = @queue
 				AND rate_limit_id = @rate_limit_id
-				AND created_at > unixepoch('subsec') - @rate_limit_duration
+				AND created_at > @now - @rate_limit_duration
 			ORDER BY created_at DESC
 			LIMIT 1
 		`)
@@ -603,9 +605,26 @@ export class SQLiteStorage implements Storage {
 			throttle_duration: number | null,
 			sleep_for: number | null,
 			status: TaskStatus
+			now: number
 		}, undefined | { id: number }>(/* sql */ `
 			INSERT OR IGNORE
-			INTO ${tasksTable} (queue, job, key, input, parent_id, status, priority, timeout_at, debounce_id, throttle_id, rate_limit_id, throttle_duration, sleep_until)
+			INTO ${tasksTable} (
+				queue,
+				job,
+				key,
+				input,
+				parent_id,
+				status,
+				priority,
+				timeout_at,
+				debounce_id,
+				throttle_id,
+				rate_limit_id,
+				throttle_duration,
+				sleep_until,
+				created_at,
+				updated_at
+			)
 			VALUES (
 				@queue,
 				@job,
@@ -614,21 +633,23 @@ export class SQLiteStorage implements Storage {
 				@parent_id,
 				CASE WHEN (@throttle_id IS NOT NULL) THEN 'stalled' ELSE @status END,
 				@priority,
-				CASE @timeout WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @timeout) END,
+				CASE @timeout WHEN NULL THEN NULL ELSE (@now + @timeout) END,
 				@debounce_id,
 				@throttle_id,
 				@rate_limit_id,
 				@throttle_duration,
-				CASE @sleep_for WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @sleep_for) END
+				CASE @sleep_for WHEN NULL THEN NULL ELSE (@now + @sleep_for) END,
+				@now,
+				@now
 			)
 			RETURNING id
 		`)
-		const cancelMatchingDebounceStmt = this.#db.prepare<{ debounce_id: string, queue: string, new_id: number }, Task>(/* sql */ `
+		const cancelMatchingDebounceStmt = this.#db.prepare<{ debounce_id: string, queue: string, new_id: number, now: number }, Task>(/* sql */ `
 			UPDATE ${tasksTable}
 			SET
 				status = 'cancelled',
 				data = '{"type":"debounce"}',
-				updated_at = unixepoch('subsec')
+				updated_at = @now
 			WHERE
 				queue = @queue
 				AND debounce_id = @debounce_id
@@ -650,11 +671,13 @@ export class SQLiteStorage implements Storage {
 			throttle: { s: number; id: string } | null
 			rateLimit: { s: number; id: string } | null
 		}) => {
+			const now = Date.now() / 1000
 			if (task.rateLimit) {
 				const limit = checkLatestRateLimitStmt.get({
 					queue: task.queue,
 					rate_limit_id: task.rateLimit.id,
-					rate_limit_duration: task.rateLimit.s
+					rate_limit_duration: task.rateLimit.s,
+					now,
 				})
 				if (limit) return [limit.ms, false, undefined]
 			}
@@ -665,11 +688,17 @@ export class SQLiteStorage implements Storage {
 				rate_limit_id: task.rateLimit?.id ?? null,
 				sleep_for: task.debounce?.s ?? null,
 				throttle_duration: task.throttle?.s ?? null,
-				status: task.debounce ? 'stalled' : 'pending'
+				status: task.debounce ? 'stalled' : 'pending',
+				now,
 			})
 			if (!inserted) return [null, false, undefined]
 			if (!task.debounce) return [null, true, undefined]
-			const cancelled = cancelMatchingDebounceStmt.get({ debounce_id: task.debounce.id, queue: task.queue, new_id: inserted.id })
+			const cancelled = cancelMatchingDebounceStmt.get({
+				debounce_id: task.debounce.id,
+				queue: task.queue,
+				new_id: inserted.id,
+				now,
+			})
 			return [null, true, cancelled]
 		})
 
@@ -692,6 +721,7 @@ export class SQLiteStorage implements Storage {
 			discovered_on: number | null
 			data: string | null
 			source: string | null
+			now: number
 		}>(/* sql */ `
 			INSERT INTO ${stepsTable} (
 				queue,
@@ -709,7 +739,9 @@ export class SQLiteStorage implements Storage {
 				wait_from,
 				discovered_on,
 				data,
-				source
+				source,
+				created_at,
+				updated_at
 			)
 			VALUES (
 				@queue,
@@ -720,35 +752,37 @@ export class SQLiteStorage implements Storage {
 				@task_id,
 				@status,
 				@next_status,
-				CASE @sleep_for WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @sleep_for) END,
-				CASE @timeout WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @timeout) END,
+				CASE @sleep_for WHEN NULL THEN NULL ELSE (@now + @sleep_for) END,
+				CASE @timeout WHEN NULL THEN NULL ELSE (@now + @timeout) END,
 				@wait_for,
 				@wait_filter,
-				CASE @wait_retroactive WHEN TRUE THEN 0 ELSE (unixepoch('subsec')) END,
+				CASE @wait_retroactive WHEN TRUE THEN 0 ELSE (@now) END,
 				@discovered_on,
 				@data,
-				@source
+				@source,
+				@now,
+				@now
 			)
 			ON CONFLICT (queue, job, key, step)
 			DO UPDATE SET
 				status = @status,
 				next_status = @next_status,
-				updated_at = unixepoch('subsec'),
+				updated_at = @now,
 				runs = @runs,
-				sleep_until = CASE @sleep_for WHEN NULL THEN NULL ELSE (unixepoch('subsec') + @sleep_for) END,
+				sleep_until = CASE @sleep_for WHEN NULL THEN NULL ELSE (@now + @sleep_for) END,
 				data = @data
 			RETURNING *
 		`)
 
-		this.#recordEventStmt = this.#db.prepare<{ queue: string, key: string, input: string, data: string }>(/* sql */ `
-			INSERT INTO ${eventsTable} (queue, key, input, data)
-			VALUES (@queue, @key, @input, @data)
+		this.#recordEventStmt = this.#db.prepare<{ queue: string, key: string, input: string, data: string, now: number }>(/* sql */ `
+			INSERT INTO ${eventsTable} (queue, key, input, data, created_at)
+			VALUES (@queue, @key, @input, @data, @now)
 		`)
 
 		/**
 		 * update all steps that are waiting for an event.
 		 */
-		const resolveAllStepEventsStmt = this.#db.prepare<{ queue: string }, {}>(/* sql */ `
+		const resolveAllStepEventsStmt = this.#db.prepare<{ queue: string, now: number }, {}>(/* sql */ `
 			WITH waiting_steps AS (
 				SELECT
 					queue, status, wait_for, wait_filter, wait_from, id
@@ -819,23 +853,23 @@ export class SQLiteStorage implements Storage {
 					WHEN results.key IS NOT NULL THEN results.event_data
 					ELSE data
 				END,
-				wait_from = unixepoch('subsec') -- update timestamp so we don't re-check past events next loop
+				wait_from = @now -- update timestamp so we don't re-check past events next loop
 			FROM results
 			WHERE
 				results.id = ${stepsTable}.id
 				AND (
 					results.key IS NOT NULL
-					OR wait_from < unixepoch('subsec') - 0.05 -- if no event found, only update 'wait_from' in increments of 50ms minimum
+					OR wait_from < @now - 0.05 -- if no event found, only update 'wait_from' in increments of 50ms minimum
 				)
 			RETURNING 1
 		`)
 	}
 
-	#getTaskStmt!: BetterSqlite3.Statement<{ queue: string, job: string, key: string }, Task | undefined>
+	#getTaskStmt!: BetterSqlite3.Statement<{ queue: string, job: string, key: string, now: number }, Task | undefined>
 	#getNextTaskTx!: BetterSqlite3.Transaction<(queue: string) => [task: Task, steps: Step[], hasNext: boolean] | undefined>
-	#getNextFutureTaskStmt!: BetterSqlite3.Statement<{ queue: string }, { ms: number | null }>
-	#resolveTaskStmt!: BetterSqlite3.Statement<{ queue: string, job: string, key: string, status: TaskStatus, data: string | null }>
-	#loopTaskStmt!: BetterSqlite3.Statement<{ queue: string, job: string, key: string }>
+	#getNextFutureTaskStmt!: BetterSqlite3.Statement<{ queue: string, now: number }, { ms: number | null }>
+	#resolveTaskStmt!: BetterSqlite3.Statement<{ queue: string, job: string, key: string, status: TaskStatus, data: string | null, now: number }>
+	#loopTaskStmt!: BetterSqlite3.Statement<{ queue: string, job: string, key: string, now: number }>
 	#addTaskTx!: BetterSqlite3.Transaction<(task: {
 		queue: string,
 		job: string,
@@ -866,11 +900,12 @@ export class SQLiteStorage implements Storage {
 		discovered_on: number | null
 		data: string | null
 		source: string | null
+		now: number
 	}>
-	#recordEventStmt!: BetterSqlite3.Statement<{ queue: string, key: string, input: string, data: string }>
+	#recordEventStmt!: BetterSqlite3.Statement<{ queue: string, key: string, input: string, data: string, now: number }>
 
 	getTask<T>(queue: string, job: string, key: string, cb: (task: Task | undefined) => T): T {
-		const task = this.#getTaskStmt.get({ queue, job, key })
+		const task = this.#getTaskStmt.get({ queue, job, key, now: Date.now() / 1000 })
 		return cb(task)
 	}
 
@@ -896,17 +931,17 @@ export class SQLiteStorage implements Storage {
 	}
 
 	nextFutureTask<T>(queue: string, cb: (result: { ms: number | null }) => T): T {
-		const result = this.#getNextFutureTaskStmt.get({ queue })!
+		const result = this.#getNextFutureTaskStmt.get({ queue, now: Date.now() / 1000 })!
 		return cb(result)
 	}
 
 	resolveTask<T>(task: { queue: string, job: string, key: string }, status: "completed" | "failed" | "cancelled", data: string | null, cb?: () => T): T {
-		this.#resolveTaskStmt.run({ queue: task.queue, job: task.job, key: task.key, status, data })
+		this.#resolveTaskStmt.run({ queue: task.queue, job: task.job, key: task.key, status, data, now: Date.now() / 1000 })
 		return cb?.() as T
 	}
 
 	requeueTask<T>(task: Task, cb: () => T): T {
-		this.#loopTaskStmt.run({ queue: task.queue, job: task.job, key: task.key })
+		this.#loopTaskStmt.run({ queue: task.queue, job: task.job, key: task.key, now: Date.now() / 1000 })
 		return cb() as T
 	}
 
@@ -933,12 +968,13 @@ export class SQLiteStorage implements Storage {
 			discovered_on: step.discovered_on,
 			step: step.step,
 			source: step.source ?? null,
+			now: Date.now() / 1000
 		})
 		return cb()
 	}
 
 	recordEvent<T>(queue: string, key: string, input: string, data: string, cb?: () => T): T {
-		this.#recordEventStmt.run({ queue, key, input, data })
+		this.#recordEventStmt.run({ queue, key, input, data, now: Date.now() / 1000 })
 		return cb?.() as T
 	}
 

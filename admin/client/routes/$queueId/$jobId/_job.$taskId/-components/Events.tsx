@@ -1,4 +1,4 @@
-import type { Event, Task } from 'queue'
+import type { Event, SystemLog, Task } from 'queue'
 import clsx from "clsx"
 import { cleanEventName } from "./utils"
 
@@ -9,7 +9,7 @@ export function Events({
 	setHoveredEvent,
 	className
 }: {
-	events: Event[],
+	events: (Event | SystemLog)[],
 	job: Task,
 	hoveredEvent: number[],
 	setHoveredEvent: (event: number[]) => void,
@@ -18,7 +18,11 @@ export function Events({
 	return (
 		<div onMouseLeave={() => setHoveredEvent([])} className={className}>
 			{events.map((event, i) => {
-				const name = cleanEventName(event.key, job)
+				const base = cleanEventName(event.key, job)
+				const name = ('payload' in event)
+					? `${base} - ${event.payload.event}`
+					: base
+
 				return (
 					<div
 						key={i}

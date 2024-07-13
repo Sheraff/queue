@@ -1,8 +1,8 @@
 import { createLazyFileRoute, Link, notFound } from '@tanstack/react-router'
 import { useJobContext } from "../-components/job-context"
 import { useQuery } from "@tanstack/react-query"
-import type { Event, Step, Task } from "queue"
-import { useState } from "react"
+import type { Event, Log, Step, Task } from "queue"
+import { useMemo, useState } from "react"
 import { Graph } from "client/routes/$queueId/$jobId/_job.$taskId/-components/Graph"
 import { Events } from "client/routes/$queueId/$jobId/_job.$taskId/-components/Events"
 import { Button } from "client/components/ui/button"
@@ -15,7 +15,7 @@ export const Route = createLazyFileRoute('/$queueId/$jobId/_job/$taskId/')({
 	component: Task
 })
 
-type Data = { steps: Step[], events: Event[], date: number }
+type Data = { steps: Step[], events: Event[], logs: Log[], date: number }
 
 const refetch: Record<string, number> = {
 	pending: 2000,
@@ -62,6 +62,11 @@ function Task() {
 
 	const [hoveredEvent, setHoveredEvent] = useState<number[]>([])
 
+	const all = useMemo(() => data && [
+		...data.events,
+		...data.logs.filter(l => l.system)
+	].sort((a, b) => a.created_at - b.created_at), [data])
+
 	return (
 		<div className="flex-1">
 			<h2 className="text-xl">Task {task.input}{isFetching && ' - fetching'}</h2>
@@ -102,6 +107,7 @@ function Task() {
 					<h3 className="text-lg">Steps</h3>
 					{data && <Graph
 						data={data}
+						all={all!}
 						job={task}
 						hoveredEvent={hoveredEvent}
 						setHoveredEvent={setHoveredEvent}
@@ -110,7 +116,7 @@ function Task() {
 
 				<div className="max-w-[25vw]">
 					<h3 className="text-lg">Events</h3>
-					{data?.events && <Events className="py-4" events={data.events} job={task} hoveredEvent={hoveredEvent} setHoveredEvent={setHoveredEvent} />}
+					{all && <Events className="py-4" events={all} job={task} hoveredEvent={hoveredEvent} setHoveredEvent={setHoveredEvent} />}
 				</div>
 			</div>
 		</div>

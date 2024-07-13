@@ -1,6 +1,7 @@
 import { Pipe } from "./pipe"
 import { exec, Job } from "./job"
 import type { Storage } from "./storage"
+import { type Logger, ConsoleLogger } from "./logger"
 import { registration, type RegistrationContext } from "./context"
 import { isPromise, serializeError } from "./utils"
 
@@ -23,6 +24,8 @@ export class Queue<
 	/** @public */
 	public readonly storage: Storage
 	/** @public */
+	public readonly logger: Logger
+	/** @public */
 	public readonly parallel: number
 	/** @public */
 	public readonly ready: Promise<void>
@@ -32,6 +35,7 @@ export class Queue<
 		jobs: Jobs & SafeKeys<keyof Jobs & string>,
 		pipes?: Pipes & SafeKeys<keyof Pipes & string>,
 		storage: Storage // TODO: default to in-memory pure JS storage?
+		logger?: Logger
 		/** how many jobs can be started in parallel, defaults to `Infinity` */
 		parallel?: number
 		/** Any simple cron scheduler can be used, if not provided here, the `node-cron` package will be used instead. */
@@ -42,6 +46,7 @@ export class Queue<
 		this.id = opts.id
 		this.parallel = Math.max(1, opts.parallel ?? Infinity)
 		this.storage = opts.storage
+		this.logger = opts.logger ?? new ConsoleLogger()
 
 		this.jobs = Object.fromEntries(Object.entries(opts.jobs).map(([id, job]) => [
 			id,
@@ -70,6 +75,8 @@ export class Queue<
 				})
 			])) as Pipes
 		}
+
+		this.#registrationContext.logger = this.logger.child({ queue: this.id })
 
 		const init = this.storage.init()
 		if (isPromise(init)) {
@@ -145,7 +152,8 @@ export class Queue<
 					}
 				}
 			}
-		}
+		},
+		logger: null!
 	}
 
 	#running = new Set<Promise<any>>()

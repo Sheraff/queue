@@ -6,10 +6,15 @@ import {
 	type Step,
 	type Task,
 	type Event,
+	PinoLogger,
+	PinoReader,
+	type Log,
 } from "queue"
-import Database from "better-sqlite3"
+import { unlink } from 'node:fs/promises'
+import Database from "better-sqlite3" // TODO: admin should accept any database, this is a PoC with hard-coded queue and storage
 import { z } from "zod"
 import { format } from "prettier"
+
 
 const foo = new Job({
 	id: 'foo',
@@ -24,9 +29,12 @@ const foo = new Job({
 	for (let i = 0; i < iter; i++) {
 		await Job.sleep(Math.random() * k * 500 + 2_000)
 		await Promise.all([
-			Job.run({ id: 'some-task', retry: 40, backoff: "10s" }, async () => {
+			Job.run({ id: 'some-task', retry: 40, backoff: "10s" }, async ({ logger }) => {
 				await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * k * 100))
-				if (Math.random() < 0.5) {
+				const willFail = Math.random() < 0.5
+				logger.info({ willFail })
+				logger.info(`Foo some-task ${willFail ? 'failed' : 'succeeded'}`)
+				if (willFail) {
 					throw new Error("random error")
 				}
 				return 3
@@ -50,6 +58,7 @@ const db = new Database()
 const queue = new Queue({
 	id: 'my-queue',
 	storage: new SQLiteStorage({ db }),
+	logger: new PinoLogger({ dest: './admin.log.jsonl' }),
 	jobs: { foo }
 })
 
@@ -58,10 +67,9 @@ queue.jobs.foo.dispatch({ k: 0, date: new Date().toISOString(), parity: true })
 const tasksStmt = db.prepare<{ queue: string, origin: number }, Task>('SELECT * FROM tasks WHERE queue = @queue AND updated_at > @origin ORDER BY created_at ASC')
 const stepsStmt = db.prepare<{ queue: string, origin: number }, Step>('SELECT * FROM steps WHERE queue = @queue AND updated_at > @origin ORDER BY created_at ASC')
 const eventsStmt = db.prepare<{ queue: string, origin: number }, Event>('SELECT * FROM events WHERE queue = @queue AND created_at > @origin ORDER BY created_at ASC')
-const dateStmt = db.prepare<[], { date: number }>("SELECT (unixepoch('subsec')) date")
 
 const getData = (queue: Queue, origin: number) => {
-	const date = dateStmt.get()!.date as number
+	const date = Date.now() / 1000
 	const tasks = tasksStmt.all({ queue: queue.id, origin }) as Task[]
 	const steps = stepsStmt.all({ queue: queue.id, origin }) as Step[]
 	const events = eventsStmt.all({ queue: queue.id, origin }) as Event[]
@@ -82,7 +90,7 @@ const server = http.createServer((req, res) => {
 
 	if (url.pathname === '/api/now') {
 		res.writeHead(200, { 'Content-Type': 'text/plain' })
-		res.end(String(dateStmt.get()!.date))
+		res.end(String(Date.now() / 1000))
 		return
 	}
 
@@ -153,18 +161,20 @@ const server = http.createServer((req, res) => {
 			input: data.input,
 			job: `job/${data.job}/%`,
 			step: `step/${data.job}/%`,
-		})
+		}) as Event[]
 
-		const date = dateStmt.get()!.date as number
+		const date = Date.now() / 1000
 
-		return Promise.all(steps.map(async (step) => step.source = await format(step.source, { parser: "typescript", semi: false })))
+		const logs: Log[] = []
+		const LogsReader = new PinoReader({ dest: './admin.log.jsonl' })
+
+		return Promise.all([
+			...steps.map(async (step) => step.source = await format(step.source, { parser: "typescript", semi: false })),
+			LogsReader.get({ queue: queue.id, job: data.job, input: data.input }, (line) => logs.push(line)),
+		])
 			.then(() => {
 				res.writeHead(200, { 'Content-Type': 'application/json' })
-				res.end(JSON.stringify({ steps, events, date }, null, '\t'))
-			})
-			.catch((error) => {
-				res.writeHead(500, { 'Content-Type': 'application/json' })
-				res.end(JSON.stringify({ error: error.message }, null, '\t'))
+				res.end(JSON.stringify({ steps, events, date, logs }, null, '\t'))
 			})
 	}
 
@@ -182,4 +192,9 @@ const PORT = 3001
 // Start the server
 server.listen(PORT, () => {
 	console.log(`Server running on http://localhost:${PORT}/`)
+})
+
+process.on('SIGTERM', () => {
+	// delete log file
+	unlink('./admin.log.jsonl').then(() => process.exit())
 })

@@ -5,7 +5,7 @@
   "main": "main.ts",
   "type": "module",
   "scripts": {
-    "bar": "tsx --watch --test tests/benchmark.test.ts",
+    "bar": "tsx --watch --test tests/resumable.test.ts",
     "test": "tsx --watch --test",
     "test:cov": "tsx --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=lcov.info",
     "tsc": "tsc --noEmit"
@@ -14,7 +14,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "better-sqlite3": "^11.1.2",
     "serialize-error": "^11.0.3",
     "zod": "3.23.8"
   },
@@ -26,10 +25,18 @@
     "typescript": "5.5.3"
   },
   "peerDependencies": {
-    "node-cron": ">=3.0.0"
+    "better-sqlite3": ">=11.0.0",
+    "node-cron": ">=3.0.0",
+    "pino": ">=9.0.0"
   },
   "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": true
+    },
     "node-cron": {
+      "optional": true
+    },
+    "pino": {
       "optional": true
     }
   },

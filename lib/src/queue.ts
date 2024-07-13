@@ -1,7 +1,7 @@
 import { Pipe } from "./pipe"
 import { exec, Job } from "./job"
 import type { Storage } from "./storage"
-import { type Logger, ConsoleLogger } from "./logger"
+import { type Logger, InMemoryLogger } from "./logger"
 import { registration, type RegistrationContext } from "./context"
 import { isPromise, serializeError } from "./utils"
 
@@ -46,7 +46,7 @@ export class Queue<
 		this.id = opts.id
 		this.parallel = Math.max(1, opts.parallel ?? Infinity)
 		this.storage = opts.storage
-		this.logger = opts.logger ?? new ConsoleLogger()
+		this.logger = opts.logger ?? new InMemoryLogger()
 
 		this.jobs = Object.fromEntries(Object.entries(opts.jobs).map(([id, job]) => [
 			id,

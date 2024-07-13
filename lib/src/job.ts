@@ -607,6 +607,8 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 			})
 		}
 
+		logger[loggerSystem]({ runs, event: 'run' })
+
 		try {
 			const runController = new AbortController()
 			const utils = {
@@ -631,7 +633,6 @@ function makeExecutionContext(registrationContext: RegistrationContext, task: Ta
 					])
 					: maybePromise
 
-				logger[loggerSystem]({ runs, event: 'run' })
 				promises.push(new Promise<Data>(resolve =>
 					registrationContext.recordStep(
 						task,

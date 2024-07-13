@@ -37,15 +37,6 @@ export interface LogReader {
 	): Promise<void>
 }
 
-// TODO: `child` could be improved so that it does accumulate the payload
-export class ConsoleLogger implements Logger {
-	child() { return this }
-	[system] = () => { }
-	info = console.log
-	warn = console.warn
-	error = console.error
-}
-
 export class PinoLogger implements Logger {
 	#pino: pino.Logger<"system">
 
@@ -123,37 +114,115 @@ export class PinoReader implements LogReader {
 			crlfDelay: Infinity,
 		})
 
-		const filter = `"queue":"${query.queue}","job":"${query.job}","input":${JSON.stringify(query.input)},`
-
-		const innerOnLine = (line: string) => {
-			const index = line.indexOf(filter)
-			if (index === -1) return
-
-			const raw = JSON.parse(line) as {
-				time: number
-				queue: string
-				job: string
-				input: string
-				key: string
-				runs: number
-				payload?: object
-				message?: string
-				level: number
-			}
-
-			onLine({
-				queue: raw.queue,
-				key: raw.key,
-				created_at: raw.time / 1000,
-				input: raw.input,
-				fromLogger: true,
-				system: (raw.level === Number.MAX_SAFE_INTEGER) as never,
-				payload: raw.payload ?? raw.message ?? '',
-			})
-		}
+		const innerOnLine = lineFilter(query, onLine)
 
 		rl.on('line', innerOnLine)
 		await once(rl, 'close')
 		rl.off('line', innerOnLine)
+	}
+}
+
+function lineFilter(query: { queue: string, job: string, input: string }, onLine: (line: Log) => void) {
+	const filter = `"queue":"${query.queue}","job":"${query.job}","input":${JSON.stringify(query.input)},`
+
+	return (line: string) => {
+		const index = line.indexOf(filter)
+		if (index === -1) return
+
+		const raw = JSON.parse(line) as {
+			time: number
+			queue: string
+			job: string
+			input: string
+			key: string
+			runs: number
+			payload?: object
+			message?: string
+			level: number
+		}
+
+		onLine({
+			queue: raw.queue,
+			key: raw.key,
+			created_at: raw.time / 1000,
+			input: raw.input,
+			fromLogger: true,
+			system: (raw.level === Number.MAX_SAFE_INTEGER) as never,
+			payload: raw.payload ?? raw.message ?? '',
+		})
+	}
+}
+
+export class InMemoryLogger implements Logger, LogReader {
+	#acc: object
+	#logs: string[]
+
+	constructor(acc: object = {}, logs: string[] = []) {
+		this.#acc = acc
+		this.#logs = logs
+	}
+
+	#push(log: object) {
+		this.#logs.push(JSON.stringify(log))
+	}
+
+	child(acc: object) {
+		return new InMemoryLogger({ ...this.#acc, ...acc }, this.#logs)
+	}
+
+
+	[system](payload: SystemPayload) {
+		this.#push({
+			level: Number.MAX_SAFE_INTEGER,
+			time: Date.now(),
+			...this.#acc,
+			payload,
+		})
+	}
+
+	#base(payload: string | object) {
+		if (typeof payload === 'string') {
+			this.#push({
+				level: 30,
+				time: Date.now(),
+				...this.#acc,
+				message: payload,
+			})
+		} else {
+			this.#push({
+				level: 30,
+				time: Date.now(),
+				...this.#acc,
+				payload,
+			})
+		}
+	}
+
+	info(payload: object | string) {
+		this.#base(payload)
+		console.log(payload)
+	}
+	warn(payload: object | string) {
+		this.#base(payload)
+		console.warn(payload)
+	}
+	error(payload: object | string) {
+		this.#base(payload)
+		console.error(payload)
+	}
+
+	async get(
+		query: {
+			queue: string,
+			job: string,
+			input: string
+		},
+		onLine: (line: Log) => void
+	) {
+		const innerOnLine = lineFilter(query, onLine)
+
+		for (const line of this.#logs) {
+			innerOnLine(line)
+		}
 	}
 }
